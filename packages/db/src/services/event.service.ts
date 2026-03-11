@@ -310,6 +310,18 @@ export async function getEvents(
 ): Promise<IServiceEvent[]> {
   const events = await chQuery<IClickhouseEvent>(sql);
   const projectId = events[0]?.project_id;
+  console.log('[ALIAS_DEBUG] getEvents called', {
+    eventCount: events.length,
+    projectId,
+    profileOpt: options.profile,
+    sampleEvent: events[0]
+      ? {
+          device_id: events[0].device_id,
+          profile_id: events[0].profile_id,
+          match: events[0].device_id === events[0].profile_id,
+        }
+      : null,
+  });
   if (options.profile && projectId) {
     const identifiedIds = events
       .filter((e) => e.device_id !== e.profile_id)
@@ -322,15 +334,23 @@ export async function getEvents(
         .map((e) => e.device_id)
     );
 
+    console.log('[ALIAS_DEBUG] ids', {
+      identifiedCount: identifiedIds.length,
+      anonymousIds,
+    });
+
     const aliasMap = new Map<string, string>();
     if (anonymousIds.length > 0) {
-      const aliases = await chQuery<{ alias: string; profile_id: string }>(
-        `SELECT alias, argMax(profile_id, created_at) as profile_id
+      const aliasSql = `SELECT alias, argMax(profile_id, created_at) as profile_id
          FROM ${TABLE_NAMES.alias}
          WHERE project_id = ${sqlstring.escape(projectId)}
            AND alias IN (${anonymousIds.map((id) => sqlstring.escape(id)).join(',')})
-         GROUP BY alias`
+         GROUP BY alias`;
+      console.log('[ALIAS_DEBUG] alias query:', aliasSql);
+      const aliases = await chQuery<{ alias: string; profile_id: string }>(
+        aliasSql
       );
+      console.log('[ALIAS_DEBUG] alias results:', aliases);
       for (const a of aliases) {
         aliasMap.set(a.alias, a.profile_id);
       }
@@ -338,6 +358,16 @@ export async function getEvents(
 
     const allProfileIds = uniq([...identifiedIds, ...Array.from(aliasMap.values())]);
     const profiles = await getProfilesCached(allProfileIds, projectId);
+
+    console.log('[ALIAS_DEBUG] profiles fetched', {
+      allProfileIds,
+      profileCount: profiles.length,
+      profileIds: profiles.map((p) => p.id),
+      profileExternal: profiles.map((p) => ({
+        id: p.id,
+        isExternal: p.isExternal,
+      })),
+    });
 
     const map = new Map<string, IServiceProfile>();
     for (const profile of profiles) {
