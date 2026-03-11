@@ -311,10 +311,33 @@ export async function getEvents(
   const events = await chQuery<IClickhouseEvent>(sql);
   const projectId = events[0]?.project_id;
   if (options.profile && projectId) {
-    const ids = events
+    const identifiedIds = events
       .filter((e) => e.device_id !== e.profile_id)
       .map((e) => e.profile_id);
-    const profiles = await getProfilesCached(ids, projectId);
+
+    // Resolve anonymous events via profile_aliases
+    const anonymousIds = uniq(
+      events
+        .filter((e) => e.device_id === e.profile_id && e.device_id !== '')
+        .map((e) => e.device_id)
+    );
+
+    const aliasMap = new Map<string, string>();
+    if (anonymousIds.length > 0) {
+      const aliases = await chQuery<{ alias: string; profile_id: string }>(
+        `SELECT alias, argMax(profile_id, created_at) as profile_id
+         FROM ${TABLE_NAMES.alias}
+         WHERE project_id = ${sqlstring.escape(projectId)}
+           AND alias IN (${anonymousIds.map((id) => sqlstring.escape(id)).join(',')})
+         GROUP BY alias`
+      );
+      for (const a of aliases) {
+        aliasMap.set(a.alias, a.profile_id);
+      }
+    }
+
+    const allProfileIds = uniq([...identifiedIds, ...Array.from(aliasMap.values())]);
+    const profiles = await getProfilesCached(allProfileIds, projectId);
 
     const map = new Map<string, IServiceProfile>();
     for (const profile of profiles) {
@@ -322,7 +345,8 @@ export async function getEvents(
     }
 
     for (const event of events) {
-      event.profile = map.get(event.profile_id) ?? {
+      const resolvedId = aliasMap.get(event.profile_id) ?? event.profile_id;
+      event.profile = map.get(resolvedId) ?? {
         id: event.profile_id,
         email: '',
         avatar: '',
@@ -992,7 +1016,24 @@ class EventService {
     ]);
 
     if (event?.profileId) {
-      const profile = await getProfileById(event?.profileId, projectId);
+      let profileIdToLookup = event.profileId;
+
+      // If anonymous (profileId === deviceId), resolve via profile_aliases
+      if (event.profileId === event.deviceId && event.deviceId) {
+        const aliases = await chQuery<{ profile_id: string }>(
+          `SELECT argMax(profile_id, created_at) as profile_id
+           FROM ${TABLE_NAMES.alias}
+           WHERE project_id = ${sqlstring.escape(projectId)}
+             AND alias = ${sqlstring.escape(event.profileId)}
+           GROUP BY alias
+           LIMIT 1`
+        );
+        if (aliases[0]?.profile_id) {
+          profileIdToLookup = aliases[0].profile_id;
+        }
+      }
+
+      const profile = await getProfileById(profileIdToLookup, projectId);
       if (profile) {
         event.profile = profile;
       }
