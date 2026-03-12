@@ -9,6 +9,9 @@ const options: RedisOptions = {
 export { Redis };
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_SENTINELS = process.env.REDIS_SENTINELS;
+const REDIS_MASTER_NAME = process.env.REDIS_MASTER_NAME;
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
 export interface ExtendedRedis extends Redis {
   getJson: <T = any>(key: string) => Promise<T | null>;
@@ -24,10 +27,31 @@ const createRedisClient = (
   url: string,
   overrides: RedisOptions = {},
 ): ExtendedRedis => {
-  const client = new Redis(url, {
-    ...options,
-    ...overrides,
-  }) as ExtendedRedis;
+  let client: ExtendedRedis;
+  if (REDIS_SENTINELS && !REDIS_MASTER_NAME) {
+    throw new Error('REDIS_MASTER_NAME is required when REDIS_SENTINELS is set');
+  }
+  if (REDIS_MASTER_NAME && !REDIS_SENTINELS) {
+    throw new Error('REDIS_SENTINELS is required when REDIS_MASTER_NAME is set');
+  }
+  if (REDIS_SENTINELS) {
+    const sentinels = REDIS_SENTINELS.split(',').map((s) => {
+      const [host, port] = s.trim().split(':');
+      return { host, port: parseInt(port || '26379') };
+    });
+    client = new Redis({
+      sentinels,
+      name: REDIS_MASTER_NAME,
+      password: REDIS_PASSWORD,
+      ...options,
+      ...overrides,
+    }) as ExtendedRedis;
+  } else {
+    client = new Redis(url, {
+      ...options,
+      ...overrides,
+    }) as ExtendedRedis;
+  }
 
   client.on('error', (error) => {
     console.error(`[${name}] Redis Client Error:`, error);
