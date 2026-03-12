@@ -1,6 +1,7 @@
 import { getSafeJson } from '@openpanel/json';
 import { cacheable } from '@openpanel/redis';
 import type { IChartEventFilter } from '@openpanel/validation';
+import { uniq } from 'ramda';
 import sqlstring from 'sqlstring';
 import {
   ch,
@@ -232,6 +233,7 @@ export async function getSessionList({
     'screen_view_count',
     'event_count',
     'revenue',
+    'device_id',
   ];
 
   columns.forEach((column) => {
@@ -261,7 +263,36 @@ export async function getSessionList({
       : undefined,
   };
 
-  // Profile hydration (unchanged)
+  // Resolve anonymous sessions via profile_aliases
+  const anonymousIds = uniq(
+    data
+      .filter((e) => e.device_id === e.profile_id && e.device_id !== '')
+      .map((e) => e.device_id)
+  );
+  const aliasMap = new Map<string, string>();
+  if (anonymousIds.length > 0) {
+    const aliases = await chQuery<{ alias: string; profile_id: string }>(
+      `SELECT alias, argMax(profile_id, created_at) as profile_id
+       FROM ${TABLE_NAMES.alias}
+       WHERE project_id = ${sqlstring.escape(projectId)}
+         AND alias IN (${anonymousIds.map((id) => sqlstring.escape(id)).join(',')})
+       GROUP BY alias`
+    );
+    for (const a of aliases) {
+      aliasMap.set(a.alias, a.profile_id);
+    }
+    // Patch profile_id on anonymous sessions that have an alias
+    for (const session of data) {
+      if (session.device_id === session.profile_id) {
+        const resolved = aliasMap.get(session.device_id);
+        if (resolved) {
+          session.profile_id = resolved;
+        }
+      }
+    }
+  }
+
+  // Profile hydration
   const profileIds = data
     .filter((e) => e.device_id !== e.profile_id)
     .map((e) => e.profile_id);
