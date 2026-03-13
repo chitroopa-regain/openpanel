@@ -52,6 +52,12 @@ import {
 import { GEO_MAP_URL, determineZoom, getBoundingBox } from './map.helpers';
 import { calculateMarkerSize } from './markers';
 
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}K`;
+  return String(n);
+}
+
 type Props = {
   markers: Coordinate[];
   sidebarConfig?: {
@@ -290,10 +296,11 @@ const Map = ({ markers, sidebarConfig }: Props) => {
                       content={
                         <div className="flex min-w-[200px] flex-col gap-2">
                           <h3 className="font-semibold capitalize">
-                            {`${marker.count} visitor${marker.count !== 1 ? 's' : ''}`}
+                            {`${marker.count.toLocaleString()} session${marker.count !== 1 ? 's' : ''}`}
                           </h3>
 
-                          {marker.members
+                          {[...marker.members]
+                            .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
                             .slice(0, 5)
                             .filter((item) => item.country || item.city)
                             .map((item) => (
@@ -307,6 +314,7 @@ const Map = ({ markers, sidebarConfig }: Props) => {
                                   }
                                 />
                                 {item.city || 'Unknown'}
+                                {item.count ? ` (${item.count.toLocaleString()})` : ''}
                               </div>
                             ))}
                           {marker.members.length > 5 && (
@@ -331,10 +339,10 @@ const Map = ({ markers, sidebarConfig }: Props) => {
                           fill="#fff"
                           textAnchor="middle"
                           dominantBaseline="middle"
-                          fontSize={size * 0.6}
+                          fontSize={size * 0.5}
                           fontWeight="bold"
                         >
-                          {marker.count}
+                          {formatCount(marker.count)}
                         </text>
                       </Marker>
                     </Tooltiper>

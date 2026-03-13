@@ -24,8 +24,9 @@ export const realtimeRouter = createTRPCRouter({
         country: string;
         long: number;
         lat: number;
+        count: number;
       }>(
-        `SELECT DISTINCT country, city, longitude as long, latitude as lat FROM ${TABLE_NAMES.events} WHERE project_id = ${sqlstring.escape(input.projectId)} AND created_at >= '${formatClickhouseDate(subMinutes(new Date(), 30))}' ORDER BY created_at DESC`,
+        `SELECT country, city, longitude as long, latitude as lat, COUNT(DISTINCT session_id) as count FROM ${TABLE_NAMES.events} WHERE project_id = ${sqlstring.escape(input.projectId)} AND created_at >= '${formatClickhouseDate(subMinutes(new Date(), 30))}' GROUP BY country, city, longitude, latitude ORDER BY count DESC`,
       );
 
       return res;

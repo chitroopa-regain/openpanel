@@ -22,22 +22,20 @@ const useActiveMarkers = (initialMarkers: Coordinate[]) => {
 export default useActiveMarkers;
 
 export function calculateMarkerSize(count: number) {
-  const minSize = 3; // Minimum size for single visitor (reduced from 4)
-  const maxSize = 14; // Maximum size for very large clusters (reduced from 20)
+  const minSize = 3;
+  const maxSize = 18;
 
   if (count <= 1) return minSize;
 
-  // Use square root scaling for better visual differentiation
-  // This creates more noticeable size differences for common visitor counts
+  // Log scaling for session counts that can range from 1 to 100K+
   // Examples:
-  // 1 visitor: 3px
-  // 2 visitors: ~5px
-  // 5 visitors: ~7px
-  // 10 visitors: ~9px
-  // 25 visitors: ~12px
-  // 50+ visitors: ~14px (max)
-  const scaledSize = minSize + Math.sqrt(count - 1) * 1.8;
+  // 1 session: 3px
+  // 10 sessions: ~6px
+  // 100 sessions: ~9px
+  // 1000 sessions: ~12px
+  // 10000 sessions: ~15px
+  // 100000 sessions: ~18px (max)
+  const scaledSize = minSize + Math.log10(count) * 3;
 
-  // Ensure size does not exceed maxSize or fall below minSize
   return Math.max(minSize, Math.min(scaledSize, maxSize));
 }

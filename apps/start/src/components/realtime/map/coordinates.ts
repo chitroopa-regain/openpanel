@@ -3,6 +3,7 @@ export type Coordinate = {
   long: number;
   city?: string;
   country?: string;
+  count?: number;
 };
 
 export function haversineDistance(
@@ -273,12 +274,13 @@ function basicClusterCoordinates(coordinates: Coordinate[], radius: number) {
     .sort((a, b) => b.nearbyCount - a.nearbyCount);
 
   coordinatesWithDensity.forEach(
-    ({ lat, long, city, country, originalIdx }) => {
+    ({ lat, long, city, country, count: pointCount, originalIdx }) => {
       if (!visited.has(originalIdx)) {
+        const sessionCount = pointCount ?? 1;
         const cluster = {
-          members: [{ lat, long, city, country }],
+          members: [{ lat, long, city, country, count: sessionCount }],
           center: { lat, long },
-          count: 1,
+          count: sessionCount,
         };
 
         // Mark the initial coordinate as visited
@@ -297,6 +299,7 @@ function basicClusterCoordinates(coordinates: Coordinate[], radius: number) {
                 long: otherLong,
                 city: otherCity,
                 country: otherCountry,
+                count: otherCount,
                 originalIdx: otherIdx,
               }) => {
                 if (!visited.has(otherIdx)) {
@@ -306,14 +309,16 @@ function basicClusterCoordinates(coordinates: Coordinate[], radius: number) {
                   });
 
                   if (distance <= radius) {
+                    const otherSessionCount = otherCount ?? 1;
                     cluster.members.push({
                       lat: otherLat,
                       long: otherLong,
                       city: otherCity,
                       country: otherCountry,
+                      count: otherSessionCount,
                     });
                     visited.add(otherIdx);
-                    cluster.count++;
+                    cluster.count += otherSessionCount;
                     expandedInLastIteration = true;
                   }
                 }
