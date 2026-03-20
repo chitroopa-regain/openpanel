@@ -42,6 +42,7 @@ export const EventItem = memo<EventItemProps>(
               id: event.id,
               projectId: event.projectId,
               createdAt: event.createdAt,
+              initialEvent: event,
             });
           }}
           onKeyDown={(e) => {
@@ -50,6 +51,7 @@ export const EventItem = memo<EventItemProps>(
                 id: event.id,
                 projectId: event.projectId,
                 createdAt: event.createdAt,
+                initialEvent: event,
               });
             }
           }}

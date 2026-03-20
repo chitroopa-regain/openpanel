@@ -56,6 +56,7 @@ export function EventListItem(props: EventListItemProps) {
               id: props.id,
               projectId,
               createdAt,
+              initialEvent: props as IServiceEvent,
             });
           }
         }}

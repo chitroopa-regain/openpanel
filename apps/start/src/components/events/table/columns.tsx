@@ -87,6 +87,7 @@ export function useColumns() {
                     id: row.original.id,
                     createdAt: row.original.createdAt,
                     projectId: row.original.projectId,
+                    initialEvent: row.original,
                   });
                 }}
                 className="font-medium hover:underline"

@@ -1,8 +1,8 @@
 import type { IClickhouseEvent, IServiceEvent } from '@openpanel/db';
-import { useSuspenseQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { FilterIcon, XIcon } from 'lucide-react';
 import { omit } from 'ramda';
-import { Suspense, useState } from 'react';
+import { useState } from 'react';
 import { popModal } from '.';
 import { ModalContent } from './Modal/Container';
 import { ProjectLink } from '@/components/links';
@@ -28,6 +28,7 @@ interface Props {
   id: string;
   createdAt?: Date;
   projectId: string;
+  initialEvent?: Partial<IServiceEvent>;
 }
 
 const filterable: Partial<Record<keyof IServiceEvent, keyof IClickhouseEvent>> =
@@ -55,15 +56,13 @@ export default function EventDetails(props: Props) {
   return (
     <ModalContent className="!p-0">
       <Widget className="min-w-0 border-0 bg-transparent">
-        <Suspense fallback={<EventDetailsSkeleton />}>
-          <EventDetailsContent {...props} />
-        </Suspense>
+        <EventDetailsContent {...props} />
       </Widget>
     </ModalContent>
   );
 }
 
-function EventDetailsContent({ id, createdAt, projectId }: Props) {
+function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) {
   const [, setEvents] = useEventQueryNamesFilter();
   const [, setFilter] = useEventQueryFilters();
   const TABS = {
@@ -78,15 +77,28 @@ function EventDetailsContent({ id, createdAt, projectId }: Props) {
   };
   const [widget, setWidget] = useState(TABS.essentials);
   const trpc = useTRPC();
-  const query = useSuspenseQuery(
-    trpc.event.details.queryOptions({
-      id,
-      projectId,
-      createdAt,
-    })
+
+  // Fast: get event by ID (uses bloom filter, ~1s)
+  const eventQuery = useQuery(
+    trpc.event.byId.queryOptions({ id, projectId, createdAt })
   );
 
-  const { event, session } = query.data;
+  // Slow: get session details separately (uses bloom filter but FINAL is slow)
+  const sessionId = eventQuery.data?.sessionId ?? initialEvent?.sessionId;
+  const sessionQuery = useQuery(
+    trpc.session.byId.queryOptions(
+      { sessionId: sessionId!, projectId },
+      { enabled: !!sessionId },
+    )
+  );
+
+  // Use initialEvent immediately, upgrade to full event when query returns
+  const event = eventQuery.data ?? (initialEvent as IServiceEvent | undefined);
+  const session = sessionQuery.data;
+
+  if (!event) {
+    return <EventDetailsSkeleton />;
+  }
 
   const profile = event.profile;
 
@@ -170,13 +182,15 @@ function EventDetailsContent({ id, createdAt, projectId }: Props) {
     });
   })();
 
-  const properties = Object.entries(event.properties)
-    .filter(([name]) => !name.startsWith('__'))
-    .map(([name, value]) => ({
-      name,
-      value,
-      event,
-    }));
+  const properties = event.properties
+    ? Object.entries(event.properties)
+        .filter(([name]) => !name.startsWith('__'))
+        .map(([name, value]) => ({
+          name,
+          value,
+          event,
+        }))
+    : [];
 
   return (
     <>
@@ -257,7 +271,9 @@ function EventDetailsContent({ id, createdAt, projectId }: Props) {
                 </div>
               </div>
             </div>
-            {!!session && (
+            {sessionQuery.isLoading ? (
+              <div className="h-4 w-64 animate-pulse rounded bg-muted" />
+            ) : !!session && (
               <div className="text-sm">
                 This session has {session.screenViewCount} screen views and{' '}
                 {session.eventCount} events. Visit duration is{' '}
@@ -267,7 +283,24 @@ function EventDetailsContent({ id, createdAt, projectId }: Props) {
           </ProjectLink>
         )}
 
-        {properties.length > 0 && (
+        {properties.length === 0 && eventQuery.isLoading ? (
+          <section>
+            <div className="mb-2 flex justify-between font-medium">
+              <div>Properties</div>
+            </div>
+            <div className="space-y-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div
+                  className="flex items-center justify-between rounded bg-muted/50 p-3"
+                  key={i.toString()}
+                >
+                  <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+                  <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : properties.length > 0 ? (
           <section>
             <div className="mb-2 flex justify-between font-medium">
               <div>Properties</div>
@@ -287,7 +320,7 @@ function EventDetailsContent({ id, createdAt, projectId }: Props) {
               )}
             />
           </section>
-        )}
+        ) : null}
         <section>
           <div className="mb-2 flex justify-between font-medium">
             <div>Information</div>
