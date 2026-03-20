@@ -43,10 +43,11 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
   const executionPlan = await plan(normalized);
 
   // Stage 3: Fetch data for event series (current period)
-  const fetchedSeries = await fetch(executionPlan);
+  const fetchResult = await fetch(executionPlan);
+  const allQueries = [...fetchResult.queries];
 
   // Stage 4: Compute formula series
-  const computedSeries = compute(fetchedSeries, executionPlan.definitions);
+  const computedSeries = compute(fetchResult.series, executionPlan.definitions);
 
   // Stage 5: Fetch previous period if requested
   let previousSeries: ConcreteSeries[] | null = null;
@@ -62,8 +63,8 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
       ...previousPeriod,
     });
 
-    const previousFetched = await fetch(previousPlan);
-    previousSeries = compute(previousFetched, previousPlan.definitions);
+    const previousFetchResult = await fetch(previousPlan);
+    previousSeries = compute(previousFetchResult.series, previousPlan.definitions);
   }
 
   // Stage 6: Format final output with previous period data
@@ -75,7 +76,7 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
     previousSeries,
   );
 
-  return response;
+  return { ...response, queries: allQueries };
 }
 
 /**
@@ -101,6 +102,7 @@ export async function executeAggregateChart(
 
   // Stage 2: Fetch aggregate data for current period (event series only)
   const fetchedSeries: ConcreteSeries[] = [];
+  const allQueries: string[] = [];
 
   for (let i = 0; i < normalized.series.length; i++) {
     const definition = normalized.series[i]!;
@@ -133,24 +135,22 @@ export async function executeAggregateChart(
     };
 
     // Execute aggregate query
-    let queryResult = await chQuery<ISerieDataItem>(
-      getAggregateChartSql(queryInput),
-      {
-        session_timezone: timezone,
-      },
-    );
+    const sql = getAggregateChartSql(queryInput);
+    allQueries.push(sql);
+    let queryResult = await chQuery<ISerieDataItem>(sql, {
+      session_timezone: timezone,
+    });
 
     // Fallback: if no results with breakdowns, try without breakdowns
     if (queryResult.length === 0 && normalized.breakdowns.length > 0) {
-      queryResult = await chQuery<ISerieDataItem>(
-        getAggregateChartSql({
-          ...queryInput,
-          breakdowns: [],
-        }),
-        {
-          session_timezone: timezone,
-        },
-      );
+      const fallbackSql = getAggregateChartSql({
+        ...queryInput,
+        breakdowns: [],
+      });
+      allQueries.push(fallbackSql);
+      queryResult = await chQuery<ISerieDataItem>(fallbackSql, {
+        session_timezone: timezone,
+      });
     }
 
     // Group by labels (handles breakdown expansion)
@@ -258,23 +258,19 @@ export async function executeAggregateChart(
         timezone,
       };
 
-      let queryResult = await chQuery<ISerieDataItem>(
-        getAggregateChartSql(queryInput),
-        {
-          session_timezone: timezone,
-        },
-      );
+      const prevSql = getAggregateChartSql(queryInput);
+      let queryResult = await chQuery<ISerieDataItem>(prevSql, {
+        session_timezone: timezone,
+      });
 
       if (queryResult.length === 0 && normalized.breakdowns.length > 0) {
-        queryResult = await chQuery<ISerieDataItem>(
-          getAggregateChartSql({
-            ...queryInput,
-            breakdowns: [],
-          }),
-          {
-            session_timezone: timezone,
-          },
-        );
+        const prevFallbackSql = getAggregateChartSql({
+          ...queryInput,
+          breakdowns: [],
+        });
+        queryResult = await chQuery<ISerieDataItem>(prevFallbackSql, {
+          session_timezone: timezone,
+        });
       }
 
       const groupedSeries = groupByLabels(queryResult);
@@ -347,7 +343,7 @@ export async function executeAggregateChart(
     normalized.limit,
   );
 
-  return response;
+  return { ...response, queries: allQueries };
 }
 
 // Export as ChartEngine for backward compatibility

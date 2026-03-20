@@ -10,8 +10,14 @@ import type { ConcreteSeries, Plan } from './types';
  * Fetch data for all event series in the plan
  * This handles breakdown expansion automatically via groupByLabels
  */
-export async function fetch(plan: Plan): Promise<ConcreteSeries[]> {
+export type FetchResult = {
+  series: ConcreteSeries[];
+  queries: string[];
+};
+
+export async function fetch(plan: Plan): Promise<FetchResult> {
   const results: ConcreteSeries[] = [];
+  const queries: string[] = [];
 
   // Process each event definition
   for (let i = 0; i < plan.definitions.length; i++) {
@@ -56,25 +62,23 @@ export async function fetch(plan: Plan): Promise<ConcreteSeries[]> {
     };
 
     // Execute query
-    let queryResult = await chQuery<ISerieDataItem>(
-      getChartSql({ ...queryInput, timezone: plan.timezone }),
-      {
-        session_timezone: plan.timezone,
-      },
-    );
+    const sql = getChartSql({ ...queryInput, timezone: plan.timezone });
+    queries.push(sql);
+    let queryResult = await chQuery<ISerieDataItem>(sql, {
+      session_timezone: plan.timezone,
+    });
 
     // Fallback: if no results with breakdowns, try without breakdowns
     if (queryResult.length === 0 && plan.input.breakdowns.length > 0) {
-      queryResult = await chQuery<ISerieDataItem>(
-        getChartSql({
-          ...queryInput,
-          breakdowns: [],
-          timezone: plan.timezone,
-        }),
-        {
-          session_timezone: plan.timezone,
-        },
-      );
+      const fallbackSql = getChartSql({
+        ...queryInput,
+        breakdowns: [],
+        timezone: plan.timezone,
+      });
+      queries.push(fallbackSql);
+      queryResult = await chQuery<ISerieDataItem>(fallbackSql, {
+        session_timezone: plan.timezone,
+      });
     }
 
     // Group by labels (handles breakdown expansion)
@@ -144,5 +148,5 @@ export async function fetch(plan: Plan): Promise<ConcreteSeries[]> {
     });
   }
 
-  return results;
+  return { series: results, queries };
 }

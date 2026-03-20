@@ -100,6 +100,7 @@ export type IChartSerie = {
 export type FinalChart = {
   series: IChartSerie[];
   metrics: Metrics;
+  queries?: string[];
 };
 
 export type ISetCookie = (

@@ -21,11 +21,97 @@ import { useAppParams } from '@/hooks/use-app-params';
 import { pushModal } from '@/modals';
 import { useDispatch, useSelector } from '@/redux';
 import { bind } from 'bind-event-listener';
-import { GanttChartSquareIcon, ShareIcon } from 'lucide-react';
-import { useEffect } from 'react';
+import { CodeIcon, GanttChartSquareIcon, ShareIcon } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { IServiceReport } from '@openpanel/db';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { useTRPC } from '@/integrations/trpc/react';
+import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import EditReportName from '../report/edit-report-name';
+
+function ShowQueryButton() {
+  const report = useSelector((state) => state.report);
+  const { projectId } = useAppParams();
+  const trpc = useTRPC();
+  const [open, setOpen] = useState(false);
+
+  const isAggregate = report.chartType === 'bar' || report.chartType === 'pie';
+  const isSupported = !['funnel', 'retention', 'conversion', 'sankey'].includes(
+    report.chartType,
+  );
+  const input = { ...report, projectId };
+  const queryOpts = {
+    enabled: open && report.ready && isSupported,
+    staleTime: 1000 * 60,
+  };
+
+  const chartRes = useQuery(
+    trpc.chart.chart.queryOptions(input, {
+      ...queryOpts,
+      enabled: queryOpts.enabled && !isAggregate,
+    }),
+  );
+  const aggregateRes = useQuery(
+    trpc.chart.aggregate.queryOptions(input, {
+      ...queryOpts,
+      enabled: queryOpts.enabled && isAggregate,
+    }),
+  );
+
+  const res = isAggregate ? aggregateRes : chartRes;
+  const queries = res.data?.queries ?? [];
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(queries.join('\n\n'));
+    toast('Copied to clipboard');
+  }, [queries]);
+
+  if (!isSupported) {
+    return null;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" icon={CodeIcon}>
+          Query
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle>ClickHouse Query</DialogTitle>
+        </DialogHeader>
+        {res.isLoading ? (
+          <div className="p-4 text-muted-foreground">Loading...</div>
+        ) : queries.length === 0 ? (
+          <div className="p-4 text-muted-foreground">No queries available</div>
+        ) : (
+          <div className="space-y-4">
+            <Button variant="outline" size="sm" onClick={handleCopy}>
+              Copy
+            </Button>
+            {queries.map((sql, i) => (
+              <pre
+                key={i}
+                className="rounded bg-muted p-4 text-xs overflow-x-auto whitespace-pre-wrap font-mono"
+              >
+                {sql}
+              </pre>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 interface ReportEditorProps {
   report: IServiceReport | null;
@@ -108,7 +194,8 @@ export default function ReportEditor({
             />
             <ReportLineType className="min-w-0 flex-1" />
           </div>
-          <div className="col-start-2 row-start-1 text-right md:col-start-6">
+          <div className="col-start-2 row-start-1 flex items-center justify-end gap-2 md:col-start-6">
+            <ShowQueryButton />
             <ReportSaveButton />
           </div>
         </div>
