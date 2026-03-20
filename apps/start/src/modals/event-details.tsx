@@ -1,6 +1,6 @@
 import type { IClickhouseEvent, IServiceEvent } from '@openpanel/db';
 import { useQuery } from '@tanstack/react-query';
-import { FilterIcon, XIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronUpIcon, FilterIcon, XIcon } from 'lucide-react';
 import { omit } from 'ramda';
 import { useState } from 'react';
 import { popModal } from '.';
@@ -51,6 +51,38 @@ const filterable: Partial<Record<keyof IServiceEvent, keyof IClickhouseEvent>> =
     path: 'path',
     origin: 'origin',
   };
+
+function PropertyValue({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = value.length > 50;
+
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <span
+        className={cn('font-mono', expanded ? 'whitespace-pre-wrap break-all' : 'truncate')}
+      >
+        {value}
+      </span>
+      {isLong && (
+        <button
+          type="button"
+          className="shrink-0 text-muted-foreground hover:text-foreground"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(!expanded);
+          }}
+        >
+          {expanded ? (
+            <ChevronUpIcon className="size-3" />
+          ) : (
+            <ChevronDownIcon className="size-3" />
+          )}
+        </button>
+      )}
+      <FilterIcon className="size-3 shrink-0" />
+    </div>
+  );
+}
 
 export default function EventDetails(props: Props) {
   return (
@@ -313,10 +345,7 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
                 setFilter(`properties.${item.name}`, item.value as any);
               }}
               renderValue={(item) => (
-                <div className="flex items-center gap-2">
-                  <span className="font-mono">{String(item.value)}</span>
-                  <FilterIcon className="size-3 shrink-0" />
-                </div>
+                <PropertyValue value={String(item.value)} />
               )}
             />
           </section>
