@@ -58,7 +58,7 @@ export function MetricCard({
   const number = useNumber();
 
   const renderValue = (value: number | undefined, unitClassName?: string) => {
-    if (!value) {
+    if (value == null) {
       return <div className="text-muted-foreground">N/A</div>;
     }
 

@@ -57,7 +57,7 @@ export function format(
       average: round(average(counts), 2),
       min: min(counts),
       max: max(counts),
-      count: cs.data.find((item) => !!item.total_count)?.total_count,
+      count: cs.data.find((item) => item.total_count != null)?.total_count,
     };
 
     // Build event object for compatibility

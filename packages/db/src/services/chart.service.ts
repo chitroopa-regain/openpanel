@@ -253,36 +253,11 @@ export function getChartSql({
     sb.groupBy[key] = `${key}`;
   });
 
-  if (event.segment === 'user') {
-    sb.select.count = 'countDistinct(profile_id) as count';
-  }
-
-  if (event.segment === 'session') {
-    sb.select.count = 'countDistinct(session_id) as count';
-  }
-
-  if (event.segment === 'user_average') {
-    sb.select.count =
-      'COUNT(*)::float / COUNT(DISTINCT profile_id)::float as count';
-  }
-
-  const mathFunction = {
-    property_sum: 'sum',
-    property_average: 'avg',
-    property_max: 'max',
-    property_min: 'min',
-  }[event.segment as string];
-
-  if (mathFunction && event.property) {
-    const propertyKey = getSelectPropertyKey(event.property);
-
-    if (isNumericColumn(event.property)) {
-      sb.select.count = `${mathFunction}(${propertyKey}) as count`;
-      sb.where.property = `${propertyKey} IS NOT NULL`;
-    } else {
-      sb.select.count = `${mathFunction}(toFloat64OrNull(${propertyKey})) as count`;
-      sb.where.property = `${propertyKey} IS NOT NULL AND notEmpty(${propertyKey})`;
-    }
+  // Build aggregate expression based on segment type (used for both count and total_count)
+  const segmentAggregate = buildAggregateExpression(event.segment ?? 'event', event.property, true);
+  sb.select.count = `${segmentAggregate.expression} as count`;
+  if (segmentAggregate.whereClause) {
+    sb.where.property = segmentAggregate.whereClause;
   }
 
   if (event.segment === 'one_event_per_user') {
@@ -301,6 +276,9 @@ export function getChartSql({
     console.log('-- End --');
     return sql;
   }
+
+  // Build global aggregate for total_count (uses approximate functions for performance)
+  const globalAggregate = buildAggregateExpression(event.segment ?? 'event', event.property, false);
 
   // Note: The profile CTE (if it exists) is available in subqueries, so we can reference it directly
   if (breakdowns.length > 0) {
@@ -321,20 +299,20 @@ export function getChartSql({
       .replace(/\bprofile\./g, 'profile.');
 
     sb.select.total_unique_count = `(
-        SELECT uniq(profile_id)
+        SELECT ${globalAggregate.expression}
         FROM ${TABLE_NAMES.events} e2
         ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${subqueryWhere}
         AND ${breakdownMatches}
       ) as total_count`;
   } else {
-    // No breakdowns: calculate unique count across all data
+    // No breakdowns: calculate aggregate across all data
     // Build WHERE clause for subquery - replace table alias and keep profile CTE reference
     const subqueryWhere = getWhereWithoutBar()
       .replace(/\be\./g, 'e2.')
       .replace(/\bprofile\./g, 'profile.');
 
     sb.select.total_unique_count = `(
-        SELECT uniq(profile_id)
+        SELECT ${globalAggregate.expression}
         FROM ${TABLE_NAMES.events} e2
         ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${subqueryWhere}
       ) as total_count`;
@@ -506,40 +484,11 @@ export function getAggregateChartSql({
   // Always group by label_0 (event name) for aggregate charts
   sb.groupBy.label_0 = 'label_0';
 
-  // Default count aggregation
-  sb.select.count = 'count(*) as count';
-
-  // Handle different segments
-  if (event.segment === 'user') {
-    sb.select.count = 'countDistinct(profile_id) as count';
-  }
-
-  if (event.segment === 'session') {
-    sb.select.count = 'countDistinct(session_id) as count';
-  }
-
-  if (event.segment === 'user_average') {
-    sb.select.count =
-      'COUNT(*)::float / COUNT(DISTINCT profile_id)::float as count';
-  }
-
-  const mathFunction = {
-    property_sum: 'sum',
-    property_average: 'avg',
-    property_max: 'max',
-    property_min: 'min',
-  }[event.segment as string];
-
-  if (mathFunction && event.property) {
-    const propertyKey = getSelectPropertyKey(event.property);
-
-    if (isNumericColumn(event.property)) {
-      sb.select.count = `${mathFunction}(${propertyKey}) as count`;
-      sb.where.property = `${propertyKey} IS NOT NULL`;
-    } else {
-      sb.select.count = `${mathFunction}(toFloat64OrNull(${propertyKey})) as count`;
-      sb.where.property = `${propertyKey} IS NOT NULL AND notEmpty(${propertyKey})`;
-    }
+  // Build aggregate expression based on segment type
+  const segmentAggregate = buildAggregateExpression(event.segment ?? 'event', event.property, true);
+  sb.select.count = `${segmentAggregate.expression} as count`;
+  if (segmentAggregate.whereClause) {
+    sb.where.property = segmentAggregate.whereClause;
   }
 
   if (event.segment === 'one_event_per_user') {
@@ -577,6 +526,63 @@ export function getAggregateChartSql({
 function isNumericColumn(columnName: string): boolean {
   const numericColumns = ['duration', 'revenue', 'longitude', 'latitude'];
   return numericColumns.includes(columnName);
+}
+
+/**
+ * Build the SQL aggregate expression for a given segment type.
+ * Used for both per-bucket `count` and global `total_count` to keep them in sync.
+ *
+ * @param useExact - When true, use exact functions (countDistinct). When false, use approximate (uniq).
+ *                   Per-bucket queries use exact; global subqueries use approximate for performance.
+ */
+function buildAggregateExpression(
+  segment: string,
+  property: string | undefined,
+  useExact: boolean,
+): { expression: string; whereClause?: string } {
+  const distinctFn = useExact ? 'countDistinct' : 'uniq';
+
+  switch (segment) {
+    case 'event':
+      return { expression: 'count(*)' };
+    case 'user':
+      return { expression: `${distinctFn}(profile_id)` };
+    case 'session':
+      return { expression: `${distinctFn}(session_id)` };
+    case 'user_average':
+      return useExact
+        ? { expression: 'COUNT(*)::float / COUNT(DISTINCT profile_id)::float' }
+        : { expression: 'count(*)::Float64 / uniq(profile_id)::Float64' };
+    case 'property_sum':
+    case 'property_average':
+    case 'property_max':
+    case 'property_min': {
+      const mathFunction = {
+        property_sum: 'sum',
+        property_average: 'avg',
+        property_max: 'max',
+        property_min: 'min',
+      }[segment]!;
+
+      if (property) {
+        const propertyKey = getSelectPropertyKey(property);
+        if (isNumericColumn(property)) {
+          return {
+            expression: `${mathFunction}(${propertyKey})`,
+            whereClause: `${propertyKey} IS NOT NULL`,
+          };
+        }
+        return {
+          expression: `${mathFunction}(toFloat64OrNull(${propertyKey}))`,
+          whereClause: `${propertyKey} IS NOT NULL AND notEmpty(${propertyKey})`,
+        };
+      }
+      // Fallback: no property selected, use event count
+      return { expression: 'count(*)' };
+    }
+    default:
+      return { expression: 'count(*)' };
+  }
 }
 
 export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
