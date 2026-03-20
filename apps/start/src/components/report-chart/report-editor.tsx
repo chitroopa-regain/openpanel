@@ -68,11 +68,44 @@ function ShowQueryButton() {
 
   const res = isAggregate ? aggregateRes : chartRes;
   const queries = res.data?.queries ?? [];
+  const timezone = res.data?.timezone ?? 'UTC';
+
+  const toPlayQuery = useCallback(
+    (sql: string) => {
+      const tables = [
+        'events',
+        'sessions',
+        'profiles',
+        'profile_aliases',
+        'events_bots',
+        'cohort_events_mv',
+        'dau_mv',
+        'distinct_event_names_mv',
+        'event_property_values_mv',
+        'session_replay_chunks',
+        'events_imports',
+      ];
+      const pattern = new RegExp(
+        `\\b(FROM|JOIN)\\s+(${tables.join('|')})\\b`,
+        'gi',
+      );
+      const withDb = sql.replace(pattern, '$1 openpanel.$2');
+      return `${withDb}\nSETTINGS session_timezone = '${timezone}'`;
+    },
+    [timezone],
+  );
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(queries.join('\n\n'));
     toast('Copied to clipboard');
   }, [queries]);
+
+  const handleCopyForPlay = useCallback(() => {
+    navigator.clipboard.writeText(
+      queries.map(toPlayQuery).join('\n\n'),
+    );
+    toast('Copied for ClickHouse Play');
+  }, [queries, toPlayQuery]);
 
   if (!isSupported) {
     return null;
@@ -95,9 +128,14 @@ function ShowQueryButton() {
           <div className="p-4 text-muted-foreground">No queries available</div>
         ) : (
           <div className="space-y-4">
-            <Button variant="outline" size="sm" onClick={handleCopy}>
-              Copy
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleCopy}>
+                Copy
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleCopyForPlay}>
+                Copy for CH Play
+              </Button>
+            </div>
             {queries.map((sql, i) => (
               <pre
                 key={i}

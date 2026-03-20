@@ -101,6 +101,7 @@ export type FinalChart = {
   series: IChartSerie[];
   metrics: Metrics;
   queries?: string[];
+  timezone?: string;
 };
 
 export type ISetCookie = (

@@ -76,7 +76,7 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
     previousSeries,
   );
 
-  return { ...response, queries: allQueries };
+  return { ...response, queries: allQueries, timezone: executionPlan.timezone };
 }
 
 /**
@@ -343,7 +343,7 @@ export async function executeAggregateChart(
     normalized.limit,
   );
 
-  return { ...response, queries: allQueries };
+  return { ...response, queries: allQueries, timezone };
 }
 
 // Export as ChartEngine for backward compatibility
