@@ -2,7 +2,11 @@ import { ColorSquare } from '@/components/color-square';
 import { useDispatch } from '@/redux';
 import { shortId } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
-import type { IChartEvent, IChartEventItem } from '@openpanel/validation';
+import type {
+  IChartCustomEvent,
+  IChartEvent,
+  IChartEventItem,
+} from '@openpanel/validation';
 import { DatabaseIcon, FilterIcon, type LucideIcon } from 'lucide-react';
 import { ReportSegment } from '../ReportSegment';
 import { changeEvent } from '../reportSlice';
@@ -35,9 +39,11 @@ export function ReportSeriesItem({
     'type' in event ? event : { ...event, type: 'event' as const };
 
   const isFormula = normalizedEvent.type === 'formula';
-  const chartEvent = isFormula
-    ? null
-    : (normalizedEvent as IChartEventItem & { type: 'event' });
+  const isCustomEvent = normalizedEvent.type === 'custom_event';
+  const chartEvent =
+    normalizedEvent.type === 'event'
+      ? (normalizedEvent as IChartEventItem & { type: 'event' })
+      : null;
 
   return (
     <div {...props}>
@@ -63,7 +69,7 @@ export function ReportSeriesItem({
                   changeEvent({
                     ...chartEvent,
                     segment,
-                  }),
+                  })
                 );
               }}
             />
@@ -84,7 +90,7 @@ export function ReportSeriesItem({
                         value: [],
                       },
                     ],
-                  }),
+                  })
                 );
               }}
             >
@@ -108,7 +114,7 @@ export function ReportSeriesItem({
                     ...chartEvent,
                     property: item.value,
                     type: 'event',
-                  }),
+                  })
                 );
               }}
             >
@@ -129,6 +135,23 @@ export function ReportSeriesItem({
 
       {/* Filters - only for events */}
       {chartEvent && !isSelectManyEvents && <FiltersList event={chartEvent} />}
+
+      {/* Segment picker for custom events */}
+      {isCustomEvent && showSegment && (
+        <div className="flex gap-2 p-2 pt-0">
+          <ReportSegment
+            value={(normalizedEvent as IChartCustomEvent).segment}
+            onChange={(segment) => {
+              dispatch(
+                changeEvent({
+                  ...(normalizedEvent as IChartCustomEvent),
+                  segment,
+                })
+              );
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

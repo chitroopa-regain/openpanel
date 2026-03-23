@@ -1,8 +1,13 @@
 import type { ISerieDataItem } from '@openpanel/common';
 import { groupByLabels } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
-import type { IGetChartDataInput } from '@openpanel/validation';
+import type {
+  IChartCustomEvent,
+  ICustomEventComponent,
+  IGetChartDataInput,
+} from '@openpanel/validation';
 import { chQuery } from '../clickhouse/client';
+import { db } from '../prisma-client';
 import { getChartSql } from '../services/chart.service';
 import type { ConcreteSeries, Plan } from './types';
 
@@ -23,31 +28,63 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
   for (let i = 0; i < plan.definitions.length; i++) {
     const definition = plan.definitions[i]!;
 
-    if (definition.type !== 'event') {
+    if (definition.type !== 'event' && definition.type !== 'custom_event') {
       // Skip formulas - they'll be handled in compute stage
       continue;
     }
 
-    const event = definition as typeof definition & { type: 'event' };
-
     // Find the corresponding concrete series placeholder
     const placeholder = plan.concreteSeries.find(
-      (cs) => cs.definitionId === definition.id,
+      (cs) => cs.definitionId === definition.id
     );
 
     if (!placeholder) {
       continue;
     }
 
+    // Resolve custom event components from PostgreSQL
+    let customEventComponents: ICustomEventComponent[] | undefined;
+    let eventName: string;
+    let eventSegment: string;
+    let eventFilters: IGetChartDataInput['event']['filters'] = [];
+    let eventDisplayName: string | undefined;
+    let eventProperty: string | undefined;
+
+    if (definition.type === 'custom_event') {
+      const customDef = definition as IChartCustomEvent;
+      const customEvent = await db.customEvent.findUnique({
+        where: { id: customDef.customEventId },
+      });
+      // Skip if custom event was deleted
+      if (
+        !customEvent ||
+        !Array.isArray(customEvent.components) ||
+        (customEvent.components as ICustomEventComponent[]).length === 0
+      ) {
+        continue;
+      }
+      customEventComponents = customEvent.components as ICustomEventComponent[];
+      eventName = customEvent.name;
+      eventSegment = customDef.segment;
+      eventDisplayName = customDef.displayName ?? eventName;
+    } else {
+      const event = definition as typeof definition & { type: 'event' };
+      eventName = event.name;
+      eventSegment = event.segment;
+      eventFilters = event.filters;
+      eventDisplayName = event.displayName;
+      eventProperty = event.property;
+    }
+
     // Build query input
     const queryInput: IGetChartDataInput = {
       event: {
-        id: event.id,
-        name: event.name,
-        segment: event.segment,
-        filters: event.filters,
-        displayName: event.displayName,
-        property: event.property,
+        id: definition.id,
+        name: eventName,
+        segment: eventSegment as any,
+        filters: eventFilters,
+        displayName: eventDisplayName,
+        property: eventProperty,
       },
       projectId: plan.input.projectId,
       startDate: plan.input.startDate,
@@ -62,7 +99,11 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
     };
 
     // Execute query
-    const sql = getChartSql({ ...queryInput, timezone: plan.timezone });
+    const sql = getChartSql({
+      ...queryInput,
+      timezone: plan.timezone,
+      customEventComponents,
+    });
     queries.push(sql);
     let queryResult = await chQuery<ISerieDataItem>(sql, {
       session_timezone: plan.timezone,
@@ -74,6 +115,7 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
         ...queryInput,
         breakdowns: [],
         timezone: plan.timezone,
+        customEventComponents,
       });
       queries.push(fallbackSql);
       queryResult = await chQuery<ISerieDataItem>(fallbackSql, {
@@ -109,7 +151,7 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
       }
 
       // Build filters including breakdown value
-      const filters = [...event.filters];
+      const filters = [...eventFilters];
       if (breakdownValue && plan.input.breakdowns.length > 0) {
         // Add breakdown filter
         plan.input.breakdowns.forEach((breakdown, idx) => {
@@ -131,7 +173,7 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
         definitionIndex: i,
         name: grouped.name,
         context: {
-          event: event.name,
+          event: eventName,
           filters,
           breakdownValue,
           breakdowns,

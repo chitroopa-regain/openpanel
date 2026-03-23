@@ -3,10 +3,13 @@ import type { ISerieDataItem } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import type {
   FinalChart,
+  IChartCustomEvent,
   IChartEventItem,
+  ICustomEventComponent,
   IReportInput,
 } from '@openpanel/validation';
 import { chQuery } from '../clickhouse/client';
+import { db } from '../prisma-client';
 import {
   getAggregateChartSql,
   getChartPrevStartEndDate,
@@ -33,7 +36,7 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
   // Handle subscription end date limit
   const endDate = await getOrganizationSubscriptionChartEndDate(
     input.projectId,
-    normalized.endDate,
+    normalized.endDate
   );
   if (endDate) {
     normalized.endDate = endDate;
@@ -64,7 +67,10 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
     });
 
     const previousFetchResult = await fetch(previousPlan);
-    previousSeries = compute(previousFetchResult.series, previousPlan.definitions);
+    previousSeries = compute(
+      previousFetchResult.series,
+      previousPlan.definitions
+    );
   }
 
   // Stage 6: Format final output with previous period data
@@ -73,7 +79,7 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
     computedSeries,
     executionPlan.definitions,
     includeAlphaIds,
-    previousSeries,
+    previousSeries
   );
 
   return { ...response, queries: allQueries, timezone: executionPlan.timezone };
@@ -84,7 +90,7 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
  * Executes a simplified pipeline: normalize -> fetch aggregate -> format
  */
 export async function executeAggregateChart(
-  input: IReportInput,
+  input: IReportInput
 ): Promise<FinalChart> {
   // Stage 1: Normalize input
   const normalized = await normalize(input);
@@ -92,7 +98,7 @@ export async function executeAggregateChart(
   // Handle subscription end date limit
   const endDate = await getOrganizationSubscriptionChartEndDate(
     input.projectId,
-    normalized.endDate,
+    normalized.endDate
   );
   if (endDate) {
     normalized.endDate = endDate;
@@ -107,22 +113,54 @@ export async function executeAggregateChart(
   for (let i = 0; i < normalized.series.length; i++) {
     const definition = normalized.series[i]!;
 
-    if (definition.type !== 'event') {
+    if (definition.type !== 'event' && definition.type !== 'custom_event') {
       // Skip formulas - they'll be computed in the next stage
       continue;
     }
 
-    const event = definition as IChartEventItem & { type: 'event' };
+    // Resolve custom event components
+    let customEventComponents: ICustomEventComponent[] | undefined;
+    let eventName: string;
+    let eventSegment: string;
+    let eventFilters: IChartEventItem extends { filters: infer F } ? F : never =
+      [] as any;
+    let eventDisplayName: string | undefined;
+    let eventProperty: string | undefined;
+
+    if (definition.type === 'custom_event') {
+      const customDef = definition as IChartCustomEvent;
+      const customEvent = await db.customEvent.findUnique({
+        where: { id: customDef.customEventId },
+      });
+      if (
+        !customEvent ||
+        !Array.isArray(customEvent.components) ||
+        (customEvent.components as ICustomEventComponent[]).length === 0
+      ) {
+        continue;
+      }
+      customEventComponents = customEvent.components as ICustomEventComponent[];
+      eventName = customEvent.name;
+      eventSegment = customDef.segment;
+      eventDisplayName = customDef.displayName ?? eventName;
+    } else {
+      const event = definition as IChartEventItem & { type: 'event' };
+      eventName = event.name;
+      eventSegment = event.segment;
+      eventFilters = event.filters;
+      eventDisplayName = event.displayName;
+      eventProperty = event.property;
+    }
 
     // Build query input
     const queryInput = {
       event: {
-        id: event.id,
-        name: event.name,
-        segment: event.segment,
-        filters: event.filters,
-        displayName: event.displayName,
-        property: event.property,
+        id: definition.id,
+        name: eventName,
+        segment: eventSegment as any,
+        filters: eventFilters,
+        displayName: eventDisplayName,
+        property: eventProperty,
       },
       projectId: normalized.projectId,
       startDate: normalized.startDate,
@@ -132,6 +170,7 @@ export async function executeAggregateChart(
       metric: normalized.metric,
       previous: normalized.previous,
       timezone,
+      customEventComponents,
     };
 
     // Execute aggregate query
@@ -180,7 +219,7 @@ export async function executeAggregateChart(
       }
 
       // Build filters including breakdown value
-      const filters = [...event.filters];
+      const filters = [...eventFilters];
       if (breakdownValue && normalized.breakdowns.length > 0) {
         normalized.breakdowns.forEach((breakdown, idx) => {
           const breakdownNamePart = grouped.name[idx + 1];
@@ -198,12 +237,12 @@ export async function executeAggregateChart(
       // For aggregate charts, grouped.data should have a single data point
       // (since we use a constant date in the query)
       const concrete: ConcreteSeries = {
-        id: `${event.name}-${grouped.name.join('-')}-${i}`,
+        id: `${eventName}-${grouped.name.join('-')}-${i}`,
         definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
         definitionIndex: i,
         name: grouped.name,
         context: {
-          event: event.name,
+          event: eventName,
           filters,
           breakdownValue,
           breakdowns,
@@ -233,20 +272,52 @@ export async function executeAggregateChart(
     for (let i = 0; i < normalized.series.length; i++) {
       const definition = normalized.series[i]!;
 
-      if (definition.type !== 'event') {
+      if (definition.type !== 'event' && definition.type !== 'custom_event') {
         continue;
       }
 
-      const event = definition as IChartEventItem & { type: 'event' };
+      // Resolve custom event components (same logic as current period)
+      let prevCustomEventComponents: ICustomEventComponent[] | undefined;
+      let prevEventName: string;
+      let prevEventSegment: string;
+      let prevEventFilters: any[] = [];
+      let prevEventDisplayName: string | undefined;
+      let prevEventProperty: string | undefined;
+
+      if (definition.type === 'custom_event') {
+        const customDef = definition as IChartCustomEvent;
+        const customEvent = await db.customEvent.findUnique({
+          where: { id: customDef.customEventId },
+        });
+        if (
+          !customEvent ||
+          !Array.isArray(customEvent.components) ||
+          (customEvent.components as ICustomEventComponent[]).length === 0
+        ) {
+          continue;
+        }
+        prevCustomEventComponents =
+          customEvent.components as ICustomEventComponent[];
+        prevEventName = customEvent.name;
+        prevEventSegment = customDef.segment;
+        prevEventDisplayName = customDef.displayName ?? prevEventName;
+      } else {
+        const event = definition as IChartEventItem & { type: 'event' };
+        prevEventName = event.name;
+        prevEventSegment = event.segment;
+        prevEventFilters = event.filters;
+        prevEventDisplayName = event.displayName;
+        prevEventProperty = event.property;
+      }
 
       const queryInput = {
         event: {
-          id: event.id,
-          name: event.name,
-          segment: event.segment,
-          filters: event.filters,
-          displayName: event.displayName,
-          property: event.property,
+          id: definition.id,
+          name: prevEventName,
+          segment: prevEventSegment as any,
+          filters: prevEventFilters,
+          displayName: prevEventDisplayName,
+          property: prevEventProperty,
         },
         projectId: normalized.projectId,
         startDate: previousPeriod.startDate,
@@ -256,6 +327,7 @@ export async function executeAggregateChart(
         metric: normalized.metric,
         previous: normalized.previous,
         timezone,
+        customEventComponents: prevCustomEventComponents,
       };
 
       const prevSql = getAggregateChartSql(queryInput);
@@ -295,7 +367,7 @@ export async function executeAggregateChart(
           });
         }
 
-        const filters = [...event.filters];
+        const filters = [...prevEventFilters];
         if (breakdownValue && normalized.breakdowns.length > 0) {
           normalized.breakdowns.forEach((breakdown, idx) => {
             const breakdownNamePart = grouped.name[idx + 1];
@@ -311,12 +383,12 @@ export async function executeAggregateChart(
         }
 
         const concrete: ConcreteSeries = {
-          id: `${event.name}-${grouped.name.join('-')}-${i}`,
+          id: `${prevEventName}-${grouped.name.join('-')}-${i}`,
           definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
           definitionIndex: i,
           name: grouped.name,
           context: {
-            event: event.name,
+            event: prevEventName,
             filters,
             breakdownValue,
             breakdowns,
@@ -340,7 +412,7 @@ export async function executeAggregateChart(
     normalized.series,
     includeAlphaIds,
     previousSeries,
-    normalized.limit,
+    normalized.limit
   );
 
   return { ...response, queries: allQueries, timezone };

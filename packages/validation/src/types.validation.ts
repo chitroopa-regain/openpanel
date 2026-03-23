@@ -6,6 +6,7 @@ export type UnionOmit<T, K extends keyof any> = T extends any
 
 import type {
   zChartBreakdown,
+  zChartCustomEvent,
   zChartEvent,
   zChartEventItem,
   zChartEventSegment,
@@ -13,6 +14,8 @@ import type {
   zChartSeries,
   zChartType,
   zCriteria,
+  zCustomEventComponent,
+  zCustomEventInput,
   zLineType,
   zMetric,
   zRange,
@@ -34,7 +37,10 @@ export interface IReportInputWithDates extends IReportInput {
 }
 export type IChartEvent = z.infer<typeof zChartEvent>;
 export type IChartFormula = z.infer<typeof zChartFormula>;
+export type IChartCustomEvent = z.infer<typeof zChartCustomEvent>;
 export type IChartEventItem = z.infer<typeof zChartEventItem>;
+export type ICustomEventComponent = z.infer<typeof zCustomEventComponent>;
+export type ICustomEventInput = z.infer<typeof zCustomEventInput>;
 export type IChartSeries = z.infer<typeof zChartSeries>;
 // Backward compatibility alias
 export type IChartEvents = IChartSeries;
@@ -114,5 +120,5 @@ export type ISetCookie = (
     sameSite?: 'lax' | 'strict' | 'none';
     secure?: boolean;
     httpOnly?: boolean;
-  },
+  }
 ) => void;

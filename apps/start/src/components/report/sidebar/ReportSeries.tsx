@@ -25,11 +25,12 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { alphabetIds } from '@openpanel/constants';
 import type {
+  IChartCustomEvent,
   IChartEvent,
   IChartEventItem,
   IChartFormula,
 } from '@openpanel/validation';
-import { HandIcon, PiIcon, PlusIcon } from 'lucide-react';
+import { HandIcon, LayersIcon, PiIcon, PlusIcon } from 'lucide-react';
 import {
   addSerie,
   changeEvent,
@@ -120,7 +121,7 @@ export function ReportSeries() {
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-    }),
+    })
   );
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -141,7 +142,7 @@ export function ReportSeries() {
           return dispatch(
             removeEvent({
               id: 'type' in event ? event.id : (event as IChartEvent).id,
-            }),
+            })
           );
         }
         case 'duplicate': {
@@ -182,6 +183,7 @@ export function ReportSeries() {
           <div className="flex flex-col gap-4">
             {selectedSeries.map((event, index) => {
               const isFormula = event.type === 'formula';
+              const isCustomEvent = event.type === 'custom_event';
 
               return (
                 <SortableReportSeriesItem
@@ -193,7 +195,21 @@ export function ReportSeries() {
                   isSelectManyEvents={isSelectManyEvents}
                   className="rounded-lg border bg-def-100"
                 >
-                  {isFormula ? (
+                  {isCustomEvent ? (
+                    <>
+                      <div className="flex-1 flex items-center gap-2 px-3 py-2">
+                        <LayersIcon className="h-4 w-4 flex-shrink-0 text-violet-500" />
+                        <span className="font-medium truncate">
+                          {(event as IChartCustomEvent).displayName ??
+                            'Custom Event'}
+                        </span>
+                        <span className="text-xs text-violet-500 font-medium">
+                          Custom
+                        </span>
+                      </div>
+                      <ReportEventMore onClick={handleMore(event)} />
+                    </>
+                  ) : isFormula ? (
                     <>
                       <div className="flex-1 flex flex-col gap-2">
                         <InputEnter
@@ -262,8 +278,8 @@ export function ReportSeries() {
                                     type: 'event',
                                     name: value,
                                     filters: [],
-                                  },
-                            ),
+                                  }
+                            )
                           );
                         }}
                         items={eventNames}
@@ -304,7 +320,23 @@ export function ReportSeries() {
                 value={''}
                 searchable
                 onChange={(value) => {
-                  if (isSelectManyEvents) {
+                  const selectedItem = eventNames.find((e) => e.name === value);
+                  if (
+                    selectedItem &&
+                    'isCustomEvent' in selectedItem &&
+                    selectedItem.isCustomEvent &&
+                    'customEventId' in selectedItem &&
+                    selectedItem.customEventId
+                  ) {
+                    dispatch(
+                      addSerie({
+                        type: 'custom_event',
+                        customEventId: selectedItem.customEventId,
+                        segment: 'event',
+                        displayName: selectedItem.name,
+                      })
+                    );
+                  } else if (isSelectManyEvents) {
                     dispatch(
                       addSerie({
                         type: 'event',
@@ -317,7 +349,7 @@ export function ReportSeries() {
                             value: [value],
                           },
                         ],
-                      }),
+                      })
                     );
                   } else {
                     dispatch(
@@ -326,7 +358,7 @@ export function ReportSeries() {
                         name: value,
                         segment: 'event',
                         filters: [],
-                      }),
+                      })
                     );
                   }
                 }}
@@ -345,7 +377,7 @@ export function ReportSeries() {
                         type: 'formula',
                         formula: '',
                         displayName: '',
-                      }),
+                      })
                     );
                   }}
                 >

@@ -3,6 +3,7 @@ import sqlstring from 'sqlstring';
 import { DateTime, stripLeadingAndTrailingSlashes } from '@openpanel/common';
 import type {
   IChartEventFilter,
+  ICustomEventComponent,
   IReportInput,
   IChartRange,
   IGetChartDataInput,
@@ -14,7 +15,7 @@ import { createSqlBuilder } from '../sql-builder';
 export function transformPropertyKey(property: string) {
   const propertyPatterns = ['properties', 'profile.properties'];
   const match = propertyPatterns.find((pattern) =>
-    property.startsWith(`${pattern}.`),
+    property.startsWith(`${pattern}.`)
   );
 
   if (!match) {
@@ -40,17 +41,32 @@ export function getSelectPropertyKey(property: string) {
   const propertyPatterns = ['properties', 'profile.properties'];
 
   const match = propertyPatterns.find((pattern) =>
-    property.startsWith(`${pattern}.`),
+    property.startsWith(`${pattern}.`)
   );
   if (!match) return property;
 
   if (property.includes('*')) {
     return `arrayMap(x -> trim(x), mapValues(mapExtractKeyLike(${match}, ${sqlstring.escape(
-      transformPropertyKey(property),
+      transformPropertyKey(property)
     )})))`;
   }
 
   return `${match}['${property.replace(new RegExp(`^${match}.`), '')}']`;
+}
+
+export function getCustomEventWhereClause(
+  components: ICustomEventComponent[]
+): string {
+  const clauses = components.map((c) => {
+    const namePart = `name = ${sqlstring.escape(c.eventName)}`;
+    if (c.filters.length === 0) return namePart;
+    const filterWhere = getEventFiltersWhereClause(c.filters);
+    const parts = Object.values(filterWhere);
+    return parts.length > 0
+      ? `(${namePart} AND ${parts.join(' AND ')})`
+      : namePart;
+  });
+  return `(${clauses.join(' OR ')})`;
 }
 
 export function getChartSql({
@@ -63,7 +79,11 @@ export function getChartSql({
   limit,
   timezone,
   chartType,
-}: IGetChartDataInput & { timezone: string }) {
+  customEventComponents,
+}: IGetChartDataInput & {
+  timezone: string;
+  customEventComponents?: ICustomEventComponent[];
+}) {
   const {
     sb,
     join,
@@ -81,7 +101,11 @@ export function getChartSql({
   sb.where = getEventFiltersWhereClause(event.filters);
   sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
 
-  if (event.name !== '*') {
+  if (customEventComponents && customEventComponents.length > 0) {
+    const displayName = event.displayName ?? event.name;
+    sb.select.label_0 = `${sqlstring.escape(displayName)} as label_0`;
+    sb.where.eventName = getCustomEventWhereClause(customEventComponents);
+  } else if (event.name !== '*') {
     sb.select.label_0 = `${sqlstring.escape(event.name)} as label_0`;
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
   } else {
@@ -89,10 +113,10 @@ export function getChartSql({
   }
 
   const anyFilterOnProfile = event.filters.some((filter) =>
-    filter.name.startsWith('profile.'),
+    filter.name.startsWith('profile.')
   );
   const anyBreakdownOnProfile = breakdowns.some((breakdown) =>
-    breakdown.name.startsWith('profile.'),
+    breakdown.name.startsWith('profile.')
   );
 
   // Build WHERE clause without the bar filter (for use in subqueries and CTEs)
@@ -179,7 +203,7 @@ export function getChartSql({
       'profile',
       `SELECT ${selectFields.join(', ')}
       FROM ${TABLE_NAMES.profiles} FINAL 
-      WHERE project_id = ${sqlstring.escape(projectId)}`,
+      WHERE project_id = ${sqlstring.escape(projectId)}`
     );
 
     // Use the CTE reference in the main query
@@ -239,7 +263,7 @@ export function getChartSql({
       ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${getWhereWithoutBar()}
       GROUP BY ${breakdownSelects}
       ORDER BY count(*) DESC
-      LIMIT ${limit}`,
+      LIMIT ${limit}`
     );
 
     // Filter main query to only include top breakdown values
@@ -254,7 +278,11 @@ export function getChartSql({
   });
 
   // Build aggregate expression based on segment type (used for both count and total_count)
-  const segmentAggregate = buildAggregateExpression(event.segment ?? 'event', event.property, true);
+  const segmentAggregate = buildAggregateExpression(
+    event.segment ?? 'event',
+    event.property,
+    true
+  );
   sb.select.count = `${segmentAggregate.expression} as count`;
   if (segmentAggregate.whereClause) {
     sb.where.property = segmentAggregate.whereClause;
@@ -264,7 +292,7 @@ export function getChartSql({
     sb.from = `(
       SELECT DISTINCT ON (profile_id) * from ${TABLE_NAMES.events} ${getJoins()} WHERE ${join(
         sb.where,
-        ' AND ',
+        ' AND '
       )}
         ORDER BY profile_id, created_at DESC
       ) as subQuery`;
@@ -278,7 +306,11 @@ export function getChartSql({
   }
 
   // Build global aggregate for total_count (uses approximate functions for performance)
-  const globalAggregate = buildAggregateExpression(event.segment ?? 'event', event.property, false);
+  const globalAggregate = buildAggregateExpression(
+    event.segment ?? 'event',
+    event.property,
+    false
+  );
 
   // Note: The profile CTE (if it exists) is available in subqueries, so we can reference it directly
   if (breakdowns.length > 0) {
@@ -332,15 +364,21 @@ export function getAggregateChartSql({
   endDate,
   projectId,
   limit,
+  customEventComponents,
 }: Omit<IGetChartDataInput, 'interval' | 'chartType'> & {
   timezone: string;
+  customEventComponents?: ICustomEventComponent[];
 }) {
   const { sb, join, getJoins, with: addCte, getSql } = createSqlBuilder();
 
   sb.where = getEventFiltersWhereClause(event.filters);
   sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
 
-  if (event.name !== '*') {
+  if (customEventComponents && customEventComponents.length > 0) {
+    const displayName = event.displayName ?? event.name;
+    sb.select.label_0 = `${sqlstring.escape(displayName)} as label_0`;
+    sb.where.eventName = getCustomEventWhereClause(customEventComponents);
+  } else if (event.name !== '*') {
     sb.select.label_0 = `${sqlstring.escape(event.name)} as label_0`;
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
   } else {
@@ -348,10 +386,10 @@ export function getAggregateChartSql({
   }
 
   const anyFilterOnProfile = event.filters.some((filter) =>
-    filter.name.startsWith('profile.'),
+    filter.name.startsWith('profile.')
   );
   const anyBreakdownOnProfile = breakdowns.some((breakdown) =>
-    breakdown.name.startsWith('profile.'),
+    breakdown.name.startsWith('profile.')
   );
 
   // Build WHERE clause without the bar filter (for use in subqueries and CTEs)
@@ -434,7 +472,7 @@ export function getAggregateChartSql({
       'profile',
       `SELECT ${selectFields.join(', ')}
       FROM ${TABLE_NAMES.profiles} FINAL 
-      WHERE project_id = ${sqlstring.escape(projectId)}`,
+      WHERE project_id = ${sqlstring.escape(projectId)}`
     );
 
     sb.joins.profiles = profilesJoinRef;
@@ -466,7 +504,7 @@ export function getAggregateChartSql({
       ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${getWhereWithoutBar()}
       GROUP BY ${breakdownSelects}
       ORDER BY count(*) DESC
-      LIMIT ${limit}`,
+      LIMIT ${limit}`
     );
 
     // Filter main query to only include top breakdown values
@@ -485,7 +523,11 @@ export function getAggregateChartSql({
   sb.groupBy.label_0 = 'label_0';
 
   // Build aggregate expression based on segment type
-  const segmentAggregate = buildAggregateExpression(event.segment ?? 'event', event.property, true);
+  const segmentAggregate = buildAggregateExpression(
+    event.segment ?? 'event',
+    event.property,
+    true
+  );
   sb.select.count = `${segmentAggregate.expression} as count`;
   if (segmentAggregate.whereClause) {
     sb.where.property = segmentAggregate.whereClause;
@@ -495,7 +537,7 @@ export function getAggregateChartSql({
     sb.from = `(
       SELECT DISTINCT ON (profile_id) * from ${TABLE_NAMES.events} ${getJoins()} WHERE ${join(
         sb.where,
-        ' AND ',
+        ' AND '
       )}
         ORDER BY profile_id, created_at DESC
       ) as subQuery`;
@@ -538,7 +580,7 @@ function isNumericColumn(columnName: string): boolean {
 function buildAggregateExpression(
   segment: string,
   property: string | undefined,
-  useExact: boolean,
+  useExact: boolean
 ): { expression: string; whereClause?: string } {
   const distinctFn = useExact ? 'countDistinct' : 'uniq';
 
@@ -655,15 +697,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           if (isWildcard) {
             where[id] = `arrayExists(x -> ${value
               .map(
-                (val) =>
-                  `x LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`,
+                (val) => `x LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `${whereFrom} LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`,
+                  `${whereFrom} LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`
               )
               .join(' OR ')})`;
           }
@@ -674,14 +715,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `arrayExists(x -> ${value
               .map(
                 (val) =>
-                  `x NOT LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`,
+                  `x NOT LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `${whereFrom} NOT LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`,
+                  `${whereFrom} NOT LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`
               )
               .join(' OR ')})`;
           }
@@ -691,14 +732,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           if (isWildcard) {
             where[id] = `arrayExists(x -> ${value
               .map(
-                (val) => `x LIKE ${sqlstring.escape(`${String(val).trim()}%`)}`,
+                (val) => `x LIKE ${sqlstring.escape(`${String(val).trim()}%`)}`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `${whereFrom} LIKE ${sqlstring.escape(`${String(val).trim()}%`)}`,
+                  `${whereFrom} LIKE ${sqlstring.escape(`${String(val).trim()}%`)}`
               )
               .join(' OR ')})`;
           }
@@ -708,14 +749,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           if (isWildcard) {
             where[id] = `arrayExists(x -> ${value
               .map(
-                (val) => `x LIKE ${sqlstring.escape(`%${String(val).trim()}`)}`,
+                (val) => `x LIKE ${sqlstring.escape(`%${String(val).trim()}`)}`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `${whereFrom} LIKE ${sqlstring.escape(`%${String(val).trim()}`)}`,
+                  `${whereFrom} LIKE ${sqlstring.escape(`%${String(val).trim()}`)}`
               )
               .join(' OR ')})`;
           }
@@ -730,7 +771,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `match(${whereFrom}, ${sqlstring.escape(String(val).trim())})`,
+                  `match(${whereFrom}, ${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           }
@@ -758,14 +799,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `arrayExists(x -> ${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(x) > toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(x) > toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(${whereFrom}) > toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(${whereFrom}) > toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           }
@@ -776,14 +817,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `arrayExists(x -> ${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(x) < toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(x) < toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(${whereFrom}) < toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(${whereFrom}) < toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           }
@@ -794,14 +835,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `arrayExists(x -> ${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(x) >= toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(x) >= toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(${whereFrom}) >= toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(${whereFrom}) >= toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           }
@@ -812,14 +853,14 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `arrayExists(x -> ${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(x) <= toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(x) <= toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')}, ${whereFrom})`;
           } else {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64OrZero(${whereFrom}) <= toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64OrZero(${whereFrom}) <= toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           }
@@ -862,7 +903,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           where[id] = `(${value
             .map(
               (val) =>
-                `${name} LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`,
+                `${name} LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`
             )
             .join(' OR ')})`;
           break;
@@ -871,7 +912,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           where[id] = `(${value
             .map(
               (val) =>
-                `${name} NOT LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`,
+                `${name} NOT LIKE ${sqlstring.escape(`%${String(val).trim()}%`)}`
             )
             .join(' OR ')})`;
           break;
@@ -880,7 +921,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           where[id] = `(${value
             .map(
               (val) =>
-                `${name} LIKE ${sqlstring.escape(`${String(val).trim()}%`)}`,
+                `${name} LIKE ${sqlstring.escape(`${String(val).trim()}%`)}`
             )
             .join(' OR ')})`;
           break;
@@ -889,7 +930,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           where[id] = `(${value
             .map(
               (val) =>
-                `${name} LIKE ${sqlstring.escape(`%${String(val).trim()}`)}`,
+                `${name} LIKE ${sqlstring.escape(`%${String(val).trim()}`)}`
             )
             .join(' OR ')})`;
           break;
@@ -898,7 +939,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
           where[id] = `(${value
             .map(
               (val) =>
-                `match(${name}, ${sqlstring.escape(stripLeadingAndTrailingSlashes(String(val)).trim())})`,
+                `match(${name}, ${sqlstring.escape(stripLeadingAndTrailingSlashes(String(val)).trim())})`
             )
             .join(' OR ')})`;
           break;
@@ -908,7 +949,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64(${name}) > toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64(${name}) > toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           } else {
@@ -923,7 +964,7 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64(${name}) < toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64(${name}) < toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           } else {
@@ -938,13 +979,13 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64(${name}) >= toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64(${name}) >= toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           } else {
             where[id] = `(${value
               .map(
-                (val) => `${name} >= ${sqlstring.escape(String(val).trim())}`,
+                (val) => `${name} >= ${sqlstring.escape(String(val).trim())}`
               )
               .join(' OR ')})`;
           }
@@ -955,13 +996,13 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
             where[id] = `(${value
               .map(
                 (val) =>
-                  `toFloat64(${name}) <= toFloat64(${sqlstring.escape(String(val).trim())})`,
+                  `toFloat64(${name}) <= toFloat64(${sqlstring.escape(String(val).trim())})`
               )
               .join(' OR ')})`;
           } else {
             where[id] = `(${value
               .map(
-                (val) => `${name} <= ${sqlstring.escape(String(val).trim())}`,
+                (val) => `${name} <= ${sqlstring.escape(String(val).trim())}`
               )
               .join(' OR ')})`;
           }
@@ -980,7 +1021,7 @@ export function getChartStartEndDate(
     endDate,
     range,
   }: Pick<IReportInput, 'endDate' | 'startDate' | 'range'>,
-  timezone: string,
+  timezone: string
 ) {
   if (startDate && endDate) {
     return { startDate: startDate, endDate: endDate };
@@ -1189,7 +1230,7 @@ export function getChartPrevStartEndDate({
   endDate: string;
 }) {
   let diff = DateTime.fromFormat(endDate, 'yyyy-MM-dd HH:mm:ss').diff(
-    DateTime.fromFormat(startDate, 'yyyy-MM-dd HH:mm:ss'),
+    DateTime.fromFormat(startDate, 'yyyy-MM-dd HH:mm:ss')
   );
 
   // this will make sure our start and end date's are correct

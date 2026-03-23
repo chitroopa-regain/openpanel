@@ -197,6 +197,7 @@ model Project {
   shareReports    ShareReport[]
   shareWidgets    ShareWidget[]
   meta            EventMeta[]
+  customEvents    CustomEvent[]
   references      Reference[]
   access          ProjectAccess[]
 
@@ -442,6 +443,23 @@ model EventMeta {
 
   @@unique([name, projectId])
   @@map("event_meta")
+}
+
+model CustomEvent {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// [ICustomEventComponent[]]
+  components Json
+  color      String?
+  icon       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([name, projectId])
+  @@map("custom_events")
 }
 
 model Reference {

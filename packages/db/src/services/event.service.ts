@@ -336,7 +336,10 @@ export async function getEvents(
       }
     }
 
-    const allProfileIds = uniq([...identifiedIds, ...Array.from(aliasMap.values())]);
+    const allProfileIds = uniq([
+      ...identifiedIds,
+      ...Array.from(aliasMap.values()),
+    ]);
     const profiles = await getProfilesCached(allProfileIds, projectId);
 
     const map = new Map<string, IServiceProfile>();
@@ -631,10 +634,39 @@ export async function getEventList(options: GetEventListOptions) {
   }
 
   if (events && events.length > 0) {
-    sb.where.events = `name IN (${join(
-      events.map((event) => sqlstring.escape(event)),
-      ','
-    )})`;
+    // Resolve custom events: expand custom event names to their component event names
+    const customEvents = await db.customEvent.findMany({
+      where: {
+        projectId,
+        name: { in: events },
+      },
+    });
+
+    const resolvedEventNames: string[] = [];
+    const customEventNames = new Set(customEvents.map((ce) => ce.name));
+
+    for (const eventName of events) {
+      if (customEventNames.has(eventName)) {
+        const ce = customEvents.find((c) => c.name === eventName);
+        if (ce && Array.isArray(ce.components)) {
+          for (const component of ce.components as Array<{
+            eventName: string;
+          }>) {
+            resolvedEventNames.push(component.eventName);
+          }
+        }
+      } else {
+        resolvedEventNames.push(eventName);
+      }
+    }
+
+    const uniqueEventNames = [...new Set(resolvedEventNames)];
+    if (uniqueEventNames.length > 0) {
+      sb.where.events = `name IN (${join(
+        uniqueEventNames.map((event) => sqlstring.escape(event)),
+        ','
+      )})`;
+    }
   }
 
   if (filters) {
@@ -698,10 +730,39 @@ export async function getEventsCount({
   }
 
   if (events && events.length > 0) {
-    sb.where.events = `name IN (${join(
-      events.map((event) => sqlstring.escape(event)),
-      ','
-    )})`;
+    // Resolve custom events: expand custom event names to their component event names
+    const customEvents = await db.customEvent.findMany({
+      where: {
+        projectId,
+        name: { in: events },
+      },
+    });
+
+    const resolvedEventNames: string[] = [];
+    const customEventNames = new Set(customEvents.map((ce) => ce.name));
+
+    for (const eventName of events) {
+      if (customEventNames.has(eventName)) {
+        const ce = customEvents.find((c) => c.name === eventName);
+        if (ce && Array.isArray(ce.components)) {
+          for (const component of ce.components as Array<{
+            eventName: string;
+          }>) {
+            resolvedEventNames.push(component.eventName);
+          }
+        }
+      } else {
+        resolvedEventNames.push(eventName);
+      }
+    }
+
+    const uniqueEventNames = [...new Set(resolvedEventNames)];
+    if (uniqueEventNames.length > 0) {
+      sb.where.events = `name IN (${join(
+        uniqueEventNames.map((event) => sqlstring.escape(event)),
+        ','
+      )})`;
+    }
   }
 
   if (filters) {

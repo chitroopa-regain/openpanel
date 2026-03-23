@@ -11,7 +11,7 @@ import {
 } from '@openpanel/constants';
 
 export function objectToZodEnums<K extends string>(
-  obj: Record<K, any>,
+  obj: Record<K, any>
 ): [K, ...K[]] {
   const [firstKey, ...otherKeys] = Object.keys(obj) as K[];
   return [firstKey!, ...otherKeys];
@@ -49,7 +49,7 @@ export const zChartEvent = z.object({
     .string()
     .optional()
     .describe(
-      'Optional property of the event used for specific segment calculations (e.g., value for property_sum/average)',
+      'Optional property of the event used for specific segment calculations (e.g., value for property_sum/average)'
     ),
   segment: zChartEventSegment,
   filters: z
@@ -76,10 +76,41 @@ export const zChartEventWithType = zChartEvent.extend({
   type: z.literal('event'),
 });
 
+export const zChartCustomEvent = z.object({
+  id: z.string().optional(),
+  type: z.literal('custom_event'),
+  customEventId: z.string().describe('UUID of the CustomEvent definition'),
+  displayName: z
+    .string()
+    .optional()
+    .describe('A user-friendly name for display purposes'),
+  segment: zChartEventSegment,
+});
+
 export const zChartEventItem = z.discriminatedUnion('type', [
   zChartEventWithType,
   zChartFormula,
+  zChartCustomEvent,
 ]);
+
+export const zCustomEventComponent = z.object({
+  eventName: z.string().describe('The real event name in ClickHouse'),
+  filters: z
+    .array(zChartEventFilter)
+    .default([])
+    .describe('Optional per-event filters'),
+});
+
+export const zCustomEventInput = z.object({
+  name: z.string().min(1),
+  projectId: z.string(),
+  components: z
+    .array(zCustomEventComponent)
+    .min(1)
+    .describe('At least one sub-event required'),
+  color: z.string().optional(),
+  icon: z.string().optional(),
+});
 
 export const zChartBreakdown = z.object({
   id: z.string().optional(),
@@ -89,7 +120,7 @@ export const zChartBreakdown = z.object({
 export const zChartSeries = z
   .array(zChartEventItem)
   .describe(
-    'Array of series (events or formulas) to be tracked and displayed in the chart',
+    'Array of series (events or formulas) to be tracked and displayed in the chart'
   );
 
 export const zChartBreakdowns = z.array(zChartBreakdown);
@@ -174,10 +205,10 @@ export const zReportInput = z.object({
   interval: zTimeInterval
     .default('day')
     .describe(
-      'The time interval for data aggregation (e.g., day, week, month)',
+      'The time interval for data aggregation (e.g., day, week, month)'
     ),
   series: zChartSeries.describe(
-    'Array of series (events or formulas) to be tracked and displayed in the chart',
+    'Array of series (events or formulas) to be tracked and displayed in the chart'
   ),
   breakdowns: zChartBreakdowns
     .default([])
@@ -189,13 +220,13 @@ export const zReportInput = z.object({
     .string()
     .nullish()
     .describe(
-      'Custom start date for the data range (overrides range if provided)',
+      'Custom start date for the data range (overrides range if provided)'
     ),
   endDate: z
     .string()
     .nullish()
     .describe(
-      'Custom end date for the data range (overrides range if provided)',
+      'Custom end date for the data range (overrides range if provided)'
     ),
   previous: z
     .boolean()
@@ -208,7 +239,7 @@ export const zReportInput = z.object({
   metric: zMetric
     .default('sum')
     .describe(
-      'The aggregation method for the metric (e.g., sum, count, average)',
+      'The aggregation method for the metric (e.g., sum, count, average)'
     ),
   limit: z
     .number()
@@ -230,7 +261,7 @@ export const zReportInput = z.object({
     .string()
     .optional()
     .describe(
-      "Optional unit of measurement for the chart's Y-axis (e.g., $, %, users)",
+      "Optional unit of measurement for the chart's Y-axis (e.g., $, %, users)"
     ),
 });
 
@@ -408,13 +439,13 @@ export const zCreateSlackIntegration = zCreateIntegration;
 export const zCreateWebhookIntegration = zCreateIntegration.merge(
   z.object({
     config: zWebhookConfig,
-  }),
+  })
 );
 
 export const zCreateDiscordIntegration = zCreateIntegration.merge(
   z.object({
     config: zDiscordConfig,
-  }),
+  })
 );
 
 export const zNotificationRuleEventConfig = z.object({

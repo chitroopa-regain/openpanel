@@ -19,14 +19,16 @@ import { db } from '../prisma-client';
 export type IServiceReport = Awaited<ReturnType<typeof getReportById>>;
 
 export const onlyReportEvents = (
-  series: NonNullable<IServiceReport>['series'],
+  series: NonNullable<IServiceReport>['series']
 ) => {
+  // Only include real events — custom events lack .name/.filters
+  // and are not supported in funnels/conversions/retention
   return series.filter((item) => item.type === 'event');
 };
 
 export function transformFilter(
   filter: Partial<IChartEventFilter>,
-  index: number,
+  index: number
 ): IChartEventFilter {
   return {
     id: filter.id ?? alphabetIds[index] ?? 'A',
@@ -39,7 +41,7 @@ export function transformFilter(
 
 export function transformReportEventItem(
   item: IChartEventItem,
-  index: number,
+  index: number
 ): IChartEventItem {
   if (item.type === 'formula') {
     // Transform formula
@@ -48,6 +50,17 @@ export function transformReportEventItem(
       id: item.id ?? alphabetIds[index]!,
       formula: item.formula || '',
       displayName: item.displayName,
+    };
+  }
+
+  if (item.type === 'custom_event') {
+    // Pass through custom event as-is
+    return {
+      type: 'custom_event',
+      id: item.id ?? alphabetIds[index]!,
+      customEventId: item.customEventId,
+      displayName: item.displayName,
+      segment: item.segment ?? 'event',
     };
   }
 
@@ -64,7 +77,7 @@ export function transformReportEventItem(
 }
 
 export function transformReport(
-  report: DbReport & { layout?: ReportLayout | null },
+  report: DbReport & { layout?: ReportLayout | null }
 ): IReport & {
   id: string;
   layout?: ReportLayout | null;

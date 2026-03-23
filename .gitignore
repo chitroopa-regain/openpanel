@@ -173,6 +173,7 @@ dist
 
 # Wrangler build artifacts and cache
 .wrangler/
+.dev.vars
 
 # yarn v2
 

@@ -15,7 +15,12 @@ import { useNumber } from '@/hooks/use-numer-formatter';
 import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { PopoverPortal } from '@radix-ui/react-popover';
-import { CheckIcon, ChevronsUpDown, GanttChartIcon } from 'lucide-react';
+import {
+  CheckIcon,
+  ChevronsUpDown,
+  GanttChartIcon,
+  LayersIcon,
+} from 'lucide-react';
 import VirtualList from 'rc-virtual-list';
 import * as React from 'react';
 import { EventIcon } from '../events/event-icon';
@@ -90,7 +95,7 @@ export function ComboboxEvents<
 
   function find(value: string) {
     return items.find(
-      (item) => item.name.toLowerCase() === value.toLowerCase(),
+      (item) => item.name.toLowerCase() === value.toLowerCase()
     );
   }
 
@@ -140,7 +145,7 @@ export function ComboboxEvents<
           className={cn(
             'justify-between',
             !!error && 'border-destructive',
-            className,
+            className
           )}
         >
           <div className="flex min-w-0 items-center">
@@ -192,7 +197,7 @@ export function ComboboxEvents<
                   <CommandItem
                     className={cn(
                       'p-4 py-2.5 gap-4',
-                      selectedValues.includes(item.name as T) && 'bg-accent',
+                      selectedValues.includes(item.name as T) && 'bg-accent'
                     )}
                     key={item.name}
                     value={item.name}
@@ -202,14 +207,22 @@ export function ComboboxEvents<
                   >
                     {selectedValues.includes(item.name as T) ? (
                       <CheckIcon className="h-4 w-4 flex-shrink-0" />
+                    ) : 'isCustomEvent' in item && item.isCustomEvent ? (
+                      <LayersIcon className="h-4 w-4 flex-shrink-0 text-violet-500" />
                     ) : (
                       <EventIcon name={item.name} meta={item.meta} size="sm" />
                     )}
                     <span className="font-medium flex-1 truncate">
                       {item.name === '*' ? 'Any events' : item.name}
                     </span>
+                    {'isCustomEvent' in item && item.isCustomEvent && (
+                      <span className="text-xs text-violet-500 font-medium">
+                        Custom
+                      </span>
+                    )}
                     <span className="text-muted-foreground font-mono font-medium">
-                      {number.short(item.count)}
+                      {!('isCustomEvent' in item && item.isCustomEvent) &&
+                        number.short(item.count)}
                     </span>
                   </CommandItem>
                 );

@@ -1,6 +1,6 @@
 import { slug } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
-import type { IChartEventItem } from '@openpanel/validation';
+import type { IChartCustomEvent, IChartEventItem } from '@openpanel/validation';
 import { getSettingsForProject } from '../services/organization.service';
 import type { NormalizedInput } from './normalize';
 import type { ConcreteSeries, Plan } from './types';
@@ -30,6 +30,23 @@ export async function plan(normalized: NormalizedInput): Promise<Plan> {
         context: {
           event: event.name,
           filters: [...event.filters],
+        },
+        data: [], // Will be populated by fetch stage
+        definition,
+      };
+      concreteSeries.push(concrete);
+    } else if (definition.type === 'custom_event') {
+      const customDef = definition as IChartCustomEvent;
+      const displayName = customDef.displayName ?? customDef.customEventId;
+
+      const concrete: ConcreteSeries = {
+        id: `custom-${slug(displayName)}-${customDef.id ?? index}`,
+        definitionId: customDef.id ?? alphabetIds[index] ?? `series-${index}`,
+        definitionIndex: index,
+        name: [displayName],
+        context: {
+          event: displayName,
+          filters: [],
         },
         data: [], // Will be populated by fetch stage
         definition,
