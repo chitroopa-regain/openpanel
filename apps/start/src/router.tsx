@@ -6,7 +6,16 @@ import { routeTree } from './routeTree.gen';
 import { getServerEnvs } from './server/get-envs';
 
 export const getRouter = async () => {
-  const envs = await getServerEnvs();
+  const isDev = process.env.NODE_ENV === 'development';
+  const envs = isDev
+    ? {
+        apiUrl: String(process.env.API_URL || 'http://localhost:3333'),
+        dashboardUrl: String(process.env.DASHBOARD_URL || 'http://localhost:3100'),
+        isSelfHosted: process.env.SELF_HOSTED !== undefined,
+        isMaintenance: process.env.MAINTENANCE === '1',
+        isDemo: process.env.DEMO_USER_ID !== undefined,
+      }
+    : await getServerEnvs();
   const rqContext = TanstackQuery.getContext(envs.apiUrl);
 
   const router = createTanstackRouter({
@@ -16,6 +25,7 @@ export const getRouter = async () => {
       ...envs,
     },
     defaultPreload: 'intent',
+    defaultSsr: !isDev,
     Wrap: (props: { children: React.ReactNode }) => {
       return (
         <TanstackQuery.Provider {...rqContext} apiUrl={envs.apiUrl}>

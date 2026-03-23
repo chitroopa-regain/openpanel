@@ -29,6 +29,11 @@ if (process.env.NITRO) {
 
 const config = defineConfig({
   plugins,
+  server: {
+    watch: {
+      ignored: ['**/routeTree.gen.ts'],
+    },
+  },
 });
 
 export default wrapVinxiConfigWithSentry(config, {

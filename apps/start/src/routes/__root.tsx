@@ -37,7 +37,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       context.queryClient.ensureQueryData(
         context.trpc.auth.session.queryOptions()
       ),
-      getCookiesFn().catch(() => ({}) as Record<string, string>),
+      process.env.NODE_ENV === 'development'
+        ? ({} as Record<string, string>)
+        : getCookiesFn().catch(() => ({}) as Record<string, string>),
     ]);
 
     return { session, cookies };
