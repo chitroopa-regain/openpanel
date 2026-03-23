@@ -229,7 +229,7 @@ function CustomEventsSettings() {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen} modal={false}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
