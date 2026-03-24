@@ -1,5 +1,4 @@
 import { FullPageEmptyState } from '@/components/full-page-empty-state';
-import { useOverviewOptions } from '@/components/overview/useOverviewOptions';
 import { Button, LinkButton } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -25,8 +24,6 @@ import {
   type Layout,
   useReportLayouts,
 } from '@/components/grafana-grid';
-import { OverviewInterval } from '@/components/overview/overview-interval';
-import { OverviewRange } from '@/components/overview/overview-range';
 import { PageContainer } from '@/components/page-container';
 import { PageHeader } from '@/components/page-header';
 import {
@@ -86,8 +83,6 @@ function Component() {
   const { organizationId, dashboardId, projectId } = Route.useParams();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const { range, startDate, endDate, interval } = useOverviewOptions();
-
   const dashboardQuery = useQuery(
     trpc.dashboard.byId.queryOptions({
       id: dashboardId,
@@ -264,8 +259,7 @@ function Component() {
         className="mb-4"
         actions={
           <>
-            <OverviewRange />
-            <OverviewInterval />
+            {/* Dashboard time picker removed — each report uses its own range */}
             <LinkButton
               from={Route.fullPath}
               to={'/$organizationId/$projectId/reports'}
@@ -361,10 +355,10 @@ function Component() {
                 report={report}
                 organizationId={organizationId}
                 projectId={projectId}
-                range={range}
-                startDate={startDate}
-                endDate={endDate}
-                interval={interval}
+                range={null}
+                startDate={null}
+                endDate={null}
+                interval={null}
                 onDelete={(reportId) => {
                   reportDeletion.mutate({ reportId });
                 }}

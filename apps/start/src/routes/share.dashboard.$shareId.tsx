@@ -3,9 +3,6 @@ import { FullPageEmptyState } from '@/components/full-page-empty-state';
 import FullPageLoadingState from '@/components/full-page-loading-state';
 import { GrafanaGrid, useReportLayouts } from '@/components/grafana-grid';
 import { LoginNavbar } from '@/components/login-navbar';
-import { OverviewInterval } from '@/components/overview/overview-interval';
-import { OverviewRange } from '@/components/overview/overview-range';
-import { useOverviewOptions } from '@/components/overview/useOverviewOptions';
 import { ReportChart } from '@/components/report-chart';
 import {
   ReportItem,
@@ -68,7 +65,6 @@ function RouteComponent() {
   const { shareId } = Route.useParams();
   const { header } = useSearch({ from: '/share/dashboard/$shareId' });
   const trpc = useTRPC();
-  const { range, startDate, endDate, interval } = useOverviewOptions();
 
   const shareQuery = useSuspenseQuery(
     trpc.share.dashboard.queryOptions({
@@ -114,16 +110,7 @@ function RouteComponent() {
           <LoginNavbar className="relative p-4" />
         </div>
       )}
-      <div className="sticky-header [animation-range:50px_100px]!">
-        <div className="p-4 col gap-2 mx-auto max-w-7xl">
-          <div className="row justify-between">
-            <div className="flex gap-2">
-              <OverviewRange />
-              <OverviewInterval />
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Dashboard time picker removed — each report uses its own range */}
       <div className="mx-auto max-w-7xl p-4">
         {reportsQuery.isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -143,10 +130,10 @@ function RouteComponent() {
                 <ReportItemReadOnly
                   report={report}
                   shareId={shareId}
-                  range={range}
-                  startDate={startDate}
-                  endDate={endDate}
-                  interval={interval}
+                  range={null}
+                  startDate={null}
+                  endDate={null}
+                  interval={null}
                 />
               </div>
             ))}
