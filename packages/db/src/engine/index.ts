@@ -142,7 +142,9 @@ export async function executeAggregateChart(
       customEventComponents = customEvent.components as ICustomEventComponent[];
       eventName = customEvent.name;
       eventSegment = customDef.segment;
+      eventFilters = customDef.filters ?? [];
       eventDisplayName = customDef.displayName ?? eventName;
+      eventProperty = customDef.property;
     } else {
       const event = definition as IChartEventItem & { type: 'event' };
       eventName = event.name;
@@ -300,7 +302,9 @@ export async function executeAggregateChart(
           customEvent.components as ICustomEventComponent[];
         prevEventName = customEvent.name;
         prevEventSegment = customDef.segment;
+        prevEventFilters = customDef.filters ?? [];
         prevEventDisplayName = customDef.displayName ?? prevEventName;
+        prevEventProperty = customDef.property;
       } else {
         const event = definition as IChartEventItem & { type: 'event' };
         prevEventName = event.name;

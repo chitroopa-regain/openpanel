@@ -66,7 +66,9 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
       customEventComponents = customEvent.components as ICustomEventComponent[];
       eventName = customEvent.name;
       eventSegment = customDef.segment;
+      eventFilters = customDef.filters ?? [];
       eventDisplayName = customDef.displayName ?? eventName;
+      eventProperty = customDef.property;
     } else {
       const event = definition as typeof definition & { type: 'event' };
       eventName = event.name;

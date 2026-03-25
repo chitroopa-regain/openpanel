@@ -40,6 +40,9 @@ export function ReportSeriesItem({
 
   const isFormula = normalizedEvent.type === 'formula';
   const isCustomEvent = normalizedEvent.type === 'custom_event';
+  const customEvent = isCustomEvent
+    ? (normalizedEvent as IChartCustomEvent)
+    : null;
   const chartEvent =
     normalizedEvent.type === 'event'
       ? (normalizedEvent as IChartEventItem & { type: 'event' })
@@ -136,21 +139,83 @@ export function ReportSeriesItem({
       {/* Filters - only for events */}
       {chartEvent && !isSelectManyEvents && <FiltersList event={chartEvent} />}
 
-      {/* Segment picker for custom events */}
-      {isCustomEvent && showSegment && (
-        <div className="flex gap-2 p-2 pt-0">
-          <ReportSegment
-            value={(normalizedEvent as IChartCustomEvent).segment}
-            onChange={(segment) => {
-              dispatch(
-                changeEvent({
-                  ...(normalizedEvent as IChartCustomEvent),
-                  segment,
-                })
-              );
-            }}
-          />
+      {/* Segment, Filter, and Property picker for custom events */}
+      {isCustomEvent && (showSegment || showAddFilter) && (
+        <div className="flex gap-2 p-2 pt-0 flex-wrap">
+          {showSegment && (
+            <ReportSegment
+              value={customEvent!.segment}
+              onChange={(segment) => {
+                dispatch(
+                  changeEvent({
+                    ...customEvent!,
+                    segment,
+                  })
+                );
+              }}
+            />
+          )}
+          {showAddFilter && (
+            <PropertiesCombobox
+              onSelect={(action) => {
+                dispatch(
+                  changeEvent({
+                    ...customEvent!,
+                    filters: [
+                      ...(customEvent!.filters ?? []),
+                      {
+                        id: shortId(),
+                        name: action.value,
+                        operator: 'is',
+                        value: [],
+                      },
+                    ],
+                  })
+                );
+              }}
+            >
+              {(setOpen) => (
+                <SmallButton
+                  onClick={() => setOpen((p) => !p)}
+                  icon={FilterIcon}
+                >
+                  Add filter
+                </SmallButton>
+              )}
+            </PropertiesCombobox>
+          )}
+          {showSegment &&
+            customEvent!.segment.startsWith(
+              'property_'
+            ) && (
+              <PropertiesCombobox
+                onSelect={(item) => {
+                  dispatch(
+                    changeEvent({
+                      ...customEvent!,
+                      property: item.value,
+                    })
+                  );
+                }}
+              >
+                {(setOpen) => (
+                  <SmallButton
+                    icon={DatabaseIcon}
+                    onClick={() => setOpen((p) => !p)}
+                  >
+                    {customEvent!.property
+                      ? `Property: ${customEvent!.property}`
+                      : 'Select property'}
+                  </SmallButton>
+                )}
+              </PropertiesCombobox>
+            )}
         </div>
+      )}
+
+      {/* Filters for custom events */}
+      {isCustomEvent && !isSelectManyEvents && (
+        <FiltersList event={customEvent!} />
       )}
     </div>
   );

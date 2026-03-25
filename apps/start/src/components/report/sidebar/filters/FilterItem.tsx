@@ -8,6 +8,7 @@ import { useAppParams } from '@/hooks/use-app-params';
 import { usePropertyValues } from '@/hooks/use-property-values';
 import { useDispatch } from '@/redux';
 import type {
+  IChartCustomEvent,
   IChartEvent,
   IChartEventFilter,
   IChartEventFilterOperator,
@@ -18,7 +19,7 @@ import { SlidersHorizontal, Trash } from 'lucide-react';
 import { changeEvent } from '../../reportSlice';
 
 interface FilterProps {
-  event: IChartEvent;
+  event: IChartEvent | IChartCustomEvent;
   filter: IChartEventFilter;
 }
 
@@ -44,8 +45,7 @@ export function FilterItem({ filter, event }: FilterProps) {
       changeEvent({
         ...event,
         filters: event.filters.filter((item) => item.id !== id),
-        type: 'event',
-      }),
+      } as any),
     );
   };
 
@@ -56,7 +56,6 @@ export function FilterItem({ filter, event }: FilterProps) {
     dispatch(
       changeEvent({
         ...event,
-        type: 'event',
         filters: event.filters.map((item) => {
           if (item.id === id) {
             return {
@@ -67,7 +66,7 @@ export function FilterItem({ filter, event }: FilterProps) {
 
           return item;
         }),
-      }),
+      } as any),
     );
   };
 
@@ -78,7 +77,6 @@ export function FilterItem({ filter, event }: FilterProps) {
     dispatch(
       changeEvent({
         ...event,
-        type: 'event',
         filters: event.filters.map((item) => {
           if (item.id === id) {
             return {
@@ -90,15 +88,18 @@ export function FilterItem({ filter, event }: FilterProps) {
 
           return item;
         }),
-      }),
+      } as any),
     );
   };
 
   const dispatch = useDispatch();
+  const eventName =
+    'name' in event ? event.name : event.displayName ?? '*';
+
   return (
     <PureFilterItem
       filter={filter}
-      eventName={event.name}
+      eventName={eventName}
       onRemove={onRemove}
       onChangeValue={onChangeValue}
       onChangeOperator={onChangeOperator}

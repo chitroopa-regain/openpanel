@@ -85,6 +85,16 @@ export const zChartCustomEvent = z.object({
     .optional()
     .describe('A user-friendly name for display purposes'),
   segment: zChartEventSegment,
+  filters: z
+    .array(zChartEventFilter)
+    .default([])
+    .describe('Filters applied to the custom event'),
+  property: z
+    .string()
+    .optional()
+    .describe(
+      'Optional property for specific segment calculations (e.g., value for property_sum/average)'
+    ),
 });
 
 export const zChartEventItem = z.discriminatedUnion('type', [
