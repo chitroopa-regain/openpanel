@@ -82,6 +82,7 @@ export function format(
         name: eventName,
         breakdowns: cs.context.breakdowns,
       },
+      serieType: definition?.type ?? 'event',
       metrics: {
         ...metrics,
         ...(previousSerie

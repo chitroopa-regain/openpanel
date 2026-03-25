@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+
 import { useVisibleSeries } from '@/hooks/use-visible-series';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
@@ -15,6 +17,16 @@ export function Chart({ data }: Props) {
     report: { unit },
   } = useReportChartContext();
   const { series } = useVisibleSeries(data, isEditMode ? 20 : 4);
+
+  // When formulas exist, only show formula series (like Mixpanel does)
+  const displaySeries = useMemo(() => {
+    const hasFormulas = series.some((s) => s.serieType === 'formula');
+    if (hasFormulas) {
+      return series.filter((s) => s.serieType === 'formula');
+    }
+    return series;
+  }, [series]);
+
   return (
     <div
       className={cn(
@@ -22,7 +34,7 @@ export function Chart({ data }: Props) {
         isEditMode && 'md:grid-cols-2 lg:grid-cols-3',
       )}
     >
-      {series.map((serie) => {
+      {displaySeries.map((serie) => {
         return (
           <MetricCard
             key={serie.id}
