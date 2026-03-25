@@ -52,5 +52,4 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:dashboard-plus
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          no-cache: true
