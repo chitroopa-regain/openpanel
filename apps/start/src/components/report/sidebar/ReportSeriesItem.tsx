@@ -137,7 +137,7 @@ export function ReportSeriesItem({
       )}
 
       {/* Filters - only for events */}
-      {chartEvent && !isSelectManyEvents && <FiltersList event={chartEvent} />}
+      {chartEvent && <FiltersList event={chartEvent} skipEventNameFilter={isSelectManyEvents} />}
 
       {/* Segment, Filter, and Property picker for custom events */}
       {isCustomEvent && (showSegment || showAddFilter) && (

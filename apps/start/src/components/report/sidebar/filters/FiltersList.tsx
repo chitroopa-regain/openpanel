@@ -4,10 +4,14 @@ import { FilterItem } from './FilterItem';
 
 interface ReportEventFiltersProps {
   event: IChartEvent | IChartCustomEvent;
+  skipEventNameFilter?: boolean;
 }
 
-export function FiltersList({ event }: ReportEventFiltersProps) {
-  const filters = event.filters ?? [];
+export function FiltersList({ event, skipEventNameFilter }: ReportEventFiltersProps) {
+  const allFilters = event.filters ?? [];
+  const filters = skipEventNameFilter
+    ? allFilters.filter((f) => f.name !== 'name')
+    : allFilters;
   if (filters.length === 0) return null;
   return (
     <div>

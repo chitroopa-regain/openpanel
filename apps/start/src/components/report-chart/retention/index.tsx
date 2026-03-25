@@ -14,6 +14,9 @@ export function ReportRetentionChart() {
   const eventSeries = report.series.filter((item) => item.type === 'event');
   const firstEvent = (eventSeries[0]?.filters?.[0]?.value ?? []).map(String);
   const secondEvent = (eventSeries[1]?.filters?.[0]?.value ?? []).map(String);
+  // Extract additional filters (beyond filters[0] which is the event name)
+  const firstEventFilters = (eventSeries[0]?.filters ?? []).slice(1);
+  const secondEventFilters = (eventSeries[1]?.filters ?? []).slice(1);
   const isEnabled =
     firstEvent.length > 0 && secondEvent.length > 0 && !isLazyLoading;
 
@@ -26,6 +29,8 @@ export function ReportRetentionChart() {
       {
         firstEvent,
         secondEvent,
+        firstEventFilters,
+        secondEventFilters,
         projectId: report.projectId,
         range: report.range,
         startDate: report.startDate,

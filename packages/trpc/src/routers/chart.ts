@@ -28,6 +28,8 @@ import {
 } from '@openpanel/db';
 import {
   type IChartEvent,
+  type IChartEventFilter,
+  zChartEventFilter,
   zChartSeries,
   zCriteria,
   zRange,
@@ -608,6 +610,8 @@ export const chartRouter = createTRPCRouter({
         projectId: z.string(),
         firstEvent: z.array(z.string()).min(1),
         secondEvent: z.array(z.string()).min(1),
+        firstEventFilters: z.array(zChartEventFilter).default([]),
+        secondEventFilters: z.array(zChartEventFilter).default([]),
         criteria: zCriteria.default('on_or_after'),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
@@ -621,6 +625,8 @@ export const chartRouter = createTRPCRouter({
       const projectId = ctx.report?.projectId ?? input.projectId;
       let firstEvent = input.firstEvent;
       let secondEvent = input.secondEvent;
+      let firstEventFilters: IChartEventFilter[] = input.firstEventFilters;
+      let secondEventFilters: IChartEventFilter[] = input.secondEventFilters;
       let criteria = input.criteria;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
@@ -660,6 +666,8 @@ export const chartRouter = createTRPCRouter({
 
         firstEvent = extractedFirstEvent;
         secondEvent = extractedSecondEvent;
+        firstEventFilters = (eventSeries[0]?.filters ?? []).slice(1);
+        secondEventFilters = (eventSeries[1]?.filters ?? []).slice(1);
       }
 
       const { timezone } = await getSettingsForProject(projectId);
@@ -717,17 +725,64 @@ export const chartRouter = createTRPCRouter({
         return `name IN (${event.map((e) => sqlstring.escape(e)).join(',')})`;
       };
 
+      // Determine which table to use: events table when any non-profile
+      // filter is present (cohort_events_mv only has project_id, name,
+      // created_at, profile_id, event_count — no properties/path/country/etc).
+      // Profile-only filters are handled via a JOIN, so the MV suffices.
+      const needsEventsTable = (filters: IChartEventFilter[]) =>
+        filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile');
+
+      const useEventsFirst = needsEventsTable(firstEventFilters);
+      const useEventsSecond = needsEventsTable(secondEventFilters);
+      const firstEventTable = useEventsFirst
+        ? TABLE_NAMES.events
+        : TABLE_NAMES.cohort_events_mv;
+      const secondEventTable = useEventsSecond
+        ? TABLE_NAMES.events
+        : TABLE_NAMES.cohort_events_mv;
+
+      // Build profile JOIN clause (only needed for profile.* filters)
+      const buildProfileJoin = (filters: IChartEventFilter[]) => {
+        const profileFilters = filters
+          .filter((f) => f.name.startsWith('profile.'))
+          .map((f) => f.name.replace('profile.', ''));
+        if (profileFilters.length === 0) return '';
+        const columns = uniq(profileFilters.map((f) => f.split('.')[0])).join(', ');
+        return `LEFT ANY JOIN (SELECT id, ${columns} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) AS profile ON profile.id = profile_id`;
+      };
+
+      const buildFilterWhere = (filters: IChartEventFilter[]) => {
+        if (filters.length === 0) return '';
+        const where = getEventFiltersWhereClause(filters);
+        const clauses = Object.values(where);
+        if (clauses.length === 0) return '';
+        return `AND ${clauses.join(' AND ')}`;
+      };
+
+      const firstEventJoin = buildProfileJoin(firstEventFilters);
+      const firstEventWhere = buildFilterWhere(firstEventFilters);
+      const secondEventJoin = buildProfileJoin(secondEventFilters);
+      const secondEventWhere = buildFilterWhere(secondEventFilters);
+
+      // cohort_events_mv pre-filters to identified users (profile_id != device_id).
+      // When falling back to the raw events table, replicate that condition.
+      const firstIdentifiedFilter = useEventsFirst ? 'AND profile_id != device_id' : '';
+      const secondIdentifiedFilter = useEventsSecond ? 'AND profile_id != device_id' : '';
+
       const cohortQuery = `
-        WITH 
+        WITH
         cohort_users AS (
           SELECT
             profile_id AS userID,
             project_id,
             ${sqlToStartOf}(created_at) AS cohort_interval
-          FROM ${TABLE_NAMES.cohort_events_mv}
+          FROM ${firstEventTable}
+          ${firstEventJoin}
           WHERE ${whereEventNameIs(firstEvent)}
             AND project_id = ${sqlstring.escape(projectId)}
             AND created_at BETWEEN toDate('${utc(dates.startDate)}') AND toDate('${utc(dates.endDate)}')
+            ${firstIdentifiedFilter}
+            ${firstEventWhere}
         ),
         last_event AS
         (
@@ -735,10 +790,13 @@ export const chartRouter = createTRPCRouter({
                 profile_id,
                 project_id,
                 toDate(created_at) AS event_date
-            FROM cohort_events_mv
+            FROM ${secondEventTable}
+            ${secondEventJoin}
             WHERE ${whereEventNameIs(secondEvent)}
             AND project_id = ${sqlstring.escape(projectId)}
             AND created_at BETWEEN toDate('${utc(dates.startDate)}') AND toDate('${utc(dates.endDate)}') + INTERVAL ${diffInterval} ${sqlInterval}
+            ${secondIdentifiedFilter}
+            ${secondEventWhere}
         ),
         retention_matrix AS
         (
