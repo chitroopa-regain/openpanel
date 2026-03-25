@@ -115,6 +115,7 @@ export const chartSegments = {
   session: 'Unique sessions',
   user_average: 'Average users',
   one_event_per_user: 'One event per user',
+  frequency_distribution: 'Frequency distribution',
   property_sum: 'Sum of property',
   property_average: 'Average of property',
   property_max: 'Max of property',

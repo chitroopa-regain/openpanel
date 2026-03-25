@@ -249,9 +249,13 @@ export function getChartSql({
     sb.where.endDate = `created_at <= toDateTime('${formatClickhouseDate(endDate)}')`;
   }
 
+  // Frequency distribution ignores breakdowns — it IS the breakdown
+  const effectiveBreakdowns =
+    event.segment === 'frequency_distribution' ? [] : breakdowns;
+
   // Use CTE to define top breakdown values once, then reference in WHERE clause
-  if (breakdowns.length > 0 && limit) {
-    const breakdownSelects = breakdowns
+  if (effectiveBreakdowns.length > 0 && limit) {
+    const breakdownSelects = effectiveBreakdowns
       .map((b) => getSelectPropertyKey(b.name))
       .join(', ');
 
@@ -267,10 +271,10 @@ export function getChartSql({
     );
 
     // Filter main query to only include top breakdown values
-    sb.where.bar = `(${breakdowns.map((b) => getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
+    sb.where.bar = `(${effectiveBreakdowns.map((b) => getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
   }
 
-  breakdowns.forEach((breakdown, index) => {
+  effectiveBreakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
     sb.select[key] = `${getSelectPropertyKey(breakdown.name)} as ${key}`;
@@ -313,10 +317,10 @@ export function getChartSql({
   );
 
   // Note: The profile CTE (if it exists) is available in subqueries, so we can reference it directly
-  if (breakdowns.length > 0) {
+  if (effectiveBreakdowns.length > 0) {
     // Match breakdown properties in subquery with outer query's grouped values
     // Since outer query groups by label_X, we reference those in the correlation
-    const breakdownMatches = breakdowns
+    const breakdownMatches = effectiveBreakdowns
       .map((b, index) => {
         const propertyKey = getSelectPropertyKey(b.name);
         // Correlate: match the property expression with outer query's label_X value
@@ -550,6 +554,73 @@ export function getAggregateChartSql({
     return sql;
   }
 
+  if (event.segment === 'frequency_distribution') {
+    // Frequency distribution: count how many users performed the event N times
+    // Inner CTE groups events by profile_id to get per-user counts
+    // Outer query buckets those counts: "1 time", "2 times", ..., ">= 7 times"
+
+    // Remove breakdown artifacts — frequency distribution IS the breakdown
+    delete sb.where.bar;
+    delete sb.ctes.top_breakdowns;
+
+    const whereClause = Object.keys(sb.where).length
+      ? `WHERE ${join(sb.where, ' AND ')}`
+      : '';
+
+    const eventLabel = customEventComponents
+      ? sqlstring.escape(event.displayName ?? event.name)
+      : event.name !== '*'
+        ? sqlstring.escape(event.name)
+        : "'*'";
+
+    // Add user_counts as a CTE (profile CTE may already exist from filters above)
+    addCte(
+      'user_counts',
+      `SELECT profile_id, count(*) as event_count
+      FROM ${TABLE_NAMES.events} e
+      ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${whereClause}
+      GROUP BY profile_id`
+    );
+
+    // Reset builder state for outer query that reads from user_counts
+    sb.from = 'user_counts';
+    sb.joins = {};
+    sb.where = {};
+    sb.select = {};
+    sb.groupBy = {};
+    sb.orderBy = {};
+
+    sb.select.label_0 = `${eventLabel} as label_0`;
+    sb.select.label_1 = `multiIf(
+          event_count = 1, '1 time',
+          event_count = 2, '2 times',
+          event_count = 3, '3 times',
+          event_count = 4, '4 times',
+          event_count = 5, '5 times',
+          event_count = 6, '6 times',
+          '>= 7 times'
+        ) as label_1`;
+    sb.select.count = 'count(*) as count';
+    sb.select.date = `${sqlstring.escape(startDate)} as date`;
+    sb.groupBy.label_0 = 'label_0';
+    sb.groupBy.label_1 = 'label_1';
+    sb.orderBy.bucket = `CASE label_1
+          WHEN '1 time' THEN 1
+          WHEN '2 times' THEN 2
+          WHEN '3 times' THEN 3
+          WHEN '4 times' THEN 4
+          WHEN '5 times' THEN 5
+          WHEN '6 times' THEN 6
+          ELSE 7
+        END ASC`;
+
+    const sql = getSql();
+    console.log('-- Aggregate Chart (Frequency Distribution) --');
+    console.log(sql.replaceAll(/[\n\r]/g, ' '));
+    console.log('-- End --');
+    return sql;
+  }
+
   // Order by count DESC (biggest first) for aggregate charts
   sb.orderBy.count = 'count DESC';
 
@@ -595,6 +666,10 @@ function buildAggregateExpression(
       return useExact
         ? { expression: 'COUNT(*)::float / COUNT(DISTINCT profile_id)::float' }
         : { expression: 'count(*)::Float64 / uniq(profile_id)::Float64' };
+    case 'frequency_distribution':
+      // Frequency distribution is handled as a special case in getAggregateChartSql
+      // For time-series fallback, just count unique users
+      return { expression: `${distinctFn}(profile_id)` };
     case 'property_sum':
     case 'property_average':
     case 'property_max':

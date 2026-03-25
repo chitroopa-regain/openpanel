@@ -8,8 +8,14 @@ import { ReportSettings } from './ReportSettings';
 import { ReportFixedEvents } from './report-fixed-events';
 
 export function ReportSidebar() {
-  const { chartType, options } = useSelector((state) => state.report);
-  const showBreakdown = chartType !== 'retention' && chartType !== 'sankey';
+  const { chartType, options, series } = useSelector((state) => state.report);
+  const hasFrequencyDistribution = series.some(
+    (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
+  );
+  const showBreakdown =
+    chartType !== 'retention' &&
+    chartType !== 'sankey' &&
+    !hasFrequencyDistribution;
   const showFixedEvents = chartType === 'sankey';
   return (
     <>

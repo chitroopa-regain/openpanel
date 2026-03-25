@@ -72,9 +72,14 @@ export const reportSlice = createSlice({
       };
     },
     setReport(state, action: PayloadAction<IReport>) {
+      // Clear breakdowns if any series uses frequency distribution
+      const hasFreqDist = action.payload.series.some(
+        (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
+      );
       return {
         ...state,
         ...action.payload,
+        breakdowns: hasFreqDist ? [] : action.payload.breakdowns,
         startDate: null,
         endDate: null,
         dirty: false,
@@ -133,6 +138,15 @@ export const reportSlice = createSlice({
         }
         return event;
       });
+
+      // Clear breakdowns when any series uses frequency distribution
+      // (frequency distribution IS the breakdown — user-defined breakdowns are ignored)
+      const hasFreqDist = state.series.some(
+        (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
+      );
+      if (hasFreqDist) {
+        state.breakdowns = [];
+      }
     },
 
     // Previous

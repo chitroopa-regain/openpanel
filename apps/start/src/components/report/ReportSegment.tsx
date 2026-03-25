@@ -1,5 +1,6 @@
 import {
   ActivityIcon,
+  BarChart3Icon,
   ClockIcon,
   EqualApproximatelyIcon,
   type LucideIcon,
@@ -24,6 +25,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useSelector } from '@/redux';
 import { cn } from '@/utils/cn';
 import { Button } from '../ui/button';
 
@@ -37,10 +39,15 @@ export function ReportSegment({
   value,
   onChange,
 }: ReportChartTypeProps) {
-  const items = mapKeys(chartSegments).map((key) => ({
-    label: chartSegments[key],
-    value: key,
-  }));
+  const chartType = useSelector((state) => state.report.chartType);
+  const isAggregateChart = chartType === 'pie' || chartType === 'bar';
+
+  const items = mapKeys(chartSegments)
+    .filter((key) => key !== 'frequency_distribution' || isAggregateChart)
+    .map((key) => ({
+      label: chartSegments[key],
+      value: key,
+    }));
 
   const Icons: Record<IChartEventSegment, LucideIcon> = {
     event: ActivityIcon,
@@ -48,6 +55,7 @@ export function ReportSegment({
     session: ClockIcon,
     user_average: UserCheck2Icon,
     one_event_per_user: UserCheckIcon,
+    frequency_distribution: BarChart3Icon,
     property_sum: SigmaIcon,
     property_average: EqualApproximatelyIcon,
     property_max: TrendingUpIcon,
