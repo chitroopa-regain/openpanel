@@ -36,7 +36,7 @@ export function ReportFixedEvents({
   });
 
   const showSegment = !['retention', 'funnel', 'sankey'].includes(chartType);
-  const showAddFilter = !['retention'].includes(chartType);
+  const showAddFilter = !['sankey'].includes(chartType);
   const showDisplayNameInput = !['retention', 'sankey'].includes(chartType);
   const dispatchChangeEvent = useDebounceFn((event: IChartEventItem) => {
     dispatch(changeEvent(event));
@@ -50,7 +50,7 @@ export function ReportFixedEvents({
           return dispatch(
             removeEvent({
               id: 'type' in event ? event.id : (event as IChartEvent).id,
-            }),
+            })
           );
         }
         case 'duplicate': {
@@ -111,7 +111,7 @@ export function ReportFixedEvents({
                                 value: [value],
                               },
                             ],
-                          }),
+                          })
                         );
                       } else {
                         dispatch(
@@ -120,7 +120,7 @@ export function ReportFixedEvents({
                             name: value,
                             segment: 'event',
                             filters: [],
-                          }),
+                          })
                         );
                       }
                     }}
@@ -186,8 +186,8 @@ export function ReportFixedEvents({
                             type: 'event',
                             name: value,
                             filters: [],
-                          },
-                    ),
+                          }
+                    )
                   );
                 }}
                 items={eventNames}

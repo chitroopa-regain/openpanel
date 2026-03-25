@@ -137,7 +137,12 @@ export function ReportSeriesItem({
       )}
 
       {/* Filters - only for events */}
-      {chartEvent && <FiltersList event={chartEvent} skipEventNameFilter={isSelectManyEvents} />}
+      {chartEvent && (
+        <FiltersList
+          event={chartEvent}
+          skipEventNameFilter={isSelectManyEvents}
+        />
+      )}
 
       {/* Segment, Filter, and Property picker for custom events */}
       {isCustomEvent && (showSegment || showAddFilter) && (
@@ -184,38 +189,38 @@ export function ReportSeriesItem({
               )}
             </PropertiesCombobox>
           )}
-          {showSegment &&
-            customEvent!.segment.startsWith(
-              'property_'
-            ) && (
-              <PropertiesCombobox
-                onSelect={(item) => {
-                  dispatch(
-                    changeEvent({
-                      ...customEvent!,
-                      property: item.value,
-                    })
-                  );
-                }}
-              >
-                {(setOpen) => (
-                  <SmallButton
-                    icon={DatabaseIcon}
-                    onClick={() => setOpen((p) => !p)}
-                  >
-                    {customEvent!.property
-                      ? `Property: ${customEvent!.property}`
-                      : 'Select property'}
-                  </SmallButton>
-                )}
-              </PropertiesCombobox>
-            )}
+          {showSegment && customEvent!.segment.startsWith('property_') && (
+            <PropertiesCombobox
+              onSelect={(item) => {
+                dispatch(
+                  changeEvent({
+                    ...customEvent!,
+                    property: item.value,
+                  })
+                );
+              }}
+            >
+              {(setOpen) => (
+                <SmallButton
+                  icon={DatabaseIcon}
+                  onClick={() => setOpen((p) => !p)}
+                >
+                  {customEvent!.property
+                    ? `Property: ${customEvent!.property}`
+                    : 'Select property'}
+                </SmallButton>
+              )}
+            </PropertiesCombobox>
+          )}
         </div>
       )}
 
       {/* Filters for custom events */}
-      {isCustomEvent && !isSelectManyEvents && (
-        <FiltersList event={customEvent!} />
+      {isCustomEvent && (
+        <FiltersList
+          event={customEvent!}
+          skipEventNameFilter={isSelectManyEvents}
+        />
       )}
     </div>
   );
