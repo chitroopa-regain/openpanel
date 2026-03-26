@@ -188,6 +188,27 @@ export async function up() {
       replicatedVersion,
       isClustered,
     }),
+    ...createTable({
+      name: 'profile_traits',
+      columns: [
+        '`project_id` String CODEC(ZSTD(3))',
+        '`profile_id` String CODEC(ZSTD(3))',
+        '`key` String CODEC(ZSTD(3))',
+        '`value` String CODEC(ZSTD(3))',
+        '`updated_at` DateTime64(3) CODEC(Delta(4), LZ4)',
+      ],
+      indices: [
+        'INDEX idx_profile_id profile_id TYPE bloom_filter GRANULARITY 1',
+      ],
+      engine: 'ReplacingMergeTree(updated_at)',
+      orderBy: ['project_id', 'key', 'profile_id'],
+      settings: {
+        index_granularity: 8192,
+      },
+      distributionHash: 'cityHash64(project_id)',
+      replicatedVersion,
+      isClustered,
+    }),
 
     // Create materialized views
     ...createMaterializedView({

@@ -3,6 +3,7 @@ import sqlstring from 'sqlstring';
 import { z } from 'zod';
 
 import {
+  DEVICE_GEO_KEYS,
   TABLE_NAMES,
   chQuery,
   createSqlBuilder,
@@ -64,6 +65,12 @@ export const profileRouter = createTRPCRouter({
         .map((item) => item.replace(/\.([0-9]+)\./g, '.*.'))
         .map((item) => item.replace(/\.([0-9]+)/g, '[*]'))
         .map((item) => `properties.${item}`);
+
+      // Also include trait keys from profile_traits table
+      const traitKeys = await chQuery<{ key: string }>(
+        `SELECT DISTINCT key FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} LIMIT 1000`,
+      );
+      properties.push(...traitKeys.map((t) => `properties.${t.key}`));
 
       properties.push('id', 'first_name', 'last_name', 'email');
 
@@ -149,6 +156,23 @@ export const profileRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input: { property, projectId } }) => {
+      // Check if this is a user trait (not device/geo)
+      if (property.startsWith('properties.')) {
+        const traitKey = property.replace(/^properties\./, '');
+        if (!DEVICE_GEO_KEYS.has(traitKey)) {
+          const traitValues = await chQuery<{ value: string }>(
+            `SELECT argMax(value, updated_at) as value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING value != '' ORDER BY value LIMIT 1000`,
+          );
+          return {
+            values: pipe(
+              (data: typeof traitValues) => data.map((t) => t.value),
+              uniq,
+              sort((a: string, b: string) => a.length - b.length),
+            )(traitValues),
+          };
+        }
+      }
+
       const { sb, getSql } = createSqlBuilder();
       sb.from = TABLE_NAMES.profiles;
       sb.where.project_id = `project_id = ${sqlstring.escape(projectId)}`;

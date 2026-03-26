@@ -48,6 +48,7 @@ class CustomLogger implements Logger {
 export const TABLE_NAMES = {
   events: 'events',
   profiles: 'profiles',
+  profile_traits: 'profile_traits',
   alias: 'profile_aliases',
   self_hosting: 'self_hosting',
   events_bots: 'events_bots',

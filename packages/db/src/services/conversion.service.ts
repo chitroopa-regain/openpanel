@@ -7,6 +7,7 @@ import { clix } from '../clickhouse/query-builder';
 import {
   getEventFiltersWhereClause,
   getSelectPropertyKey,
+  getTraitBreakdownExpression,
 } from './chart.service';
 import { onlyReportEvents } from './reports.service';
 
@@ -31,7 +32,7 @@ export class ConversionService {
     const funnelWindow = funnelOptions?.funnelWindow ?? 24;
     const group = funnelGroup === 'profile_id' ? 'profile_id' : 'session_id';
     const breakdownExpressions = breakdowns.map(
-      (b) => getSelectPropertyKey(b.name),
+      (b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name),
     );
     const breakdownSelects = breakdownExpressions.map(
       (expr, index) => `${expr} as b_${index}`,
@@ -82,10 +83,10 @@ export class ConversionService {
     const eventA = events[0]!;
     const eventB = events[1]!;
     const whereA = Object.values(
-      getEventFiltersWhereClause(eventA.filters),
+      getEventFiltersWhereClause(eventA.filters, projectId),
     ).join(' AND ');
     const whereB = Object.values(
-      getEventFiltersWhereClause(eventB.filters),
+      getEventFiltersWhereClause(eventB.filters, projectId),
     ).join(' AND ');
 
     const funnelWindowSeconds = funnelWindow * 3600;

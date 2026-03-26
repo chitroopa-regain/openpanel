@@ -9,6 +9,7 @@ import { createSqlBuilder } from '../sql-builder';
 import {
   getEventFiltersWhereClause,
   getSelectPropertyKey,
+  getTraitBreakdownExpression,
 } from './chart.service';
 import { onlyReportEvents } from './reports.service';
 
@@ -36,10 +37,10 @@ export class FunnelService {
     return group === 'profile_id' ? 'profile_id' : 'session_id';
   }
 
-  getFunnelConditions(events: IChartEvent[] = []): string[] {
+  getFunnelConditions(events: IChartEvent[] = [], projectId?: string): string[] {
     return events.map((event) => {
       const { sb, getWhere } = createSqlBuilder();
-      sb.where = getEventFiltersWhereClause(event.filters);
+      sb.where = getEventFiltersWhereClause(event.filters, projectId);
       sb.where.name = `name = ${sqlstring.escape(event.name)}`;
       return getWhere().replace('WHERE ', '');
     });
@@ -70,7 +71,7 @@ export class FunnelService {
     additionalSelects?: string[];
     additionalGroupBy?: string[];
   }) {
-    const funnels = this.getFunnelConditions(eventSeries);
+    const funnels = this.getFunnelConditions(eventSeries, projectId);
 
     return clix(this.client, timezone)
       .select([
@@ -235,7 +236,7 @@ export class FunnelService {
 
     // Create the funnel CTE (session-level)
     const breakdownSelects = breakdowns.map(
-      (b, index) => `${getSelectPropertyKey(b.name)} as b_${index}`,
+      (b, index) => `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${index}`,
     );
     const breakdownGroupBy = breakdowns.map((b, index) => `b_${index}`);
 

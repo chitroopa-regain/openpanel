@@ -24,7 +24,7 @@ export type IGetSankeyInput = z.infer<typeof zGetSankeyInput> & {
 export class SankeyService {
   constructor(private client: typeof ch) {}
 
-  getRawWhereClause(type: 'events' | 'sessions', filters: IChartEventFilter[]) {
+  getRawWhereClause(type: 'events' | 'sessions', filters: IChartEventFilter[], projectId?: string) {
     const where = getEventFiltersWhereClause(
       filters.map((item) => {
         if (type === 'sessions') {
@@ -44,6 +44,7 @@ export class SankeyService {
         }
         return item;
       }),
+      projectId,
     );
 
     return Object.values(where).join(' AND ');
@@ -87,7 +88,7 @@ export class SankeyService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', event.filters))
+      .rawWhere(this.getRawWhereClause('events', event.filters, projectId))
       .groupBy(['session_id']);
   }
 

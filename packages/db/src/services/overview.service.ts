@@ -211,7 +211,7 @@ export class OverviewService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', filters))
+      .rawWhere(this.getRawWhereClause('events', filters, projectId))
       .groupBy(['date'])
       .rollup()
       .transform({
@@ -254,7 +254,7 @@ export class OverviewService {
     }
   ): ReturnType<typeof clix> {
     if (!this.isPageFilter(params.filters)) {
-      query.rawWhere(this.getRawWhereClause('sessions', params.filters));
+      query.rawWhere(this.getRawWhereClause('sessions', params.filters, projectId));
       return query;
     }
 
@@ -330,7 +330,7 @@ export class OverviewService {
     metrics: MetricsRow & { total_revenue: number };
     series: MetricsSeriesRow[];
   }> {
-    const where = this.getRawWhereClause('sessions', filters);
+    const where = this.getRawWhereClause('sessions', filters, projectId);
     const fillConfig = this.getFillConfig(interval, startDate, endDate);
 
     // Session metrics query
@@ -413,7 +413,7 @@ export class OverviewService {
     metrics: MetricsRow & { total_revenue: number };
     series: MetricsSeriesRow[];
   }> {
-    const where = this.getRawWhereClause('sessions', filters);
+    const where = this.getRawWhereClause('sessions', filters, projectId);
     const fillConfig = this.getFillConfig(interval, startDate, endDate);
 
     // Session aggregation with bounce rates
@@ -447,7 +447,7 @@ export class OverviewService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', filters));
+      .rawWhere(this.getRawWhereClause('events', filters, projectId));
 
     // Use toDate for month/week intervals, toDateTime for others
     const rollupDate =
@@ -508,7 +508,7 @@ export class OverviewService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', filters))
+      .rawWhere(this.getRawWhereClause('events', filters, projectId))
       .groupBy(['date', 'dss.bounce_rate'])
       .orderBy('date', 'ASC')
       .fill(fillConfig.from, fillConfig.to, fillConfig.step)
@@ -560,7 +560,7 @@ export class OverviewService {
     };
   }
 
-  getRawWhereClause(type: 'events' | 'sessions', filters: IChartEventFilter[]) {
+  getRawWhereClause(type: 'events' | 'sessions', filters: IChartEventFilter[], projectId?: string) {
     const where = getEventFiltersWhereClause(
       filters.map((item) => {
         if (type === 'sessions') {
@@ -579,7 +579,8 @@ export class OverviewService {
           return item;
         }
         return item;
-      })
+      }),
+      projectId,
     );
 
     return Object.values(where).join(' AND ');
@@ -619,7 +620,7 @@ export class OverviewService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', filters))
+      .rawWhere(this.getRawWhereClause('events', filters, projectId))
       .groupBy(['origin', 'path'])
       .orderBy('sessions', 'DESC')
       .limit(MAX_RECORDS_LIMIT);
@@ -697,7 +698,7 @@ export class OverviewService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', filters));
+      .rawWhere(this.getRawWhereClause('events', filters, projectId));
   }
 
   async getTopGeneric({
@@ -822,7 +823,7 @@ export class OverviewService {
     }
 
     // Step 2: Build time-series query for each top item
-    const where = this.getRawWhereClause('sessions', filters);
+    const where = this.getRawWhereClause('sessions', filters, projectId);
     const timeSeriesSelectColumns: (string | null | undefined | false)[] = [
       `${clix.toStartOf('created_at', interval as any, timezone)} AS date`,
       prefixColumn && `${prefixColumn} as prefix`,
@@ -963,7 +964,7 @@ export class OverviewService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .rawWhere(this.getRawWhereClause('events', filters))
+      .rawWhere(this.getRawWhereClause('events', filters, projectId))
       .orderBy('session_id', 'ASC')
       .orderBy('created_at', 'ASC');
 
@@ -1284,7 +1285,7 @@ export class OverviewService {
     timezone: string;
     excludeEvents?: string[];
   }): Promise<Array<{ name: string; count: number }>> {
-    const where = this.getRawWhereClause('events', filters);
+    const where = this.getRawWhereClause('events', filters, projectId);
     const excludeWhere =
       excludeEvents.length > 0
         ? `name NOT IN (${excludeEvents.map((e) => sqlstring.escape(e)).join(',')})`
@@ -1320,7 +1321,7 @@ export class OverviewService {
     endDate: string;
     timezone: string;
   }): Promise<Array<{ href: string; count: number }>> {
-    const where = this.getRawWhereClause('events', filters);
+    const where = this.getRawWhereClause('events', filters, projectId);
     const hrefKey = getSelectPropertyKey('properties.href');
 
     const query = clix(this.client, timezone)
@@ -1366,7 +1367,7 @@ export class OverviewService {
       count: number;
     }>
   > {
-    const where = this.getRawWhereClause('events', filters);
+    const where = this.getRawWhereClause('events', filters, projectId);
 
     // Note: ClickHouse doesn't have built-in lat/lng for countries/regions
     // This would typically require a lookup table or external service

@@ -12,6 +12,84 @@ import type {
 import { TABLE_NAMES, formatClickhouseDate } from '../clickhouse/client';
 import { createSqlBuilder } from '../sql-builder';
 
+// Device/geo keys stay in profiles.properties Map.
+// Everything else from profile.properties.* is a user trait → profile_traits table.
+// IMPORTANT: Keep in sync with deviceGeoKeys in jitsu-fork profile_manager.go
+export const DEVICE_GEO_KEYS = new Set([
+  'os', 'os_version', 'device', 'brand', 'model',
+  'country', 'region', 'city', 'longitude', 'latitude',
+  'browser', 'browser_version',
+  'display_height', 'display_width', 'display_inches',
+  'total_ram', 'total_disk_space',
+]);
+
+// Check if a profile.properties.X filter is on a user trait (not device/geo).
+function isProfileTrait(filterName: string): boolean {
+  if (!filterName.startsWith('profile.properties.')) return false;
+  const key = filterName.replace('profile.properties.', '').split('.')[0];
+  return key ? !DEVICE_GEO_KEYS.has(key) : false;
+}
+
+// Generate a profile_traits IN-subquery for a trait filter.
+function traitSubquery(
+  projectId: string,
+  traitKey: string,
+  operator: string,
+  values: (string | number | boolean | null)[]
+): string {
+  const escapedProject = sqlstring.escape(projectId);
+  const escapedKey = sqlstring.escape(traitKey);
+
+  switch (operator) {
+    case 'is': {
+      if (values.length === 1) {
+        return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) = ${sqlstring.escape(String(values[0]).trim())})`;
+      }
+      const inList = values.map((v) => sqlstring.escape(String(v).trim())).join(', ');
+      return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) IN (${inList}))`;
+    }
+    case 'isNot': {
+      if (values.length === 1) {
+        return `profile_id NOT IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) = ${sqlstring.escape(String(values[0]).trim())})`;
+      }
+      const inList = values.map((v) => sqlstring.escape(String(v).trim())).join(', ');
+      return `profile_id NOT IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) IN (${inList}))`;
+    }
+    case 'contains': {
+      const likeExprs = values.map((v) => `argMax(value, updated_at) LIKE ${sqlstring.escape(`%${String(v).trim()}%`)}`).join(' OR ');
+      return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING ${likeExprs})`;
+    }
+    case 'doesNotContain': {
+      const likeExprs = values.map((v) => `argMax(value, updated_at) NOT LIKE ${sqlstring.escape(`%${String(v).trim()}%`)}`).join(' AND ');
+      return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING ${likeExprs})`;
+    }
+    case 'isNull': {
+      return `profile_id NOT IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) != '')`;
+    }
+    case 'isNotNull': {
+      return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) != '')`;
+    }
+    default: {
+      // Fallback for gt, lt, gte, lte, startsWith, endsWith, regex — use argMax with the operator
+      const argMaxExpr = 'argMax(value, updated_at)';
+      const valExprs = values.map((v) => {
+        const escaped = sqlstring.escape(String(v).trim());
+        switch (operator) {
+          case 'gt': return `toFloat64OrZero(${argMaxExpr}) > toFloat64(${escaped})`;
+          case 'lt': return `toFloat64OrZero(${argMaxExpr}) < toFloat64(${escaped})`;
+          case 'gte': return `toFloat64OrZero(${argMaxExpr}) >= toFloat64(${escaped})`;
+          case 'lte': return `toFloat64OrZero(${argMaxExpr}) <= toFloat64(${escaped})`;
+          case 'startsWith': return `${argMaxExpr} LIKE ${sqlstring.escape(`${String(v).trim()}%`)}`;
+          case 'endsWith': return `${argMaxExpr} LIKE ${sqlstring.escape(`%${String(v).trim()}`)}`;
+          case 'regex': return `match(${argMaxExpr}, ${escaped})`;
+          default: return `${argMaxExpr} = ${escaped}`;
+        }
+      }).join(' OR ');
+      return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING ${valExprs})`;
+    }
+  }
+}
+
 export function transformPropertyKey(property: string) {
   const propertyPatterns = ['properties', 'profile.properties'];
   const match = propertyPatterns.find((pattern) =>
@@ -31,6 +109,15 @@ export function transformPropertyKey(property: string) {
   }
 
   return `${match}['${property.replace(new RegExp(`^${match}.`), '')}']`;
+}
+
+// Generate a correlated subquery for a trait breakdown value.
+// Used when a breakdown is on profile.properties.X where X is a user trait.
+export function getTraitBreakdownExpression(property: string, projectId: string): string | null {
+  if (!property.startsWith('profile.properties.')) return null;
+  const key = property.replace('profile.properties.', '').split('.')[0];
+  if (!key || DEVICE_GEO_KEYS.has(key)) return null;
+  return `(SELECT argMax(t.value, t.updated_at) FROM ${TABLE_NAMES.profile_traits} t WHERE t.project_id = ${sqlstring.escape(projectId)} AND t.key = ${sqlstring.escape(key)} AND t.profile_id = profile_id)`;
 }
 
 export function getSelectPropertyKey(property: string) {
@@ -55,12 +142,13 @@ export function getSelectPropertyKey(property: string) {
 }
 
 export function getCustomEventWhereClause(
-  components: ICustomEventComponent[]
+  components: ICustomEventComponent[],
+  projectId?: string
 ): string {
   const clauses = components.map((c) => {
     const namePart = `name = ${sqlstring.escape(c.eventName)}`;
     if (c.filters.length === 0) return namePart;
-    const filterWhere = getEventFiltersWhereClause(c.filters);
+    const filterWhere = getEventFiltersWhereClause(c.filters, projectId);
     const parts = Object.values(filterWhere);
     return parts.length > 0
       ? `(${namePart} AND ${parts.join(' AND ')})`
@@ -98,13 +186,13 @@ export function getChartSql({
     with: addCte,
   } = createSqlBuilder();
 
-  sb.where = getEventFiltersWhereClause(event.filters);
+  sb.where = getEventFiltersWhereClause(event.filters, projectId);
   sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
 
   if (customEventComponents && customEventComponents.length > 0) {
     const displayName = event.displayName ?? event.name;
     sb.select.label_0 = `${sqlstring.escape(displayName)} as label_0`;
-    sb.where.eventName = getCustomEventWhereClause(customEventComponents);
+    sb.where.eventName = getCustomEventWhereClause(customEventComponents, projectId);
   } else if (event.name !== '*') {
     sb.select.label_0 = `${sqlstring.escape(event.name)} as label_0`;
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
@@ -112,8 +200,11 @@ export function getChartSql({
     sb.select.label_0 = `'*' as label_0`;
   }
 
-  const anyFilterOnProfile = event.filters.some((filter) =>
-    filter.name.startsWith('profile.')
+  // Trait filters on profile.properties.X (non-device/geo) are now IN-subqueries
+  // on profile_id — they don't need the profile CTE JOIN.
+  // Only device/geo filters and breakdowns still need the profile CTE.
+  const anyFilterOnProfile = event.filters.some(
+    (filter) => filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
   );
   const anyBreakdownOnProfile = breakdowns.some((breakdown) =>
     breakdown.name.startsWith('profile.')
@@ -137,9 +228,9 @@ export function getChartSql({
     // Always need id for the join
     fields.add('id');
 
-    // Collect from filters
+    // Collect from filters (only device/geo — trait filters use profile_traits table)
     event.filters
-      .filter((f) => f.name.startsWith('profile.'))
+      .filter((f) => f.name.startsWith('profile.') && !isProfileTrait(f.name))
       .forEach((f) => {
         const fieldName = f.name.replace('profile.', '').split('.')[0];
         if (fieldName && fieldName === 'properties') {
@@ -256,7 +347,7 @@ export function getChartSql({
   // Use CTE to define top breakdown values once, then reference in WHERE clause
   if (effectiveBreakdowns.length > 0 && limit) {
     const breakdownSelects = effectiveBreakdowns
-      .map((b) => getSelectPropertyKey(b.name))
+      .map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name))
       .join(', ');
 
     // Add top_breakdowns CTE using the builder
@@ -271,13 +362,14 @@ export function getChartSql({
     );
 
     // Filter main query to only include top breakdown values
-    sb.where.bar = `(${effectiveBreakdowns.map((b) => getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
+    sb.where.bar = `(${effectiveBreakdowns.map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
   }
 
   effectiveBreakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
-    sb.select[key] = `${getSelectPropertyKey(breakdown.name)} as ${key}`;
+    const traitExpr = getTraitBreakdownExpression(breakdown.name, projectId);
+    sb.select[key] = `${traitExpr ?? getSelectPropertyKey(breakdown.name)} as ${key}`;
     sb.groupBy[key] = `${key}`;
   });
 
@@ -322,7 +414,8 @@ export function getChartSql({
     // Since outer query groups by label_X, we reference those in the correlation
     const breakdownMatches = effectiveBreakdowns
       .map((b, index) => {
-        const propertyKey = getSelectPropertyKey(b.name);
+        const traitExpr = getTraitBreakdownExpression(b.name, projectId);
+        const propertyKey = traitExpr ?? getSelectPropertyKey(b.name);
         // Correlate: match the property expression with outer query's label_X value
         // ClickHouse allows referencing outer query columns in correlated subqueries
         return `${propertyKey} = label_${index + 1}`;
@@ -375,13 +468,13 @@ export function getAggregateChartSql({
 }) {
   const { sb, join, getJoins, with: addCte, getSql } = createSqlBuilder();
 
-  sb.where = getEventFiltersWhereClause(event.filters);
+  sb.where = getEventFiltersWhereClause(event.filters, projectId);
   sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
 
   if (customEventComponents && customEventComponents.length > 0) {
     const displayName = event.displayName ?? event.name;
     sb.select.label_0 = `${sqlstring.escape(displayName)} as label_0`;
-    sb.where.eventName = getCustomEventWhereClause(customEventComponents);
+    sb.where.eventName = getCustomEventWhereClause(customEventComponents, projectId);
   } else if (event.name !== '*') {
     sb.select.label_0 = `${sqlstring.escape(event.name)} as label_0`;
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
@@ -389,8 +482,9 @@ export function getAggregateChartSql({
     sb.select.label_0 = `'*' as label_0`;
   }
 
-  const anyFilterOnProfile = event.filters.some((filter) =>
-    filter.name.startsWith('profile.')
+  // Trait filters are now IN-subqueries — only device/geo filters need profile CTE
+  const anyFilterOnProfile = event.filters.some(
+    (filter) => filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
   );
   const anyBreakdownOnProfile = breakdowns.some((breakdown) =>
     breakdown.name.startsWith('profile.')
@@ -412,9 +506,9 @@ export function getAggregateChartSql({
     // Always need id for the join
     fields.add('id');
 
-    // Collect from filters
+    // Collect from filters (only device/geo — traits use profile_traits table)
     event.filters
-      .filter((f) => f.name.startsWith('profile.'))
+      .filter((f) => f.name.startsWith('profile.') && !isProfileTrait(f.name))
       .forEach((f) => {
         const fieldName = f.name.replace('profile.', '').split('.')[0];
         if (fieldName && fieldName === 'properties') {
@@ -498,7 +592,7 @@ export function getAggregateChartSql({
   // Use CTE to define top breakdown values once, then reference in WHERE clause
   if (breakdowns.length > 0 && limit) {
     const breakdownSelects = breakdowns
-      .map((b) => getSelectPropertyKey(b.name))
+      .map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name))
       .join(', ');
 
     addCte(
@@ -512,14 +606,15 @@ export function getAggregateChartSql({
     );
 
     // Filter main query to only include top breakdown values
-    sb.where.bar = `(${breakdowns.map((b) => getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
+    sb.where.bar = `(${breakdowns.map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
   }
 
   // Add breakdowns to SELECT and GROUP BY
   breakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
-    sb.select[key] = `${getSelectPropertyKey(breakdown.name)} as ${key}`;
+    const traitExpr = getTraitBreakdownExpression(breakdown.name, projectId);
+    sb.select[key] = `${traitExpr ?? getSelectPropertyKey(breakdown.name)} as ${key}`;
     sb.groupBy[key] = `${key}`;
   });
 
@@ -706,7 +801,7 @@ function buildAggregateExpression(
   }
 }
 
-export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
+export function getEventFiltersWhereClause(filters: IChartEventFilter[], projectId?: string) {
   const where: Record<string, string> = {};
   filters.forEach((filter, index) => {
     const id = `f${index}`;
@@ -726,6 +821,13 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[]) {
       } else {
         where[id] = 'profile_id = device_id';
       }
+      return;
+    }
+
+    // Route user trait filters to profile_traits table
+    if (projectId && isProfileTrait(name)) {
+      const traitKey = name.replace('profile.properties.', '').split('.')[0]!;
+      where[id] = traitSubquery(projectId, traitKey, operator, value);
       return;
     }
 

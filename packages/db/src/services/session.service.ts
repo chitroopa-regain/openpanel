@@ -189,7 +189,7 @@ export async function getSessionList({
     sb.where.search = `(entry_path ILIKE ${s} OR exit_path ILIKE ${s} OR referrer ILIKE ${s} OR referrer_name ILIKE ${s})`;
   }
   if (filters?.length) {
-    Object.assign(sb.where, getEventFiltersWhereClause(filters));
+    Object.assign(sb.where, getEventFiltersWhereClause(filters, projectId));
   }
 
   const organization = await getOrganizationByProjectIdCached(projectId);
@@ -344,7 +344,7 @@ export async function getSessionsCount({
   }
 
   if (filters && filters.length > 0) {
-    const sessionFilters = getEventFiltersWhereClause(filters);
+    const sessionFilters = getEventFiltersWhereClause(filters, projectId);
     sb.where = {
       ...sb.where,
       ...sessionFilters,

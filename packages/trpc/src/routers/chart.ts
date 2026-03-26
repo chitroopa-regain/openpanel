@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   type IClickhouseProfile,
   type IServiceProfile,
+  DEVICE_GEO_KEYS,
   TABLE_NAMES,
   ch,
   chQuery,
@@ -277,6 +278,13 @@ export const chartRouter = createTRPCRouter({
         ),
       ];
 
+      // Also fetch trait keys from profile_traits table
+      const traitKeys = await chQuery<{ key: string }>(
+        `SELECT DISTINCT key FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} LIMIT 1000`
+      );
+      const traitProperties = traitKeys.map((t) => `profile.properties.${t.key}`);
+      profileProperties.push(...traitProperties);
+
       const query = clix(ch)
         .select<{ property_key: string; created_at: string }>([
           'distinct property_key',
@@ -360,6 +368,22 @@ export const chartRouter = createTRPCRouter({
       }
 
       const values: string[] = [];
+
+      // Check if this is a user trait (profile.properties.X where X is not device/geo)
+      if (property.startsWith('profile.properties.')) {
+        const traitKey = property.replace('profile.properties.', '').split('.')[0];
+        if (traitKey) {
+          if (!DEVICE_GEO_KEYS.has(traitKey)) {
+            // Query profile_traits for distinct latest values
+            const traitValues = await chQuery<{ value: string }>(
+              `SELECT argMax(value, updated_at) as value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING value != '' ORDER BY value LIMIT 1000`
+            );
+            return {
+              values: [...new Set(traitValues.map((t) => t.value))].sort((a, b) => a.length - b.length),
+            };
+          }
+        }
+      }
 
       if (property.startsWith('properties.')) {
         const query = clix(ch)
@@ -753,7 +777,7 @@ export const chartRouter = createTRPCRouter({
 
       const buildFilterWhere = (filters: IChartEventFilter[]) => {
         if (filters.length === 0) return '';
-        const where = getEventFiltersWhereClause(filters);
+        const where = getEventFiltersWhereClause(filters, projectId);
         const clauses = Object.values(where);
         if (clauses.length === 0) return '';
         return `AND ${clauses.join(' AND ')}`;
@@ -871,7 +895,7 @@ export const chartRouter = createTRPCRouter({
       const { sb, getSql } = createSqlBuilder();
 
       sb.select.profile_id = 'DISTINCT profile_id';
-      sb.where = getEventFiltersWhereClause(serie.filters);
+      sb.where = getEventFiltersWhereClause(serie.filters, projectId);
       sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
       sb.where.dateRange = `${clix.toStartOf('created_at', input.interval)} = ${clix.toDate(sqlstring.escape(formatClickhouseDate(dateObj)), input.interval)}`;
       if (serie.name !== '*') {

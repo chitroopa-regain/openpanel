@@ -114,26 +114,35 @@ export async function getProfileById(id: string, projectId: string) {
   }
 
   const cachedProfile = await profileBuffer.fetchFromCache(id, projectId);
-  if (cachedProfile) {
-    return transformProfile(cachedProfile);
-  }
-
-  const [profile] = await chQuery<IClickhouseProfile>(
-    `SELECT 
-      id, 
-      project_id,
-      last_value(nullIf(first_name, '')) as first_name, 
-      last_value(nullIf(last_name, '')) as last_name, 
-      last_value(nullIf(email, '')) as email, 
-      last_value(nullIf(avatar, '')) as avatar, 
-      last_value(is_external) as is_external, 
-      last_value(properties) as properties, 
-      last_value(created_at) as created_at
-    FROM ${TABLE_NAMES.profiles} FINAL WHERE id = ${sqlstring.escape(String(id))} AND project_id = ${sqlstring.escape(projectId)} GROUP BY id, project_id ORDER BY created_at DESC LIMIT 1`
-  );
+  const profile = cachedProfile
+    ?? (await chQuery<IClickhouseProfile>(
+        `SELECT
+          id,
+          project_id,
+          last_value(nullIf(first_name, '')) as first_name,
+          last_value(nullIf(last_name, '')) as last_name,
+          last_value(nullIf(email, '')) as email,
+          last_value(nullIf(avatar, '')) as avatar,
+          last_value(is_external) as is_external,
+          last_value(properties) as properties,
+          last_value(created_at) as created_at
+        FROM ${TABLE_NAMES.profiles} FINAL WHERE id = ${sqlstring.escape(String(id))} AND project_id = ${sqlstring.escape(projectId)} GROUP BY id, project_id ORDER BY created_at DESC LIMIT 1`
+      ))[0];
 
   if (!profile) {
     return null;
+  }
+
+  // Merge user traits from profile_traits table (applies to both cached and fresh profiles)
+  const traits = await chQuery<{ key: string; value: string }>(
+    `SELECT key, argMax(value, updated_at) as value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND profile_id = ${sqlstring.escape(String(id))} GROUP BY key`
+  );
+  if (traits.length > 0) {
+    const propsObj = typeof profile.properties === 'object' ? { ...profile.properties } : {};
+    for (const t of traits) {
+      (propsObj as Record<string, string>)[t.key] = t.value;
+    }
+    profile.properties = propsObj as any;
   }
 
   return transformProfile(profile);
@@ -173,6 +182,30 @@ export async function getProfiles(ids: string[], projectId: string) {
     GROUP BY id, project_id
     `
   );
+
+  // Merge user traits from profile_traits table
+  if (filteredIds.length > 0) {
+    const traits = await chQuery<{ profile_id: string; key: string; value: string }>(
+      `SELECT profile_id, key, argMax(value, updated_at) as value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND profile_id IN (${filteredIds.map((id) => sqlstring.escape(id)).join(',')}) GROUP BY profile_id, key`
+    );
+    if (traits.length > 0) {
+      const traitsByProfile = new Map<string, Record<string, string>>();
+      for (const t of traits) {
+        if (!traitsByProfile.has(t.profile_id)) {
+          traitsByProfile.set(t.profile_id, {});
+        }
+        traitsByProfile.get(t.profile_id)![t.key] = t.value;
+      }
+      for (const profile of data) {
+        const profileTraits = traitsByProfile.get(profile.id);
+        if (profileTraits) {
+          const propsObj = typeof profile.properties === 'object' ? { ...profile.properties } : {};
+          Object.assign(propsObj, profileTraits);
+          profile.properties = propsObj as any;
+        }
+      }
+    }
+  }
 
   return data.map(transformProfile);
 }
