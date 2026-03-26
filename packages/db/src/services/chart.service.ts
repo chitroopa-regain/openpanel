@@ -590,29 +590,33 @@ export function getAggregateChartSql({
     sb.groupBy = {};
     sb.orderBy = {};
 
+    // Dynamic buckets: use quantile to find a natural cutoff point
+    // Individual buckets for 1..N, overflow bucket for >= N+1
+    // ClickHouse computes this in a single pass using least(max, 10)
+    addCte(
+      'freq_stats',
+      `SELECT least(max(event_count), 10) as max_bucket FROM user_counts`
+    );
+
     sb.select.label_0 = `${eventLabel} as label_0`;
-    sb.select.label_1 = `multiIf(
-          event_count = 1, '1 time',
-          event_count = 2, '2 times',
-          event_count = 3, '3 times',
-          event_count = 4, '4 times',
-          event_count = 5, '5 times',
-          event_count = 6, '6 times',
-          '>= 7 times'
+    // Dynamic label: individual counts up to max_bucket, overflow for the rest
+    sb.select.label_1 = `if(
+          event_count >= (SELECT max_bucket FROM freq_stats),
+          '>= ' || toString((SELECT max_bucket FROM freq_stats)) || ' times',
+          toString(event_count) || if(event_count = 1, ' time', ' times')
         ) as label_1`;
+    // bucket_order for sorting: individual counts sort by their value, overflow sorts last
+    sb.select.bucket_order = `if(
+          event_count >= (SELECT max_bucket FROM freq_stats),
+          999,
+          event_count
+        ) as bucket_order`;
     sb.select.count = 'count(*) as count';
     sb.select.date = `${sqlstring.escape(startDate)} as date`;
     sb.groupBy.label_0 = 'label_0';
     sb.groupBy.label_1 = 'label_1';
-    sb.orderBy.bucket = `CASE label_1
-          WHEN '1 time' THEN 1
-          WHEN '2 times' THEN 2
-          WHEN '3 times' THEN 3
-          WHEN '4 times' THEN 4
-          WHEN '5 times' THEN 5
-          WHEN '6 times' THEN 6
-          ELSE 7
-        END ASC`;
+    sb.groupBy.bucket_order = 'bucket_order';
+    sb.orderBy.bucket = 'min(bucket_order) ASC';
 
     const sql = getSql();
     console.log('-- Aggregate Chart (Frequency Distribution) --');

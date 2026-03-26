@@ -64,8 +64,13 @@ const PieTooltip = (props: { payload?: any[] }) => {
 };
 
 export function Chart({ data }: Props) {
-  const { isEditMode } = useReportChartContext();
+  const { isEditMode, report } = useReportChartContext();
   const { series, setVisibleSeries } = useVisibleSeries(data);
+  const number = useNumber();
+
+  const isFrequencyDistribution = report.series?.some(
+    (e) => 'segment' in e && e.segment === 'frequency_distribution'
+  );
 
   const sum = series.reduce((acc, serie) => acc + serie.metrics.sum, 0);
   const pieData = series.map((serie) => ({
@@ -78,6 +83,10 @@ export function Chart({ data }: Props) {
     percent: serie.metrics.sum / sum,
     previous: serie.metrics.previous ? serie.metrics.previous : undefined,
   }));
+
+  const labelRenderer = isFrequencyDistribution
+    ? renderFrequencyLabel
+    : renderLabel;
 
   return (
     <>
@@ -93,7 +102,7 @@ export function Chart({ data }: Props) {
               innerRadius={'30%'}
               outerRadius={'80%'}
               isAnimationActive={false}
-              label={renderLabel}
+              label={labelRenderer}
             >
               {pieData.map((item) => {
                 return (
@@ -106,6 +115,20 @@ export function Chart({ data }: Props) {
                 );
               })}
             </Pie>
+            {isFrequencyDistribution && (
+              <text
+                x="50%"
+                y="50%"
+                textAnchor="middle"
+                dominantBaseline="central"
+                {...AXIS_FONT_PROPS}
+                fontSize={18}
+                fontWeight={700}
+                fill="currentColor"
+              >
+                {number.shortWithUnit(sum)}
+              </text>
+            )}
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -119,6 +142,63 @@ export function Chart({ data }: Props) {
     </>
   );
 }
+
+const renderFrequencyLabel = ({
+  cx,
+  cy,
+  midAngle,
+  innerRadius,
+  outerRadius,
+  fill,
+  payload,
+}: {
+  cx: number;
+  cy: number;
+  midAngle: number;
+  innerRadius: number;
+  outerRadius: number;
+  fill: string;
+  payload: { name: string; count: number };
+}) => {
+  const RADIAN = Math.PI / 180;
+  const radius = 25 + innerRadius + (outerRadius - innerRadius);
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  // Show just the frequency bucket (e.g. "2 times") and count below
+  const parts = payload.name.split(' > ');
+  const freqLabel = parts[parts.length - 1] || payload.name;
+  const anchor = x > cx ? 'start' : 'end';
+
+  return (
+    <>
+      <text
+        x={x}
+        y={y - 6}
+        fill={fill}
+        textAnchor={anchor}
+        dominantBaseline="central"
+        {...AXIS_FONT_PROPS}
+        fontSize={11}
+        fontWeight={700}
+      >
+        {freqLabel}
+      </text>
+      <text
+        x={x}
+        y={y + 8}
+        fill={fill}
+        textAnchor={anchor}
+        dominantBaseline="central"
+        {...AXIS_FONT_PROPS}
+        fontSize={11}
+        fontWeight={400}
+        opacity={0.65}
+      >
+        {payload.count.toLocaleString()}
+      </text>
+    </>
+  );
+};
 
 const renderLabel = ({
   cx,
