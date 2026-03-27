@@ -140,8 +140,9 @@ export class ConversionService {
       query.orderBy(order);
     }
 
+    const queries = [query.toSQL()];
     const results = await query.execute();
-    return this.toSeries(results, breakdowns, limit).map(
+    const data = this.toSeries(results, breakdowns, limit).map(
       (serie, serieIndex) => {
         return {
           ...serie,
@@ -155,6 +156,11 @@ export class ConversionService {
         };
       },
     );
+
+    return {
+      data,
+      queries,
+    };
   }
 
   private toSeries(

@@ -311,10 +311,11 @@ export class FunnelService {
       .groupBy(['level', ...breakdowns.map((b, index) => `b_${index}`)])
       .orderBy('level', 'DESC');
 
+    const queries = [funnelQuery.toSQL()];
     const funnelData = await funnelQuery.execute();
     const funnelSeries = this.toSeries(funnelData, breakdowns, limit);
 
-    return funnelSeries
+    const data = funnelSeries
       .map((data) => {
         const maxLevel = eventSeries.length;
         const filledFunnelRes = this.fillFunnel(
@@ -396,6 +397,11 @@ export class FunnelService {
         const bTotal = b.steps.reduce((acc, step) => acc + step.count, 0);
         return bTotal - aTotal;
       });
+
+    return {
+      data,
+      queries,
+    };
   }
 }
 

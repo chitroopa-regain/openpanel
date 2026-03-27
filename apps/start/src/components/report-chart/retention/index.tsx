@@ -60,16 +60,16 @@ export function ReportRetentionChart() {
     return <Error />;
   }
 
-  if (!res.data || res.data?.length === 0) {
+  if (!res.data || res.data.data.length === 0) {
     return <Empty />;
   }
 
   return (
     <div className="col gap-4">
       <AspectContainer>
-        <Chart data={res.data} />
+        <Chart data={res.data.data} />
       </AspectContainer>
-      <CohortTable data={res.data} />
+      <CohortTable data={res.data.data} />
     </div>
   );
 }

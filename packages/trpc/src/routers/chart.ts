@@ -221,7 +221,13 @@ export const chartRouter = createTRPCRouter({
           `SELECT name, count(name) as count FROM ${TABLE_NAMES.event_names_mv} WHERE project_id = ${sqlstring.escape(projectId)} GROUP BY name ORDER BY count DESC, name ASC`
         ),
         getEventMetasCached(projectId),
-        db.customEvent.findMany({ where: { projectId } }),
+        db.customEvent.findMany({ where: { projectId } }).catch((error) => {
+          console.warn(
+            'chart.events: failed to load custom events, falling back to event_names_mv only',
+            error,
+          );
+          return [];
+        }),
       ]);
 
       return [
@@ -484,8 +490,10 @@ export const chartRouter = createTRPCRouter({
       ]);
 
       return {
-        current,
-        previous,
+        current: current.data,
+        previous: previous?.data ?? null,
+        queries: [...current.queries, ...(previous?.queries ?? [])],
+        timezone,
       };
     }),
 
@@ -534,14 +542,16 @@ export const chartRouter = createTRPCRouter({
       ]);
 
       return {
-        current: current.map((serie, sIndex) => ({
+        current: current.data.map((serie, sIndex) => ({
           ...serie,
           data: serie.data.map((d, dIndex) => ({
             ...d,
-            previousRate: previous?.[sIndex]?.data?.[dIndex]?.rate,
+            previousRate: previous?.data?.[sIndex]?.data?.[dIndex]?.rate,
           })),
         })),
-        previous,
+        previous: previous?.data ?? null,
+        queries: [...current.queries, ...(previous?.queries ?? [])],
+        timezone,
       };
     }),
 
@@ -563,7 +573,7 @@ export const chartRouter = createTRPCRouter({
       throw new Error('Start and end events are required');
     }
 
-    return sankeyService.getSankey({
+    const data = await sankeyService.getSankey({
       projectId: input.projectId,
       startDate: currentPeriod.startDate,
       endDate: currentPeriod.endDate,
@@ -575,6 +585,11 @@ export const chartRouter = createTRPCRouter({
       include: options.include,
       timezone,
     });
+
+    return {
+      ...data,
+      timezone,
+    };
   }),
 
   chart: chartProcedure
@@ -862,7 +877,11 @@ export const chartRouter = createTRPCRouter({
         [key: string]: any;
       }>(cohortQuery);
 
-      return processCohortData(cohortData, diffInterval);
+      return {
+        data: processCohortData(cohortData, diffInterval),
+        queries: [cohortQuery],
+        timezone,
+      };
     }),
 
   getProfiles: protectedProcedure

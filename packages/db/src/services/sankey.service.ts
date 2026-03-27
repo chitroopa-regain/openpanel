@@ -21,6 +21,22 @@ export type IGetSankeyInput = z.infer<typeof zGetSankeyInput> & {
   timezone: string;
 };
 
+type SankeyResult = {
+  nodes: Array<{
+    id: string;
+    label: string;
+    nodeColor: string;
+    percentage?: number;
+    value?: number;
+    step?: number;
+  }>;
+  links: Array<{ source: string; target: string; value: number }>;
+};
+
+type SankeyQueryResult = SankeyResult & {
+  queries: string[];
+};
+
 export class SankeyService {
   constructor(private client: typeof ch) {}
 
@@ -151,17 +167,7 @@ export class SankeyService {
     steps: number,
     COLORS: string[],
     timezone: string,
-  ): Promise<{
-    nodes: Array<{
-      id: string;
-      label: string;
-      nodeColor: string;
-      percentage?: number;
-      value?: number;
-      step?: number;
-    }>;
-    links: Array<{ source: string; target: string; value: number }>;
-  }> {
+  ): Promise<SankeyQueryResult> {
     // Find sessions where startEvent comes before endEvent
     const betweenSessionsQuery = clix(this.client, timezone)
       .with('session_paths', sessionPathsQuery)
@@ -207,10 +213,11 @@ export class SankeyService {
       .orderBy('count', 'DESC')
       .limit(3);
 
+    const queries = [topEntriesQuery.toSQL()];
     const topEntries = await topEntriesQuery.execute();
 
     if (topEntries.length === 0) {
-      return { nodes: [], links: [] };
+      return { nodes: [], links: [], queries };
     }
 
     const topEntryEvents = topEntries.map((e) => e.entry_event);
@@ -249,15 +256,19 @@ export class SankeyService {
       .orderBy('step', 'ASC')
       .orderBy('value', 'DESC');
 
+    queries.push(transitionsQuery.toSQL());
     const transitions = await transitionsQuery.execute();
 
-    return this.buildSankeyFromTransitions(
+    return {
+      ...this.buildSankeyFromTransitions(
       transitions,
       topEntries,
       totalSessions,
       steps,
       COLORS,
-    );
+      ),
+      queries,
+    };
   }
 
   private async executeSimpleMode(
@@ -265,17 +276,7 @@ export class SankeyService {
     steps: number,
     COLORS: string[],
     timezone: string,
-  ): Promise<{
-    nodes: Array<{
-      id: string;
-      label: string;
-      nodeColor: string;
-      percentage?: number;
-      value?: number;
-      step?: number;
-    }>;
-    links: Array<{ source: string; target: string; value: number }>;
-  }> {
+  ): Promise<SankeyQueryResult> {
     // Get top entry events
     const topEntriesQuery = clix(this.client, timezone)
       .with('session_paths', sessionPathsQuery)
@@ -288,10 +289,11 @@ export class SankeyService {
       .orderBy('count', 'DESC')
       .limit(3);
 
+    const queries = [topEntriesQuery.toSQL()];
     const topEntries = await topEntriesQuery.execute();
 
     if (topEntries.length === 0) {
-      return { nodes: [], links: [] };
+      return { nodes: [], links: [], queries };
     }
 
     const topEntryEvents = topEntries.map((e) => e.entry_event);
@@ -327,15 +329,19 @@ export class SankeyService {
       .orderBy('step', 'ASC')
       .orderBy('value', 'DESC');
 
+    queries.push(transitionsQuery.toSQL());
     const transitions = await transitionsQuery.execute();
 
-    return this.buildSankeyFromTransitions(
+    return {
+      ...this.buildSankeyFromTransitions(
       transitions,
       topEntries,
       totalSessions,
       steps,
       COLORS,
-    );
+      ),
+      queries,
+    };
   }
 
   async getSankey({
@@ -349,17 +355,7 @@ export class SankeyService {
     exclude = [],
     include,
     timezone,
-  }: IGetSankeyInput): Promise<{
-    nodes: Array<{
-      id: string;
-      label: string;
-      nodeColor: string;
-      percentage?: number;
-      value?: number;
-      step?: number;
-    }>;
-    links: Array<{ source: string; target: string; value: number }>;
-  }> {
+  }: IGetSankeyInput): Promise<SankeyQueryResult> {
     const COLORS = chartColors.map((color) => color.main);
 
     // 1. Build event name filter

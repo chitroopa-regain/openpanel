@@ -28,6 +28,7 @@ import type { IServiceReport } from '@openpanel/db';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -43,32 +44,104 @@ function ShowQueryButton() {
   const trpc = useTRPC();
   const [open, setOpen] = useState(false);
 
-  const isAggregate = report.chartType === 'bar' || report.chartType === 'pie';
-  const isSupported = !['funnel', 'retention', 'conversion', 'sankey'].includes(
-    report.chartType,
-  );
   const input = { ...report, projectId };
   const queryOpts = {
-    enabled: open && report.ready && isSupported,
+    enabled: open && report.ready,
     staleTime: 1000 * 60,
+    retry: false,
   };
+  const chartType = report.chartType;
+  const eventSeries = report.series.filter((item) => item.type === 'event');
+  const firstRetentionEvent = (eventSeries[0]?.filters?.[0]?.value ?? []).map(
+    String,
+  );
+  const secondRetentionEvent = (
+    eventSeries[1]?.filters?.[0]?.value ?? []
+  ).map(String);
+  const firstRetentionFilters = (eventSeries[0]?.filters ?? []).slice(1);
+  const secondRetentionFilters = (eventSeries[1]?.filters ?? []).slice(1);
+  const retentionOptions =
+    report.options?.type === 'retention' ? report.options : undefined;
 
   const chartRes = useQuery(
     trpc.chart.chart.queryOptions(input, {
       ...queryOpts,
-      enabled: queryOpts.enabled && !isAggregate,
+      enabled:
+        queryOpts.enabled &&
+        !['bar', 'pie', 'funnel', 'retention', 'conversion', 'sankey'].includes(
+          chartType,
+        ),
     }),
   );
   const aggregateRes = useQuery(
     trpc.chart.aggregate.queryOptions(input, {
       ...queryOpts,
-      enabled: queryOpts.enabled && isAggregate,
+      enabled: queryOpts.enabled && ['bar', 'pie'].includes(chartType),
+    }),
+  );
+  const funnelRes = useQuery(
+    trpc.chart.funnel.queryOptions(input, {
+      ...queryOpts,
+      enabled: queryOpts.enabled && chartType === 'funnel',
+    }),
+  );
+  const cohortRes = useQuery(
+    trpc.chart.cohort.queryOptions(
+      {
+        projectId,
+        firstEvent: firstRetentionEvent,
+        secondEvent: secondRetentionEvent,
+        firstEventFilters: firstRetentionFilters,
+        secondEventFilters: secondRetentionFilters,
+        range: report.range,
+        startDate: report.startDate,
+        endDate: report.endDate,
+        criteria: retentionOptions?.criteria,
+        interval: report.interval,
+        id: 'id' in report ? report.id : undefined,
+      },
+      {
+        ...queryOpts,
+        enabled:
+          queryOpts.enabled &&
+          chartType === 'retention' &&
+          firstRetentionEvent.length > 0 &&
+          secondRetentionEvent.length > 0,
+      },
+    ),
+  );
+  const conversionRes = useQuery(
+    trpc.chart.conversion.queryOptions(input, {
+      ...queryOpts,
+      enabled: queryOpts.enabled && chartType === 'conversion',
+    }),
+  );
+  const sankeyRes = useQuery(
+    trpc.chart.sankey.queryOptions(input, {
+      ...queryOpts,
+      enabled: queryOpts.enabled && chartType === 'sankey',
     }),
   );
 
-  const res = isAggregate ? aggregateRes : chartRes;
+  const res =
+    chartType === 'bar' || chartType === 'pie'
+      ? aggregateRes
+      : chartType === 'funnel'
+        ? funnelRes
+        : chartType === 'retention'
+          ? cohortRes
+          : chartType === 'conversion'
+            ? conversionRes
+            : chartType === 'sankey'
+              ? sankeyRes
+              : chartRes;
   const queries = res.data?.queries ?? [];
   const timezone = res.data?.timezone ?? 'UTC';
+
+  useEffect(() => {
+    if (!open) return;
+    void res.refetch();
+  }, [open, chartType, res.refetch]);
 
   const toPlayQuery = useCallback(
     (sql: string) => {
@@ -107,10 +180,6 @@ function ShowQueryButton() {
     toast('Copied for ClickHouse Play');
   }, [queries, toPlayQuery]);
 
-  if (!isSupported) {
-    return null;
-  }
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -121,9 +190,20 @@ function ShowQueryButton() {
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-auto">
         <DialogHeader>
           <DialogTitle>ClickHouse Query</DialogTitle>
+          <DialogDescription>
+            Inspect the SQL generated for the current chart and copy it for
+            ClickHouse Play if needed.
+          </DialogDescription>
         </DialogHeader>
         {res.isLoading ? (
           <div className="p-4 text-muted-foreground">Loading...</div>
+        ) : res.isError ? (
+          <div className="p-4 text-destructive">
+            Failed to load queries
+            {'message' in res.error && res.error.message
+              ? `: ${res.error.message}`
+              : ''}
+          </div>
         ) : queries.length === 0 ? (
           <div className="p-4 text-muted-foreground">No queries available</div>
         ) : (
