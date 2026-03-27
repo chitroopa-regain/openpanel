@@ -51,15 +51,36 @@ function ShowQueryButton() {
     retry: false,
   };
   const chartType = report.chartType;
-  const eventSeries = report.series.filter((item) => item.type === 'event');
-  const firstRetentionEvent = (eventSeries[0]?.filters?.[0]?.value ?? []).map(
-    String,
-  );
-  const secondRetentionEvent = (
-    eventSeries[1]?.filters?.[0]?.value ?? []
-  ).map(String);
-  const firstRetentionFilters = (eventSeries[0]?.filters ?? []).slice(1);
-  const secondRetentionFilters = (eventSeries[1]?.filters ?? []).slice(1);
+  const firstSeriesItem = report.series[0];
+  const secondSeriesItem = report.series[1];
+  const firstRetentionEvent =
+    firstSeriesItem?.type === 'event'
+      ? (firstSeriesItem.filters?.[0]?.value ?? []).map(String)
+      : [];
+  const firstRetentionCustomEventId =
+    firstSeriesItem?.type === 'custom_event'
+      ? firstSeriesItem.customEventId
+      : undefined;
+  const secondRetentionEvent =
+    secondSeriesItem?.type === 'event'
+      ? (secondSeriesItem.filters?.[0]?.value ?? []).map(String)
+      : [];
+  const secondRetentionCustomEventId =
+    secondSeriesItem?.type === 'custom_event'
+      ? secondSeriesItem.customEventId
+      : undefined;
+  const firstRetentionFilters =
+    firstSeriesItem?.type === 'event'
+      ? (firstSeriesItem.filters ?? []).slice(1)
+      : firstSeriesItem?.type === 'custom_event'
+        ? (firstSeriesItem.filters ?? [])
+        : [];
+  const secondRetentionFilters =
+    secondSeriesItem?.type === 'event'
+      ? (secondSeriesItem.filters ?? []).slice(1)
+      : secondSeriesItem?.type === 'custom_event'
+        ? (secondSeriesItem.filters ?? [])
+        : [];
   const retentionOptions =
     report.options?.type === 'retention' ? report.options : undefined;
 
@@ -91,6 +112,8 @@ function ShowQueryButton() {
         projectId,
         firstEvent: firstRetentionEvent,
         secondEvent: secondRetentionEvent,
+        firstCustomEventId: firstRetentionCustomEventId,
+        secondCustomEventId: secondRetentionCustomEventId,
         firstEventFilters: firstRetentionFilters,
         secondEventFilters: secondRetentionFilters,
         range: report.range,
@@ -105,8 +128,10 @@ function ShowQueryButton() {
         enabled:
           queryOpts.enabled &&
           chartType === 'retention' &&
-          firstRetentionEvent.length > 0 &&
-          secondRetentionEvent.length > 0,
+          (firstRetentionEvent.length > 0 ||
+            !!firstRetentionCustomEventId) &&
+          (secondRetentionEvent.length > 0 ||
+            !!secondRetentionCustomEventId),
       },
     ),
   );

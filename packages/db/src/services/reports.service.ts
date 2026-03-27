@@ -54,13 +54,14 @@ export function transformReportEventItem(
   }
 
   if (item.type === 'custom_event') {
-    // Pass through custom event as-is
     return {
       type: 'custom_event',
       id: item.id ?? alphabetIds[index]!,
       customEventId: item.customEventId,
       displayName: item.displayName,
       segment: item.segment ?? 'event',
+      filters: (item.filters ?? []).map(transformFilter),
+      property: item.property,
     };
   }
 

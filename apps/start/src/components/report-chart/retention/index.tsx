@@ -11,14 +11,40 @@ import CohortTable from './table';
 
 export function ReportRetentionChart() {
   const { isLazyLoading, report, shareId } = useReportChartContext();
-  const eventSeries = report.series.filter((item) => item.type === 'event');
-  const firstEvent = (eventSeries[0]?.filters?.[0]?.value ?? []).map(String);
-  const secondEvent = (eventSeries[1]?.filters?.[0]?.value ?? []).map(String);
-  // Extract additional filters (beyond filters[0] which is the event name)
-  const firstEventFilters = (eventSeries[0]?.filters ?? []).slice(1);
-  const secondEventFilters = (eventSeries[1]?.filters ?? []).slice(1);
+  const firstItem = report.series[0];
+  const secondItem = report.series[1];
+
+  const firstEvent =
+    firstItem?.type === 'event'
+      ? (firstItem.filters?.[0]?.value ?? []).map(String)
+      : [];
+  const firstCustomEventId =
+    firstItem?.type === 'custom_event' ? firstItem.customEventId : undefined;
+  const secondEvent =
+    secondItem?.type === 'event'
+      ? (secondItem.filters?.[0]?.value ?? []).map(String)
+      : [];
+  const secondCustomEventId =
+    secondItem?.type === 'custom_event' ? secondItem.customEventId : undefined;
+
+  // Extract additional filters (beyond filters[0] which is the event name).
+  // For custom events, all filters are "outer" filters (no filters[0] event name).
+  const firstEventFilters =
+    firstItem?.type === 'event'
+      ? (firstItem.filters ?? []).slice(1)
+      : firstItem?.type === 'custom_event'
+        ? (firstItem.filters ?? [])
+        : [];
+  const secondEventFilters =
+    secondItem?.type === 'event'
+      ? (secondItem.filters ?? []).slice(1)
+      : secondItem?.type === 'custom_event'
+        ? (secondItem.filters ?? [])
+        : [];
   const isEnabled =
-    firstEvent.length > 0 && secondEvent.length > 0 && !isLazyLoading;
+    (firstEvent.length > 0 || !!firstCustomEventId) &&
+    (secondEvent.length > 0 || !!secondCustomEventId) &&
+    !isLazyLoading;
 
   const retentionOptions = report.options?.type === 'retention' ? report.options : undefined;
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
@@ -29,6 +55,8 @@ export function ReportRetentionChart() {
       {
         firstEvent,
         secondEvent,
+        firstCustomEventId,
+        secondCustomEventId,
         firstEventFilters,
         secondEventFilters,
         projectId: report.projectId,

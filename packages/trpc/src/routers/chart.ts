@@ -17,6 +17,7 @@ import {
   funnelService,
   getChartPrevStartEndDate,
   getChartStartEndDate,
+  getCustomEventWhereClause,
   getEventFiltersWhereClause,
   getEventMetasCached,
   getProfilesCached,
@@ -30,6 +31,7 @@ import {
 import {
   type IChartEvent,
   type IChartEventFilter,
+  type ICustomEventComponent,
   zChartEventFilter,
   zChartSeries,
   zCriteria,
@@ -647,8 +649,10 @@ export const chartRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
-        firstEvent: z.array(z.string()).min(1),
-        secondEvent: z.array(z.string()).min(1),
+        firstEvent: z.array(z.string()).default([]),
+        secondEvent: z.array(z.string()).default([]),
+        firstCustomEventId: z.string().optional(),
+        secondCustomEventId: z.string().optional(),
         firstEventFilters: z.array(zChartEventFilter).default([]),
         secondEventFilters: z.array(zChartEventFilter).default([]),
         criteria: zCriteria.default('on_or_after'),
@@ -680,6 +684,14 @@ export const chartRouter = createTRPCRouter({
         ? (input.interval ?? ctx.report.interval)
         : input.interval;
 
+      // Resolved custom event WHERE clauses (include per-component filters).
+      // When set, these override whereEventNameIs() in the SQL template.
+      let firstEventCustomWhere: string | undefined;
+      let secondEventCustomWhere: string | undefined;
+      // Collect all component-level filters for profile JOIN building
+      let firstComponentFilters: IChartEventFilter[] = [];
+      let secondComponentFilters: IChartEventFilter[] = [];
+
       // Extract events from report series if shared
       if (ctx.report) {
         const retentionOptions =
@@ -688,25 +700,82 @@ export const chartRouter = createTRPCRouter({
             : undefined;
         criteria = retentionOptions?.criteria ?? criteria;
 
-        const eventSeries = onlyReportEvents(ctx.report.series);
-        const extractedFirstEvent = (
-          eventSeries[0]?.filters?.[0]?.value ?? []
-        ).map(String);
-        const extractedSecondEvent = (
-          eventSeries[1]?.filters?.[0]?.value ?? []
-        ).map(String);
+        const firstItem = ctx.report.series[0];
+        const secondItem = ctx.report.series[1];
 
-        if (
-          extractedFirstEvent.length === 0 ||
-          extractedSecondEvent.length === 0
-        ) {
-          throw new Error('Report must have at least 2 event series');
+        if (firstItem?.type === 'event') {
+          firstEvent = (firstItem.filters?.[0]?.value ?? []).map(String);
+          firstEventFilters = (firstItem.filters ?? []).slice(1);
+        } else if (firstItem?.type === 'custom_event') {
+          const ce = await db.customEvent.findUnique({
+            where: { id: firstItem.customEventId },
+          });
+          if (ce?.components && ce.projectId === projectId) {
+            const components = ce.components as ICustomEventComponent[];
+            firstEvent = components.map((c) => c.eventName);
+            firstEventCustomWhere = getCustomEventWhereClause(
+              components,
+              projectId,
+            );
+            firstComponentFilters = components.flatMap((c) => c.filters);
+          }
+          // Preserve outer series-level filters on the custom event
+          firstEventFilters = (firstItem.filters ?? []);
         }
 
-        firstEvent = extractedFirstEvent;
-        secondEvent = extractedSecondEvent;
-        firstEventFilters = (eventSeries[0]?.filters ?? []).slice(1);
-        secondEventFilters = (eventSeries[1]?.filters ?? []).slice(1);
+        if (secondItem?.type === 'event') {
+          secondEvent = (secondItem.filters?.[0]?.value ?? []).map(String);
+          secondEventFilters = (secondItem.filters ?? []).slice(1);
+        } else if (secondItem?.type === 'custom_event') {
+          const ce = await db.customEvent.findUnique({
+            where: { id: secondItem.customEventId },
+          });
+          if (ce?.components && ce.projectId === projectId) {
+            const components = ce.components as ICustomEventComponent[];
+            secondEvent = components.map((c) => c.eventName);
+            secondEventCustomWhere = getCustomEventWhereClause(
+              components,
+              projectId,
+            );
+            secondComponentFilters = components.flatMap((c) => c.filters);
+          }
+          // Preserve outer series-level filters on the custom event
+          secondEventFilters = (secondItem.filters ?? []);
+        }
+      }
+
+      // Resolve custom events from direct input (unsaved/edit flow)
+      if (firstEvent.length === 0 && input.firstCustomEventId) {
+        const ce = await db.customEvent.findUnique({
+          where: { id: input.firstCustomEventId },
+        });
+        if (ce?.components && ce.projectId === projectId) {
+          const components = ce.components as ICustomEventComponent[];
+          firstEvent = components.map((c) => c.eventName);
+          firstEventCustomWhere = getCustomEventWhereClause(
+            components,
+            projectId,
+          );
+          firstComponentFilters = components.flatMap((c) => c.filters);
+        }
+      }
+      if (secondEvent.length === 0 && input.secondCustomEventId) {
+        const ce = await db.customEvent.findUnique({
+          where: { id: input.secondCustomEventId },
+        });
+        if (ce?.components && ce.projectId === projectId) {
+          const components = ce.components as ICustomEventComponent[];
+          secondEvent = components.map((c) => c.eventName);
+          secondEventCustomWhere = getCustomEventWhereClause(
+            components,
+            projectId,
+          );
+          secondComponentFilters = components.flatMap((c) => c.filters);
+        }
+      }
+
+      if (firstEvent.length === 0 || secondEvent.length === 0) {
+        throw new Error('Start and end events are required');
       }
 
       const { timezone } = await getSettingsForProject(projectId);
@@ -768,11 +837,18 @@ export const chartRouter = createTRPCRouter({
       // filter is present (cohort_events_mv only has project_id, name,
       // created_at, profile_id, event_count — no properties/path/country/etc).
       // Profile-only filters are handled via a JOIN, so the MV suffices.
+      // Custom events with component filters also need the events table.
       const needsEventsTable = (filters: IChartEventFilter[]) =>
         filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile');
 
-      const useEventsFirst = needsEventsTable(firstEventFilters);
-      const useEventsSecond = needsEventsTable(secondEventFilters);
+      const useEventsFirst =
+        !!firstEventCustomWhere ||
+        needsEventsTable(firstEventFilters) ||
+        needsEventsTable(firstComponentFilters);
+      const useEventsSecond =
+        !!secondEventCustomWhere ||
+        needsEventsTable(secondEventFilters) ||
+        needsEventsTable(secondComponentFilters);
       const firstEventTable = useEventsFirst
         ? TABLE_NAMES.events
         : TABLE_NAMES.cohort_events_mv;
@@ -798,15 +874,35 @@ export const chartRouter = createTRPCRouter({
         return `AND ${clauses.join(' AND ')}`;
       };
 
-      const firstEventJoin = buildProfileJoin(firstEventFilters);
+      // Include both outer series filters AND component-level filters for profile JOINs
+      const firstEventJoin = buildProfileJoin([
+        ...firstEventFilters,
+        ...firstComponentFilters,
+      ]);
       const firstEventWhere = buildFilterWhere(firstEventFilters);
-      const secondEventJoin = buildProfileJoin(secondEventFilters);
+      const secondEventJoin = buildProfileJoin([
+        ...secondEventFilters,
+        ...secondComponentFilters,
+      ]);
       const secondEventWhere = buildFilterWhere(secondEventFilters);
 
       // cohort_events_mv pre-filters to identified users (profile_id != device_id).
       // When falling back to the raw events table, replicate that condition.
       const firstIdentifiedFilter = useEventsFirst ? 'AND profile_id != device_id' : '';
       const secondIdentifiedFilter = useEventsSecond ? 'AND profile_id != device_id' : '';
+
+      // For custom events, use the pre-built WHERE clause (includes component filters).
+      // For regular events, use whereEventNameIs() + separate filter clause.
+      // Outer series-level filters (firstEventWhere) are always applied on top.
+      const firstWhereClause = firstEventCustomWhere
+        ? `${firstEventCustomWhere}`
+        : `${whereEventNameIs(firstEvent)}`;
+      const firstFilterClause = firstEventWhere;
+
+      const secondWhereClause = secondEventCustomWhere
+        ? `${secondEventCustomWhere}`
+        : `${whereEventNameIs(secondEvent)}`;
+      const secondFilterClause = secondEventWhere;
 
       const cohortQuery = `
         WITH
@@ -817,11 +913,11 @@ export const chartRouter = createTRPCRouter({
             ${sqlToStartOf}(created_at) AS cohort_interval
           FROM ${firstEventTable}
           ${firstEventJoin}
-          WHERE ${whereEventNameIs(firstEvent)}
+          WHERE ${firstWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
             AND created_at BETWEEN toDate('${utc(dates.startDate)}') AND toDate('${utc(dates.endDate)}')
             ${firstIdentifiedFilter}
-            ${firstEventWhere}
+            ${firstFilterClause}
         ),
         last_event AS
         (
@@ -831,11 +927,11 @@ export const chartRouter = createTRPCRouter({
                 toDate(created_at) AS event_date
             FROM ${secondEventTable}
             ${secondEventJoin}
-            WHERE ${whereEventNameIs(secondEvent)}
+            WHERE ${secondWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
             AND created_at BETWEEN toDate('${utc(dates.startDate)}') AND toDate('${utc(dates.endDate)}') + INTERVAL ${diffInterval} ${sqlInterval}
             ${secondIdentifiedFilter}
-            ${secondEventWhere}
+            ${secondFilterClause}
         ),
         retention_matrix AS
         (
