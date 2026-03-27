@@ -1,17 +1,23 @@
 import { ifNaN } from '@openpanel/common';
-import type { IChartEvent, IReportInput } from '@openpanel/validation';
+import type {
+  IChartEvent,
+  IChartEventItem,
+  ICustomEventComponent,
+  IReportInput,
+} from '@openpanel/validation';
 import { last, reverse, uniq } from 'ramda';
 import sqlstring from 'sqlstring';
 import { ch } from '../clickhouse/client';
 import { TABLE_NAMES } from '../clickhouse/client';
 import { clix } from '../clickhouse/query-builder';
+import { db } from '../prisma-client';
 import { createSqlBuilder } from '../sql-builder';
 import {
+  getCustomEventWhereClause,
   getEventFiltersWhereClause,
   getSelectPropertyKey,
   getTraitBreakdownExpression,
 } from './chart.service';
-import { onlyReportEvents } from './reports.service';
 
 /** Display label for null/empty breakdown values (e.g. property not set). */
 export const EMPTY_BREAKDOWN_LABEL = 'Not set';
@@ -22,6 +28,54 @@ function normalizeBreakdownValue(value: unknown): string {
   }
   const s = String(value).trim();
   return s === '' ? EMPTY_BREAKDOWN_LABEL : s;
+}
+
+/**
+ * A resolved funnel step — either a regular event or a custom event
+ * with its components resolved from PostgreSQL.
+ */
+export type ResolvedFunnelStep = IChartEvent & {
+  customEventComponents?: ICustomEventComponent[];
+};
+
+/**
+ * Resolves a series array (which may contain custom events) into
+ * ResolvedFunnelStep[] that the funnel query builder can consume.
+ */
+export async function resolveSeriesForFunnel(
+  series: IChartEventItem[],
+  projectId: string,
+): Promise<ResolvedFunnelStep[]> {
+  const resolved: ResolvedFunnelStep[] = [];
+  for (const item of series) {
+    if (item.type === 'event') {
+      resolved.push(item);
+    } else if (item.type === 'custom_event') {
+      const ce = await db.customEvent.findUnique({
+        where: { id: item.customEventId },
+      });
+      if (!ce || ce.projectId !== projectId) {
+        throw new Error(
+          `Custom event "${item.displayName ?? item.customEventId}" not found or not accessible`,
+        );
+      }
+      const components = ce.components as ICustomEventComponent[];
+      if (!Array.isArray(components) || components.length === 0) {
+        throw new Error(
+          `Custom event "${ce.name}" has no components`,
+        );
+      }
+      resolved.push({
+        name: ce.name,
+        displayName: item.displayName ?? ce.name,
+        filters: item.filters ?? [],
+        segment: item.segment ?? 'event',
+        customEventComponents: components,
+      });
+    }
+    // Skip 'formula' type — not relevant for funnels
+  }
+  return resolved;
 }
 
 export class FunnelService {
@@ -37,8 +91,25 @@ export class FunnelService {
     return group === 'profile_id' ? 'profile_id' : 'session_id';
   }
 
-  getFunnelConditions(events: IChartEvent[] = [], projectId?: string): string[] {
+  getFunnelConditions(events: ResolvedFunnelStep[] = [], projectId?: string): string[] {
     return events.map((event) => {
+      if (event.customEventComponents) {
+        // Custom event: use OR-combined component conditions
+        const componentClause = getCustomEventWhereClause(
+          event.customEventComponents,
+          projectId,
+        );
+        // Also apply any outer series-level filters
+        if (event.filters && event.filters.length > 0) {
+          const outerWhere = getEventFiltersWhereClause(event.filters, projectId);
+          const outerClauses = Object.values(outerWhere);
+          if (outerClauses.length > 0) {
+            return `(${componentClause} AND ${outerClauses.join(' AND ')})`;
+          }
+        }
+        return componentClause;
+      }
+      // Regular event
       const { sb, getWhere } = createSqlBuilder();
       sb.where = getEventFiltersWhereClause(event.filters, projectId);
       sb.where.name = `name = ${sqlstring.escape(event.name)}`;
@@ -65,13 +136,24 @@ export class FunnelService {
     projectId: string;
     startDate: string;
     endDate: string;
-    eventSeries: IChartEvent[];
+    eventSeries: ResolvedFunnelStep[];
     funnelWindowMilliseconds: number;
     timezone: string;
     additionalSelects?: string[];
     additionalGroupBy?: string[];
   }) {
     const funnels = this.getFunnelConditions(eventSeries, projectId);
+
+    // Collect all real event names for the IN pre-filter.
+    // Regular events contribute their name; custom events contribute
+    // all component eventNames.
+    const allEventNames = uniq(
+      eventSeries.flatMap((e) =>
+        e.customEventComponents
+          ? e.customEventComponents.map((c) => c.eventName)
+          : [e.name],
+      ),
+    );
 
     return clix(this.client, timezone)
       .select([
@@ -86,11 +168,7 @@ export class FunnelService {
         clix.datetime(startDate, 'toDateTime'),
         clix.datetime(endDate, 'toDateTime'),
       ])
-      .where(
-        'name',
-        'IN',
-        eventSeries.map((e) => e.name),
-      )
+      .where('name', 'IN', allEventNames)
       .groupBy(['session_id', ...additionalGroupBy]);
   }
 
@@ -193,12 +271,17 @@ export class FunnelService {
     return Object.values(series);
   }
 
-  getProfileFilters(events: IChartEvent[]) {
-    return events.flatMap((e) =>
-      e.filters
-        ?.filter((f) => f.name.startsWith('profile.'))
-        .map((f) => f.name.replace('profile.', '')),
-    );
+  getProfileFilters(events: ResolvedFunnelStep[]) {
+    return events.flatMap((e) => {
+      const outerProfileFilters = (e.filters ?? [])
+        .filter((f) => f.name.startsWith('profile.'))
+        .map((f) => f.name.replace('profile.', ''));
+      const componentProfileFilters = (e.customEventComponents ?? [])
+        .flatMap((c) => c.filters)
+        .filter((f) => f.name.startsWith('profile.'))
+        .map((f) => f.name.replace('profile.', ''));
+      return [...outerProfileFilters, ...componentProfileFilters];
+    });
   }
 
   async getFunnel({
@@ -219,7 +302,7 @@ export class FunnelService {
     const funnelWindow = funnelOptions?.funnelWindow ?? 24;
     const funnelGroup = funnelOptions?.funnelGroup;
 
-    const eventSeries = onlyReportEvents(series);
+    const eventSeries = await resolveSeriesForFunnel(series, projectId);
 
     if (eventSeries.length === 0) {
       throw new Error('events are required');

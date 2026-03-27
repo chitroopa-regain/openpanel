@@ -25,6 +25,7 @@ import {
   getSelectPropertyKey,
   getSettingsForProject,
   onlyReportEvents,
+  resolveSeriesForFunnel,
   sankeyService,
   validateShareAccess,
 } from '@openpanel/db';
@@ -1102,7 +1103,7 @@ export const chartRouter = createTRPCRouter({
       // stepIndex is 0-based, but level is 1-based, so we need level >= stepIndex + 1
       const targetLevel = stepIndex + 1;
 
-      const eventSeries = onlyReportEvents(series);
+      const eventSeries = await resolveSeriesForFunnel(series, projectId);
 
       if (eventSeries.length === 0) {
         throw new Error('At least one event series is required');
@@ -1121,17 +1122,13 @@ export const chartRouter = createTRPCRouter({
         projectId,
         startDate,
         endDate,
-        eventSeries: eventSeries as IChartEvent[],
+        eventSeries,
         funnelWindowMilliseconds,
         timezone,
-        // No need to add profile_id to additionalSelects/additionalGroupBy
-        // since buildFunnelCte already extracts it via argMax(profile_id, created_at)
       });
 
       // Check for profile filters and add profile join if needed
-      const profileFilters = funnelService.getProfileFilters(
-        eventSeries as IChartEvent[]
-      );
+      const profileFilters = funnelService.getProfileFilters(eventSeries);
       if (profileFilters.length > 0) {
         const fieldsToSelect = uniq(
           profileFilters.map((f) => f.split('.')[0])
