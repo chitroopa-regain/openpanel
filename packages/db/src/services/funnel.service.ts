@@ -118,10 +118,16 @@ export class FunnelService {
   }
 
   /**
-   * Builds the session-level funnel CTE.
-   * IMPORTANT: windowFunnel is ALWAYS computed per session_id first.
-   * This ensures identity changes mid-session (anonymous → logged-in) don't break the funnel.
-   * The profile_id is extracted from the last event in the session using argMax.
+   * Builds the funnel CTE.
+   *
+   * Session mode (default): computes windowFunnel per session_id and extracts
+   * profile_id via argMax. Handles anonymous → identified transitions within
+   * a single session.
+   *
+   * Profile mode: computes windowFunnel per profile_id directly, filtering
+   * to identified users only (profile_id != device_id). Required for
+   * cross-source funnels where steps come from different session_ids
+   * (e.g. app SDK events + server webhook events).
    */
   buildFunnelCte({
     projectId,
@@ -130,6 +136,7 @@ export class FunnelService {
     eventSeries,
     funnelWindowMilliseconds,
     timezone,
+    groupBy = 'session_id',
     additionalSelects = [],
     additionalGroupBy = [],
   }: {
@@ -139,14 +146,13 @@ export class FunnelService {
     eventSeries: ResolvedFunnelStep[];
     funnelWindowMilliseconds: number;
     timezone: string;
+    groupBy?: 'session_id' | 'profile_id';
     additionalSelects?: string[];
     additionalGroupBy?: string[];
   }) {
     const funnels = this.getFunnelConditions(eventSeries, projectId);
 
     // Collect all real event names for the IN pre-filter.
-    // Regular events contribute their name; custom events contribute
-    // all component eventNames.
     const allEventNames = uniq(
       eventSeries.flatMap((e) =>
         e.customEventComponents
@@ -155,13 +161,22 @@ export class FunnelService {
       ),
     );
 
-    return clix(this.client, timezone)
-      .select([
-        'session_id',
-        `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(created_at)), ${funnels.join(', ')}) AS level`,
-        'argMax(profile_id, created_at) AS profile_id',
-        ...additionalSelects,
-      ])
+    const selects =
+      groupBy === 'profile_id'
+        ? [
+            'profile_id',
+            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(created_at)), ${funnels.join(', ')}) AS level`,
+            ...additionalSelects,
+          ]
+        : [
+            'session_id',
+            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(created_at)), ${funnels.join(', ')}) AS level`,
+            'argMax(profile_id, created_at) AS profile_id',
+            ...additionalSelects,
+          ];
+
+    const query = clix(this.client, timezone)
+      .select(selects)
       .from(TABLE_NAMES.events, false)
       .where('project_id', '=', projectId)
       .where('created_at', 'BETWEEN', [
@@ -169,7 +184,15 @@ export class FunnelService {
         clix.datetime(endDate, 'toDateTime'),
       ])
       .where('name', 'IN', allEventNames)
-      .groupBy(['session_id', ...additionalGroupBy]);
+      .groupBy([groupBy, ...additionalGroupBy]);
+
+    // In profile mode, only include identified users to avoid
+    // double-counting anonymous device_id-based profiles.
+    if (groupBy === 'profile_id') {
+      query.rawWhere('profile_id != device_id');
+    }
+
+    return query;
   }
 
   buildSessionsCte({
@@ -317,11 +340,34 @@ export class FunnelService {
       b.name.startsWith('profile.'),
     );
 
-    // Create the funnel CTE (session-level)
-    const breakdownSelects = breakdowns.map(
-      (b, index) => `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${index}`,
-    );
-    const breakdownGroupBy = breakdowns.map((b, index) => `b_${index}`);
+    // Breakdown step: which step's event to extract breakdown values from.
+    // undefined = use GROUP BY (all steps, current behavior).
+    // 0-based index = use argMaxIf to extract from that step's event only.
+    const breakdownStep = funnelOptions?.breakdownStep;
+
+    // Build breakdown selects.
+    // When a specific step is selected, use argMaxIf to extract the breakdown
+    // value from that step's event condition only. This prevents cross-event
+    // property mismatches (e.g. app events vs webhook events with different properties).
+    let breakdownSelects: string[];
+    let breakdownGroupBy: string[];
+
+    if (breakdownStep !== undefined && breakdownStep < eventSeries.length) {
+      const stepConditions = this.getFunnelConditions(eventSeries, projectId);
+      const stepCondition = stepConditions[breakdownStep]!;
+      breakdownSelects = breakdowns.map(
+        (b, index) =>
+          `argMaxIf(${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)}, created_at, ${stepCondition}) as b_${index}`,
+      );
+      // No GROUP BY for breakdown columns — argMaxIf aggregates them
+      breakdownGroupBy = [];
+    } else {
+      breakdownSelects = breakdowns.map(
+        (b, index) =>
+          `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${index}`,
+      );
+      breakdownGroupBy = breakdowns.map((_, index) => `b_${index}`);
+    }
 
     const funnelCte = this.buildFunnelCte({
       projectId,
@@ -330,6 +376,7 @@ export class FunnelService {
       eventSeries,
       funnelWindowMilliseconds,
       timezone,
+      groupBy: group,
       additionalSelects: breakdownSelects,
       additionalGroupBy: breakdownGroupBy,
     });
@@ -361,19 +408,13 @@ export class FunnelService {
     funnelQuery.with('session_funnel', funnelCte);
 
     if (group === 'profile_id') {
-      // For profile grouping: re-aggregate by profile_id, taking MAX level per profile.
-      // This ensures a user who completed the funnel across multiple sessions
-      // (or with identity change) is counted correctly.
-      const breakdownAggregates =
-        breakdowns.length > 0
-          ? `, ${breakdowns.map((_, index) => `any(b_${index}) AS b_${index}`).join(', ')}`
-          : '';
+      // Profile mode: CTE already groups by profile_id, just filter level != 0.
       funnelQuery.with(
         'funnel',
-        `SELECT profile_id, max(level) AS level${breakdownAggregates} FROM (SELECT * FROM session_funnel WHERE level != 0) GROUP BY profile_id`,
+        'SELECT * FROM session_funnel WHERE level != 0',
       );
     } else {
-      // For session grouping: filter out level = 0 inside the CTE
+      // Session mode: filter out level = 0
       funnelQuery.with(
         'funnel',
         'SELECT * FROM session_funnel WHERE level != 0',

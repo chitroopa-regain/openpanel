@@ -1116,8 +1116,6 @@ export const chartRouter = createTRPCRouter({
       const group = funnelService.getFunnelGroup(funnelGroup);
 
       // Create funnel CTE using funnel service
-      // Note: buildFunnelCte always computes windowFunnel per session_id and extracts
-      // profile_id via argMax to handle identity changes mid-session correctly.
       const funnelCte = funnelService.buildFunnelCte({
         projectId,
         startDate,
@@ -1125,6 +1123,7 @@ export const chartRouter = createTRPCRouter({
         eventSeries,
         funnelWindowMilliseconds,
         timezone,
+        groupBy: group,
       });
 
       // Check for profile filters and add profile join if needed

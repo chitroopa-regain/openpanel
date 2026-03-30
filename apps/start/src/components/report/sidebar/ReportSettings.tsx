@@ -10,6 +10,7 @@ import { useEventNames } from '@/hooks/use-event-names';
 import { useMemo } from 'react';
 import {
   changeCriteria,
+  changeFunnelBreakdownStep,
   changeFunnelGroup,
   changeFunnelWindow,
   changePrevious,
@@ -33,6 +34,8 @@ export function ReportSettings() {
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
   const funnelGroup = funnelOptions?.funnelGroup;
   const funnelWindow = funnelOptions?.funnelWindow;
+  const breakdownStep = funnelOptions?.breakdownStep;
+  const seriesCount = useSelector((state) => state.report.series.length);
 
   const histogramOptions = options?.type === 'histogram' ? options : undefined;
   const stacked = histogramOptions?.stacked ?? false;
@@ -56,6 +59,10 @@ export function ReportSettings() {
     if (chartType === 'funnel' || chartType === 'conversion') {
       fields.push('funnelGroup');
       fields.push('funnelWindow');
+    }
+
+    if (chartType === 'funnel') {
+      fields.push('breakdownStep');
     }
 
     if (chartType === 'sankey') {
@@ -181,6 +188,34 @@ export function ReportSettings() {
                   dispatch(changeFunnelWindow(parsed));
                 }
               }}
+            />
+          </div>
+        )}
+        {fields.includes('breakdownStep') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="whitespace-nowrap font-medium mb-0">
+              Breakdown Step
+            </Label>
+            <Combobox
+              align="end"
+              placeholder="All steps"
+              value={
+                breakdownStep !== undefined ? String(breakdownStep) : 'all'
+              }
+              onChange={(val) => {
+                dispatch(
+                  changeFunnelBreakdownStep(
+                    val === 'all' ? undefined : Number(val),
+                  ),
+                );
+              }}
+              items={[
+                { label: 'All steps', value: 'all' },
+                ...Array.from({ length: seriesCount }, (_, i) => ({
+                  label: `Step ${i + 1}`,
+                  value: String(i),
+                })),
+              ]}
             />
           </div>
         )}

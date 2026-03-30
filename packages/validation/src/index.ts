@@ -152,6 +152,8 @@ export const zFunnelOptions = z.object({
   type: z.literal('funnel'),
   funnelGroup: z.string().optional(),
   funnelWindow: z.number().optional(),
+  /** 0-based step index for breakdown extraction. undefined = all steps (current behavior). */
+  breakdownStep: z.number().int().nonnegative().optional(),
 });
 
 export const zRetentionOptions = z.object({
