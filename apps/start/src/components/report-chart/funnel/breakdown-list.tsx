@@ -100,11 +100,6 @@ export function BreakdownList({
   const sortedBreakdowns = useMemo(() => {
     const items = [...allBreakdowns];
     items.sort((a, b) => {
-      // Visible (checked) rows always on top
-      const aVisible = visibleSeriesIds.includes(a.id) ? 0 : 1;
-      const bVisible = visibleSeriesIds.includes(b.id) ? 0 : 1;
-      if (aVisible !== bVisible) return aVisible - bVisible;
-
       const va = getSortValue(a, sortKey);
       const vb = getSortValue(b, sortKey);
       let cmp: number;
@@ -113,15 +108,16 @@ export function BreakdownList({
       } else {
         const na = typeof va === 'number' ? va : 0;
         const nb = typeof vb === 'number' ? vb : 0;
-        if (na === Infinity && nb === Infinity) cmp = 0;
-        else if (na === Infinity) cmp = 1;
-        else if (nb === Infinity) cmp = -1;
-        else cmp = na - nb;
+        // Infinity (null times) always sort to the bottom regardless of direction
+        if (na === Infinity && nb === Infinity) return 0;
+        if (na === Infinity) return 1;
+        if (nb === Infinity) return -1;
+        cmp = na - nb;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return items;
-  }, [allBreakdowns, sortKey, sortDir, visibleSeriesIds]);
+  }, [allBreakdowns, sortKey, sortDir]);
 
   // Base ranking for Top N: always Total Conv % desc, ignoring visibility grouping.
   const rankedBreakdowns = useMemo(() => {
