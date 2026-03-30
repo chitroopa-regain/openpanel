@@ -555,13 +555,10 @@ export function Chart({
               domain={undefined}
               interval="preserveStartEnd"
               scale="auto"
-              tickFormatter={(id) => {
-                const stepIndex = data.current[0].steps.findIndex(
-                  (step) => step.event.id === id,
-                );
+              tickFormatter={(_id, index) => {
                 const name =
-                  data.current[0].steps[stepIndex]?.event.displayName ?? '';
-                return stepIndex >= 0 ? `${stepIndex + 1}  ${name}` : name;
+                  data.current[0]?.steps[index]?.event.displayName ?? '';
+                return `${index + 1}  ${name}`;
               }}
               tickMargin={4}
               tickSize={0}
