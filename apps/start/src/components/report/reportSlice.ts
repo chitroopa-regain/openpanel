@@ -176,6 +176,14 @@ export const reportSlice = createSlice({
       state.breakdowns = state.breakdowns.filter(
         (event) => event.id !== action.payload.id,
       );
+      // Reset breakdownStep when all breakdowns are removed
+      if (
+        state.breakdowns.length === 0 &&
+        state.options?.type === 'funnel' &&
+        state.options.breakdownStep !== undefined
+      ) {
+        state.options.breakdownStep = undefined;
+      }
     },
     changeBreakdown: (state, action: PayloadAction<IChartBreakdown>) => {
       state.dirty = true;
