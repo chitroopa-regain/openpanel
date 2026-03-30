@@ -615,7 +615,7 @@ export function Chart({
             )}
             {hasVisibleBreakdowns && <Legend content={<CustomLegend />} />}
             {showPreviousBars && <Legend content={<PreviousLegend />} />}
-            <Tooltip />
+            <Tooltip shared={!hasBreakdowns} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -631,7 +631,7 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
     hasPrevious: boolean;
     hasBreakdowns: boolean;
   }
->(({ data: dataArray, context, ...props }) => {
+>(({ data: dataArray, items, context, ...props }) => {
   const data = dataArray[0];
   const number = useNumber();
   if (!data) {
@@ -645,14 +645,23 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
     (step) => step.event.id === (data as any).id
   );
 
+  // In breakdown mode with shared={false}, Recharts sends only the hovered
+  // bar's payload item. Extract the breakdown index from its dataKey.
+  const hoveredDataKey = items[0]?.dataKey as string | undefined;
+  const hoveredBreakdownIndex = hoveredDataKey?.match(
+    /^step:percent:(\d+)$/
+  )?.[1];
+
   // Filter variants to only show visible breakdowns
-  // The variant object contains the full breakdown item, so we can check its ID directly
   const visibleVariants = variants.filter((key) => {
     const variant = data[key];
     if (!variant) {
       return false;
     }
-    // The variant is the breakdown item itself (with step added), so it has an id property
+    // If we have a hovered breakdown index, only show that one
+    if (hoveredBreakdownIndex !== undefined) {
+      return key === `step:data:${hoveredBreakdownIndex}`;
+    }
     return context.visibleBreakdownIds.has(variant.id);
   });
 

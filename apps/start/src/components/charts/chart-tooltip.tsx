@@ -52,6 +52,8 @@ export function createChartTooltip<
     {
       context: PropsFromContext;
       data: PropsFromTooltip[];
+      /** Raw Recharts payload items — use to identify which bar/series is hovered. */
+      items: NonNullable<TooltipProps<number, string>['payload']>;
     } & TooltipProps<number, string>
   >,
 ) {
@@ -67,6 +69,7 @@ export function createChartTooltip<
   const InnerTooltip = (tooltip: TooltipProps<number, string>) => {
     const context = useContext();
     const data = tooltip.payload?.map((p) => p.payload) ?? [];
+    const items = tooltip.payload ?? [];
 
     if (!data || !tooltip.active) {
       return null;
@@ -74,7 +77,7 @@ export function createChartTooltip<
 
     return (
       <ChartTooltipContainer>
-        <Tooltip data={data} context={context} {...tooltip} />
+        <Tooltip data={data} items={items} context={context} {...tooltip} />
       </ChartTooltipContainer>
     );
   };
