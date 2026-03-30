@@ -164,6 +164,8 @@ export const zFunnelOptions = z.object({
   funnelWindowUnit: zFunnelWindowUnit.optional(),
   /** 0-based step index for breakdown extraction. undefined = all steps (current behavior). */
   breakdownStep: z.number().int().nonnegative().optional(),
+  /** Number of top breakdown rows to show in chart. undefined = 10. */
+  topN: z.number().int().positive().optional(),
 });
 
 export const zRetentionOptions = z.object({

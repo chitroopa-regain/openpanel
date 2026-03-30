@@ -16,6 +16,8 @@ interface BreakdownListProps {
     stepIndex: number,
     breakdownValues?: string[],
   ) => void;
+  savedTopN?: number;
+  onTopNChange?: (n: number | undefined) => void;
 }
 
 type SortKey =
@@ -66,13 +68,15 @@ export function BreakdownList({
   visibleSeriesIds,
   setVisibleSeries,
   onInspectStep,
+  savedTopN,
+  onTopNChange,
 }: BreakdownListProps) {
   const allBreakdowns = data.current;
   const number = useNumber();
   const [sortKey, setSortKey] = useState<SortKey>('totalConv');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [topN, setTopN] = useState(10);
-  const [topNDraft, setTopNDraft] = useState(10);
+  const [topN, setTopN] = useState(savedTopN ?? 10);
+  const [topNDraft, setTopNDraft] = useState(savedTopN ?? 10);
   const [showTopNMenu, setShowTopNMenu] = useState(false);
 
   const toggleVisibility = (id: string) => {
@@ -129,11 +133,13 @@ export function BreakdownList({
   const applyTopN = useCallback(
     (n: number) => {
       setTopN(n);
+      setTopNDraft(n);
       const topIds = rankedBreakdowns.slice(0, n).map((b) => b.id);
       setVisibleSeries(topIds);
       setShowTopNMenu(false);
+      onTopNChange?.(n === 10 ? undefined : n);
     },
-    [rankedBreakdowns, setVisibleSeries],
+    [rankedBreakdowns, setVisibleSeries, onTopNChange],
   );
 
   if (allBreakdowns.length === 0) {

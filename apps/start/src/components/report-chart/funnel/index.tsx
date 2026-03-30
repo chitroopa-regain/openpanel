@@ -8,13 +8,16 @@ import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
 import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdowns';
+import { useDispatch } from '@/redux';
 import { pushModal } from '@/modals';
 import { useCallback } from 'react';
+import { changeFunnelTopN } from '../../../components/report/reportSlice';
 import { Chart, Summary } from './chart';
 import { BreakdownList } from './breakdown-list';
 
 export function ReportFunnelChart() {
-  const { isLazyLoading, report, shareId } = useReportChartContext();
+  const { isLazyLoading, isEditMode, report, shareId } =
+    useReportChartContext();
   const trpc = useTRPC();
   const res = useQuery(
     trpc.chart.funnel.queryOptions(
@@ -28,12 +31,21 @@ export function ReportFunnelChart() {
     ),
   );
 
-  // Hook for limiting which breakdowns are shown in the chart only
-  const { breakdowns: visibleBreakdowns, setVisibleSeries } =
-    useVisibleFunnelBreakdowns(res.data?.current ?? [], 10);
-
   const funnelOptions =
     report.options?.type === 'funnel' ? report.options : undefined;
+  const savedTopN = funnelOptions?.topN ?? 10;
+  const dispatch = useDispatch();
+
+  // Hook for limiting which breakdowns are shown in the chart only
+  const { breakdowns: visibleBreakdowns, setVisibleSeries } =
+    useVisibleFunnelBreakdowns(res.data?.current ?? [], savedTopN);
+
+  const handleTopNChange = useCallback(
+    (n: number | undefined) => {
+      dispatch(changeFunnelTopN(n));
+    },
+    [dispatch],
+  );
 
   const handleInspectStep = useCallback(
     (stepIndex: number, breakdownValues?: string[]) => {
@@ -75,14 +87,18 @@ export function ReportFunnelChart() {
 
   return (
     <div className="col gap-4">
-      {hasBreakdowns && <Summary data={res.data} />}
+      {isEditMode && hasBreakdowns && <Summary data={res.data} />}
       <Chart data={res.data} visibleBreakdowns={visibleBreakdowns} />
-      <BreakdownList
-        data={res.data}
-        visibleSeriesIds={visibleBreakdowns.map((b) => b.id)}
-        setVisibleSeries={setVisibleSeries}
-        onInspectStep={handleInspectStep}
-      />
+      {isEditMode && (
+        <BreakdownList
+          data={res.data}
+          visibleSeriesIds={visibleBreakdowns.map((b) => b.id)}
+          setVisibleSeries={setVisibleSeries}
+          onInspectStep={handleInspectStep}
+          savedTopN={savedTopN}
+          onTopNChange={handleTopNChange}
+        />
+      )}
     </div>
   );
 }
