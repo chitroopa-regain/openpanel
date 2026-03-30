@@ -334,8 +334,8 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
             title="View Users"
             text={
               showDropoffs
-                ? `Users who dropped off after step ${stepIndex + 1} of ${report.series.length}`
-                : `Users who completed step ${stepIndex + 1} of ${report.series.length} in the funnel`
+                ? `${stepIndex + 1 < report.series.length ? `Users who completed step ${stepIndex + 1} but did not reach step ${stepIndex + 2}` : `Users who dropped off at the final step`}`
+                : `Users who reached at least step ${stepIndex + 1} of ${report.series.length}`
             }
           />
           {!isLastStep && (
