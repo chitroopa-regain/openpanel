@@ -29,6 +29,24 @@ import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor, getChartTranslucentColor } from '@/utils/theme';
 
+/** Format seconds into compact human-readable duration. */
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  if (seconds < 86400) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    return m > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${h}h`;
+  }
+  const d = Math.floor(seconds / 86400);
+  const h = Math.round((seconds % 86400) / 3600);
+  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+}
+
 type Props = {
   data: {
     current: RouterOutputs['chart']['funnel']['current'][number];
@@ -260,22 +278,32 @@ export function Tables({
             },
             {
               name: 'Completed',
-              render: (item) => number.format(item.count),
+              render: (item) => number.format(item.stepConversionCount),
               className: 'text-right font-mono hidden @xl:block',
               width: '82px',
             },
             {
               name: 'Dropped after',
               render: (item) =>
-                item.dropoffCount !== null && item.dropoffPercent !== null
+                item.dropoffCount !== null
                   ? number.format(item.dropoffCount)
                   : null,
-              className: 'text-right font-mono hidden @xl:block',
+              className: 'text-right font-mono hidden @2xl:block',
               width: '110px',
             },
             {
+              name: 'Median Time',
+              render: (item) =>
+                item.medianTimeToConvertSeconds != null
+                  ? formatDuration(item.medianTimeToConvertSeconds)
+                  : '—',
+              className: 'text-right font-mono hidden @xl:block',
+              width: '100px',
+            },
+            {
               name: 'Conversion',
-              render: (item) => number.formatWithUnit(item.percent / 100, '%'),
+              render: (item) =>
+                number.formatWithUnit(item.stepConversionPercent / 100, '%'),
               className: 'text-right font-mono font-semibold',
               width: '90px',
             },

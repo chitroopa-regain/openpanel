@@ -7,7 +7,7 @@ import type {
 } from '@openpanel/validation';
 import { last, reverse, uniq } from 'ramda';
 import sqlstring from 'sqlstring';
-import { ch } from '../clickhouse/client';
+import { ch, chQuery } from '../clickhouse/client';
 import { TABLE_NAMES } from '../clickhouse/client';
 import { clix } from '../clickhouse/query-builder';
 import { db } from '../prisma-client';
@@ -390,6 +390,8 @@ export class FunnelService {
       breakdownGroupBy = breakdowns.map((_, index) => `b_${index}`);
     }
 
+    const stepConditions = this.getFunnelConditions(eventSeries, projectId);
+
     const funnelCte = this.buildFunnelCte({
       projectId,
       startDate,
@@ -490,6 +492,11 @@ export class FunnelService {
                     : null,
                   previousCount: prev.count,
                   nextCount: next?.count ?? null,
+                  medianTimeToConvertSeconds: null,
+                  totalConversionCount: 0,
+                  totalConversionPercent: 0,
+                  stepConversionCount: 0,
+                  stepConversionPercent: 0,
                 },
               ];
             },
@@ -501,6 +508,11 @@ export class FunnelService {
               dropoffPercent: number | null;
               previousCount: number;
               nextCount: number | null;
+              medianTimeToConvertSeconds: number | null;
+              totalConversionCount: number;
+              totalConversionPercent: number;
+              stepConversionCount: number;
+              stepConversionPercent: number;
             }[],
           )
           .map((step, index, list) => {
@@ -543,10 +555,257 @@ export class FunnelService {
         return bTotal - aTotal;
       });
 
+    // Compute time-to-convert metrics using chained step timestamps.
+    // Returns a map keyed by breakdown identity (e.g. 'none' or 'FOCUS_BADGE').
+    let timingByBreakdown: Map<string, Record<string, number | null>> =
+      new Map();
+    if (stepConditions.length >= 2) {
+      try {
+        timingByBreakdown = await this.getFunnelTimingStats({
+          projectId,
+          startDate: startDate!,
+          endDate: endDate!,
+          stepConditions,
+          funnelWindowSeconds,
+          groupBy: group,
+          allEventNames: uniq(
+            eventSeries.flatMap((e) =>
+              e.customEventComponents
+                ? e.customEventComponents.map((c) => c.eventName)
+                : [e.name],
+            ),
+          ),
+          breakdowns,
+          breakdownSelects,
+          breakdownStep,
+          eventSeries,
+        });
+      } catch {
+        // Timing query failed — continue without timing data
+      }
+    }
+
+    // Merge timing + conversion data into funnel steps.
+    for (const series of data) {
+      const lastStep = last(series.steps);
+      const totalCount = lastStep?.count ?? 0;
+      const firstCount = series.steps[0]?.count ?? 0;
+
+      // Look up timing for this breakdown series
+      const timingKey = series.id === 'none' ? 'none' : series.id;
+      const timingData = timingByBreakdown.get(timingKey) ?? {};
+
+      for (let i = 0; i < series.steps.length; i++) {
+        const step = series.steps[i]!;
+        const prevStep = i > 0 ? series.steps[i - 1] : null;
+
+        const rawMedian = timingData[`step_${i}_median`];
+        step.medianTimeToConvertSeconds =
+          i === 0
+            ? null
+            : rawMedian != null && rawMedian >= 0
+              ? Math.round(rawMedian)
+              : null;
+        step.totalConversionCount = totalCount;
+        step.totalConversionPercent =
+          firstCount > 0 ? (totalCount / firstCount) * 100 : 0;
+        step.stepConversionCount = step.count;
+        step.stepConversionPercent =
+          i === 0
+            ? 100
+            : prevStep && prevStep.count > 0
+              ? (step.count / prevStep.count) * 100
+              : 0;
+      }
+    }
+
     return {
       data,
       queries,
     };
+  }
+
+  /**
+   * Compute median time-to-convert for each funnel step using chained
+   * timestamp extraction. Each step's timestamp is the earliest occurrence
+   * AFTER the previous step's timestamp, within the funnel window.
+   * Returns a Map keyed by breakdown identity (or 'none' if no breakdowns).
+   */
+  private async getFunnelTimingStats({
+    projectId,
+    startDate,
+    endDate,
+    stepConditions,
+    funnelWindowSeconds,
+    groupBy,
+    allEventNames,
+    breakdowns = [],
+    breakdownSelects = [],
+    breakdownStep,
+    eventSeries,
+  }: {
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    stepConditions: string[];
+    funnelWindowSeconds: number;
+    groupBy: 'session_id' | 'profile_id';
+    allEventNames: string[];
+    breakdowns?: { name: string }[];
+    breakdownSelects?: string[];
+    breakdownStep?: number;
+    eventSeries?: ResolvedFunnelStep[];
+  }): Promise<Map<string, Record<string, number | null>>> {
+    const result = new Map<string, Record<string, number | null>>();
+    if (stepConditions.length < 2) {
+      return result;
+    }
+
+    const entityKey = groupBy;
+    const nameList = allEventNames
+      .map((n) => sqlstring.escape(n))
+      .join(', ');
+    const identifiedFilter =
+      groupBy === 'profile_id' ? 'AND profile_id != device_id' : '';
+
+    const ctes: string[] = [];
+    const hasBreakdowns = breakdowns.length > 0;
+
+    // Step 1 CTE (no breakdown columns — timing CTEs are entity-scoped)
+    ctes.push(`step_1 AS (
+      SELECT ${entityKey},
+        min(created_at) as step_1_ts
+      FROM ${TABLE_NAMES.events}
+      WHERE project_id = ${sqlstring.escape(projectId)}
+        AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+        AND name IN (${nameList})
+        ${identifiedFilter}
+        AND (${stepConditions[0]})
+      GROUP BY ${entityKey}
+    )`);
+
+    // Steps 2..N
+    for (let i = 1; i < stepConditions.length; i++) {
+      const prevCte = `step_${i}`;
+      const currCte = `step_${i + 1}`;
+      ctes.push(`${currCte} AS (
+        SELECT prev.${entityKey} as ${entityKey},
+          min(e.created_at) as ${currCte}_ts
+        FROM ${prevCte} prev
+        JOIN ${TABLE_NAMES.events} e ON e.${entityKey} = prev.${entityKey}
+        JOIN step_1 s1 ON s1.${entityKey} = prev.${entityKey}
+        WHERE e.project_id = ${sqlstring.escape(projectId)}
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.name IN (${nameList})
+          ${groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : ''}
+          AND (${stepConditions[i]})
+          AND e.created_at > prev.${prevCte}_ts
+          AND dateDiff('second', s1.step_1_ts, e.created_at) <= ${funnelWindowSeconds}
+        GROUP BY prev.${entityKey}
+      )`);
+    }
+
+    // If breakdowns exist, add a separate CTE that extracts breakdown values
+    // from the correct step's events (determined by breakdownStep).
+    // This avoids the bug where argMaxIf for step 2 would be applied inside
+    // the step_1 CTE which only has step 1 events.
+    //
+    // Known limitations:
+    // - profile.* breakdowns are not supported in timing queries (no profiles
+    //   JOIN here). If used, the timing query will fail silently and medians
+    //   will show as "—". The main funnel counts still work correctly.
+    // - When breakdownStep is unset, timing_bd scans all events per entity,
+    //   so if a user's breakdown value changes between steps, the same
+    //   conversion time may appear in multiple groups. Use breakdownStep
+    //   for precise segmented timing.
+    if (hasBreakdowns) {
+      const bdStepIdx = breakdownStep ?? 0;
+      const bdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+
+      // Build breakdown expressions for the breakdown CTE.
+      // For GROUP BY mode (breakdownStep undefined): use raw property + GROUP BY
+      // For argMaxIf mode (breakdownStep set): use argMaxIf tied to the step condition
+      let bdExprs: string[];
+      let bdGroup: string[];
+      if (breakdownStep !== undefined) {
+        bdExprs = breakdowns.map(
+          (b, i) =>
+            `argMaxIf(${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)}, created_at, ${bdStepCondition}) as b_${i}`,
+        );
+        bdGroup = [];
+      } else {
+        bdExprs = breakdowns.map(
+          (b, i) =>
+            `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${i}`,
+        );
+        bdGroup = breakdowns.map((_, i) => `b_${i}`);
+      }
+
+      ctes.push(`timing_bd AS (
+        SELECT ${entityKey}
+          ${bdExprs.length > 0 ? `, ${bdExprs.join(', ')}` : ''}
+        FROM ${TABLE_NAMES.events}
+        WHERE project_id = ${sqlstring.escape(projectId)}
+          AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND name IN (${nameList})
+          ${identifiedFilter}
+        GROUP BY ${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
+      )`);
+    }
+
+    // Final aggregation
+    const stepJoins: string[] = [];
+    const medianSelects: string[] = [];
+
+    for (let i = 1; i < stepConditions.length; i++) {
+      const stepCte = `step_${i + 1}`;
+      const tsCol = `${stepCte}.${stepCte}_ts`;
+      const nullableTs = `nullIf(${tsCol}, toDateTime64(0, 3))`;
+      stepJoins.push(
+        `LEFT JOIN ${stepCte} ON s1.${entityKey} = ${stepCte}.${entityKey}`,
+      );
+      medianSelects.push(
+        `quantileTDigestIf(0.5)(dateDiff('second', s1.step_1_ts, ${nullableTs}), isNotNull(${nullableTs})) as step_${i}_median`,
+      );
+    }
+
+    // Join breakdown CTE if breakdowns exist
+    let bdSelectsInFinal = '';
+    let bdGroupByInFinal = '';
+    if (hasBreakdowns) {
+      stepJoins.push(
+        `LEFT JOIN timing_bd bd ON s1.${entityKey} = bd.${entityKey}`,
+      );
+      bdSelectsInFinal =
+        breakdowns.map((_, i) => `bd.b_${i}`).join(', ') + ',';
+      bdGroupByInFinal =
+        `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`;
+    }
+
+    const sql = `
+      WITH ${ctes.join(',\n')}
+      SELECT
+        ${bdSelectsInFinal}
+        ${medianSelects.join(',\n')}
+      FROM step_1 s1
+      ${stepJoins.join('\n')}
+      ${bdGroupByInFinal}
+    `;
+
+    const rows = await chQuery<Record<string, any>>(sql);
+
+    if (breakdowns.length === 0) {
+      result.set('none', rows[0] ?? {});
+    } else {
+      for (const row of rows) {
+        const key = breakdowns
+          .map((_, i) => normalizeBreakdownValue(row[`b_${i}`]))
+          .join('|');
+        result.set(key, row);
+      }
+    }
+
+    return result;
   }
 }
 

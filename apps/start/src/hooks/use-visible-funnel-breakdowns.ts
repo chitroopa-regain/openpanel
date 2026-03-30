@@ -15,7 +15,16 @@ export function useVisibleFunnelBreakdowns(
   );
 
   useEffect(() => {
-    setVisibleSeries(data?.slice(0, max).map((item) => item.id) ?? []);
+    const next = data?.slice(0, max).map((item) => item.id) ?? [];
+    setVisibleSeries((prev) => {
+      if (
+        prev.length === next.length &&
+        prev.every((id, i) => id === next[i])
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }, [data, max]);
 
   return useMemo(() => {
