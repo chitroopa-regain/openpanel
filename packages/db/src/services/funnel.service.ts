@@ -88,7 +88,7 @@ export class FunnelService {
    * The returned group is used for the final aggregation step.
    */
   getFunnelGroup(group?: string): 'profile_id' | 'session_id' {
-    return group === 'profile_id' ? 'profile_id' : 'session_id';
+    return group === 'session_id' ? 'session_id' : 'profile_id';
   }
 
   getFunnelConditions(events: ResolvedFunnelStep[] = [], projectId?: string): string[] {

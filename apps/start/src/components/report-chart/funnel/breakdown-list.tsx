@@ -72,6 +72,7 @@ export function BreakdownList({
   const [sortKey, setSortKey] = useState<SortKey>('totalConv');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [topN, setTopN] = useState(10);
+  const [topNDraft, setTopNDraft] = useState(10);
   const [showTopNMenu, setShowTopNMenu] = useState(false);
 
   const toggleVisibility = (id: string) => {
@@ -95,6 +96,11 @@ export function BreakdownList({
   const sortedBreakdowns = useMemo(() => {
     const items = [...allBreakdowns];
     items.sort((a, b) => {
+      // Visible (checked) rows always on top
+      const aVisible = visibleSeriesIds.includes(a.id) ? 0 : 1;
+      const bVisible = visibleSeriesIds.includes(b.id) ? 0 : 1;
+      if (aVisible !== bVisible) return aVisible - bVisible;
+
       const va = getSortValue(a, sortKey);
       const vb = getSortValue(b, sortKey);
       let cmp: number;
@@ -103,7 +109,6 @@ export function BreakdownList({
       } else {
         const na = typeof va === 'number' ? va : 0;
         const nb = typeof vb === 'number' ? vb : 0;
-        // Infinity (null times) always sort last
         if (na === Infinity && nb === Infinity) cmp = 0;
         else if (na === Infinity) cmp = 1;
         else if (nb === Infinity) cmp = -1;
@@ -112,16 +117,23 @@ export function BreakdownList({
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return items;
-  }, [allBreakdowns, sortKey, sortDir]);
+  }, [allBreakdowns, sortKey, sortDir, visibleSeriesIds]);
+
+  // Base ranking for Top N: always Total Conv % desc, ignoring visibility grouping.
+  const rankedBreakdowns = useMemo(() => {
+    const items = [...allBreakdowns];
+    items.sort((a, b) => (b.lastStep?.percent ?? 0) - (a.lastStep?.percent ?? 0));
+    return items;
+  }, [allBreakdowns]);
 
   const applyTopN = useCallback(
     (n: number) => {
       setTopN(n);
-      const topIds = sortedBreakdowns.slice(0, n).map((b) => b.id);
+      const topIds = rankedBreakdowns.slice(0, n).map((b) => b.id);
       setVisibleSeries(topIds);
       setShowTopNMenu(false);
     },
-    [sortedBreakdowns, setVisibleSeries],
+    [rankedBreakdowns, setVisibleSeries],
   );
 
   if (allBreakdowns.length === 0) {
@@ -165,41 +177,70 @@ export function BreakdownList({
           <button
             type="button"
             className="row items-center gap-1 px-2 py-0.5 rounded border border-border hover:bg-muted/50 text-xs font-medium"
-            onClick={() => setShowTopNMenu(!showTopNMenu)}
+            onClick={() => {
+              setTopNDraft(topN);
+              setShowTopNMenu(!showTopNMenu);
+            }}
           >
             Top {topN}
             <ChevronDown className="size-3" />
           </button>
           {showTopNMenu && (
-            <div className="absolute top-full left-12 z-50 mt-1 rounded-lg border bg-card p-3 shadow-lg col gap-2 min-w-[200px]">
-              <div className="font-medium text-sm">Top Values</div>
-              <div className="text-xs text-muted-foreground">
-                Choose the number of rows to show in the chart.
+            <>
+              {/* Click-outside overlay to close and apply */}
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => {
+                  if (topNDraft > 0 && topNDraft <= allBreakdowns.length) {
+                    applyTopN(topNDraft);
+                  }
+                  setShowTopNMenu(false);
+                }}
+              />
+              <div className="absolute top-full left-12 z-50 mt-1 rounded-lg border bg-card p-3 shadow-lg col gap-2 min-w-[200px]">
+                <div className="font-medium text-sm">Top Values</div>
+                <div className="text-xs text-muted-foreground">
+                  Choose the number of rows to show in the chart.
+                </div>
+                <div className="row items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={allBreakdowns.length}
+                    value={topNDraft}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (!Number.isNaN(v)) {
+                        setTopNDraft(v);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === 'Enter') {
+                        const v = Math.min(Math.max(topNDraft, 1), allBreakdowns.length);
+                        applyTopN(v);
+                      } else if (e.key === 'Escape') {
+                        setTopNDraft(topN);
+                        setShowTopNMenu(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      const v = Math.min(Math.max(topNDraft, 1), allBreakdowns.length);
+                      setTopNDraft(v);
+                    }}
+                    className="w-16 rounded border border-border bg-transparent px-2 py-1 text-sm"
+                  />
+                  <span className="text-sm">rows</span>
+                </div>
+                <button
+                  type="button"
+                  className="text-xs text-left hover:text-foreground text-muted-foreground"
+                  onClick={() => applyTopN(allBreakdowns.length)}
+                >
+                  Show all ({allBreakdowns.length})
+                </button>
               </div>
-              <div className="row items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={allBreakdowns.length}
-                  value={topN}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (v > 0 && v <= allBreakdowns.length) {
-                      applyTopN(v);
-                    }
-                  }}
-                  className="w-16 rounded border border-border bg-transparent px-2 py-1 text-sm"
-                />
-                <span className="text-sm">rows</span>
-              </div>
-              <button
-                type="button"
-                className="text-xs text-left hover:text-foreground text-muted-foreground"
-                onClick={() => applyTopN(allBreakdowns.length)}
-              >
-                Show all ({allBreakdowns.length})
-              </button>
-            </div>
+            </>
           )}
         </div>
       )}

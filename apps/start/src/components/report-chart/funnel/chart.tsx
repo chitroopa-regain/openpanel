@@ -484,30 +484,37 @@ export function Chart({
       return null;
     }
     return (
-      <div className="mt-4 -mb-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs">
-        {visibleBreakdowns.map((breakdown, idx) => {
-          const stableIndex = data.current.findIndex((b) => b.id === breakdown.id);
-          const colorIndex = stableIndex >= 0 ? stableIndex : idx;
-          return (
-            <div
-              className="flex items-center gap-1.5 rounded px-2 py-1"
-              key={breakdown.id}
-              style={{
-                color: getChartColor(colorIndex),
-              }}
-            >
-              <SerieIcon name={breakdown.breakdowns ?? []} />
-              <SerieName
-                className="font-semibold"
-                name={
-                  breakdown.breakdowns && breakdown.breakdowns.length > 0
-                    ? breakdown.breakdowns
-                    : ['Funnel']
-                }
-              />
-            </div>
-          );
-        })}
+      <div className="mt-4 -mb-2 overflow-x-auto">
+        <div className="flex items-center justify-center gap-6 text-xs whitespace-nowrap px-2 py-1">
+          {visibleBreakdowns.map((breakdown, idx) => {
+            const stableIndex = data.current.findIndex(
+              (b) => b.id === breakdown.id,
+            );
+            const colorIndex = stableIndex >= 0 ? stableIndex : idx;
+            const label =
+              breakdown.breakdowns && breakdown.breakdowns.length > 0
+                ? breakdown.breakdowns.join(' > ')
+                : 'Funnel';
+            return (
+              <div
+                className="inline-flex items-center gap-1.5 shrink-0"
+                key={breakdown.id}
+                title={label}
+              >
+                <div
+                  className="size-2.5 rounded-sm shrink-0"
+                  style={{ backgroundColor: getChartColor(colorIndex) }}
+                />
+                <span
+                  className="font-medium max-w-[120px] truncate"
+                  style={{ color: getChartColor(colorIndex) }}
+                >
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }, [visibleBreakdowns, hasVisibleBreakdowns]);

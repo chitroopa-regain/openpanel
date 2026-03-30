@@ -153,11 +153,11 @@ export function ReportSettings() {
             </Label>
             <Combobox
               align="end"
-              placeholder="Default: Session"
-              value={funnelGroup || 'session_id'}
+              placeholder="Default: Profile"
+              value={funnelGroup || 'profile_id'}
               onChange={(val) => {
                 dispatch(
-                  changeFunnelGroup(val === 'session_id' ? undefined : val),
+                  changeFunnelGroup(val === 'profile_id' ? undefined : val),
                 );
               }}
               items={[
