@@ -316,6 +316,23 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeFunnelWindowUnit(
+      state,
+      action: PayloadAction<string | undefined>,
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'funnel') {
+        state.options = {
+          type: 'funnel',
+          funnelGroup: undefined,
+          funnelWindow: undefined,
+          funnelWindowUnit: action.payload as any,
+        };
+      } else {
+        state.options.funnelWindowUnit = action.payload as any;
+      }
+    },
+
     changeFunnelBreakdownStep(
       state,
       action: PayloadAction<number | undefined>,
@@ -443,6 +460,7 @@ export const {
   changeUnit,
   changeFunnelGroup,
   changeFunnelWindow,
+  changeFunnelWindowUnit,
   changeFunnelBreakdownStep,
   changeOptions,
   changeSankeyMode,

@@ -148,10 +148,20 @@ export const zRange = z.enum(objectToZodEnums(timeWindows));
 export const zCriteria = z.enum(['on_or_after', 'on']);
 
 // Report Options - Discriminated union based on chart type
+export const zFunnelWindowUnit = z.enum([
+  'second',
+  'minute',
+  'hour',
+  'day',
+  'week',
+  'month',
+]);
+
 export const zFunnelOptions = z.object({
   type: z.literal('funnel'),
   funnelGroup: z.string().optional(),
   funnelWindow: z.number().optional(),
+  funnelWindowUnit: zFunnelWindowUnit.optional(),
   /** 0-based step index for breakdown extraction. undefined = all steps (current behavior). */
   breakdownStep: z.number().int().nonnegative().optional(),
 });

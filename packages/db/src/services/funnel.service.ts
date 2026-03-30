@@ -322,7 +322,19 @@ export class FunnelService {
     }
 
     const funnelOptions = options?.type === 'funnel' ? options : undefined;
-    const funnelWindow = funnelOptions?.funnelWindow ?? 24;
+    const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
+    // Default window is 24 hours. When unit is set but window is not,
+    // convert 24 hours into the selected unit for a sensible default.
+    const defaultWindowByUnit: Record<string, number> = {
+      second: 86400,  // 24h in seconds
+      minute: 1440,   // 24h in minutes
+      hour: 24,       // 24h
+      day: 1,         // 1 day
+      week: 1,        // 1 week
+      month: 1,       // 1 month
+    };
+    const funnelWindow =
+      funnelOptions?.funnelWindow ?? (defaultWindowByUnit[funnelWindowUnit] ?? 24);
     const funnelGroup = funnelOptions?.funnelGroup;
 
     const eventSeries = await resolveSeriesForFunnel(series, projectId);
@@ -331,7 +343,16 @@ export class FunnelService {
       throw new Error('events are required');
     }
 
-    const funnelWindowSeconds = funnelWindow * 3600;
+    const unitMultipliers: Record<string, number> = {
+      second: 1,
+      minute: 60,
+      hour: 3600,
+      day: 86400,
+      week: 604800,
+      month: 2592000, // 30 days
+    };
+    const funnelWindowSeconds =
+      funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
     const funnelWindowMilliseconds = funnelWindowSeconds * 1000;
     const group = this.getFunnelGroup(funnelGroup);
     const profileFilters = this.getProfileFilters(eventSeries);

@@ -13,6 +13,7 @@ import {
   changeFunnelBreakdownStep,
   changeFunnelGroup,
   changeFunnelWindow,
+  changeFunnelWindowUnit,
   changePrevious,
   changeSankeyExclude,
   changeSankeyInclude,
@@ -34,6 +35,7 @@ export function ReportSettings() {
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
   const funnelGroup = funnelOptions?.funnelGroup;
   const funnelWindow = funnelOptions?.funnelWindow;
+  const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
   const breakdownStep = funnelOptions?.breakdownStep;
   const seriesCount = useSelector((state) => state.report.series.length);
 
@@ -176,19 +178,51 @@ export function ReportSettings() {
             <Label className="whitespace-nowrap font-medium mb-0">
               Funnel Window
             </Label>
-            <InputEnter
-              type="number"
-              value={funnelWindow ? String(funnelWindow) : ''}
-              placeholder="Default: 24h"
-              onChangeValue={(value) => {
-                const parsed = Number.parseFloat(value);
-                if (Number.isNaN(parsed)) {
-                  dispatch(changeFunnelWindow(undefined));
-                } else {
-                  dispatch(changeFunnelWindow(parsed));
+            <div className="flex items-center gap-2">
+              <InputEnter
+                type="number"
+                className="w-20"
+                value={funnelWindow ? String(funnelWindow) : ''}
+                placeholder={
+                  {
+                    second: '86400',
+                    minute: '1440',
+                    hour: '24',
+                    day: '1',
+                    week: '1',
+                    month: '1',
+                  }[funnelWindowUnit] ?? '24'
                 }
-              }}
-            />
+                onChangeValue={(value) => {
+                  const parsed = Number.parseFloat(value);
+                  if (Number.isNaN(parsed)) {
+                    dispatch(changeFunnelWindow(undefined));
+                  } else {
+                    dispatch(changeFunnelWindow(parsed));
+                  }
+                }}
+              />
+              <Combobox
+                align="end"
+                placeholder="hours"
+                value={funnelWindowUnit}
+                onChange={(val) => {
+                  dispatch(
+                    changeFunnelWindowUnit(
+                      val === 'hour' ? undefined : val,
+                    ),
+                  );
+                }}
+                items={[
+                  { label: 'seconds', value: 'second' },
+                  { label: 'minutes', value: 'minute' },
+                  { label: 'hours', value: 'hour' },
+                  { label: 'days', value: 'day' },
+                  { label: 'weeks', value: 'week' },
+                  { label: 'months', value: 'month' },
+                ]}
+              />
+            </div>
           </div>
         )}
         {fields.includes('breakdownStep') && (

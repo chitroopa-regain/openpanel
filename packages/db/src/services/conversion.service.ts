@@ -29,7 +29,12 @@ export class ConversionService {
   }) {
     const funnelOptions = options?.type === 'funnel' ? options : undefined;
     const funnelGroup = funnelOptions?.funnelGroup;
-    const funnelWindow = funnelOptions?.funnelWindow ?? 24;
+    const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
+    const defaultWindowByUnit: Record<string, number> = {
+      second: 86400, minute: 1440, hour: 24, day: 1, week: 1, month: 1,
+    };
+    const funnelWindow =
+      funnelOptions?.funnelWindow ?? (defaultWindowByUnit[funnelWindowUnit] ?? 24);
     const group = funnelGroup === 'profile_id' ? 'profile_id' : 'session_id';
     const breakdownExpressions = breakdowns.map(
       (b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name),
@@ -89,7 +94,16 @@ export class ConversionService {
       getEventFiltersWhereClause(eventB.filters, projectId),
     ).join(' AND ');
 
-    const funnelWindowSeconds = funnelWindow * 3600;
+    const unitMultipliers: Record<string, number> = {
+      second: 1,
+      minute: 60,
+      hour: 3600,
+      day: 86400,
+      week: 604800,
+      month: 2592000,
+    };
+    const funnelWindowSeconds =
+      funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
 
     // Build funnel conditions
     const conditionA = whereA

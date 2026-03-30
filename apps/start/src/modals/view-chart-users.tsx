@@ -301,6 +301,10 @@ function FunnelUsersView({ report, stepIndex }: FunnelUsersViewProps) {
           report.options?.type === 'funnel'
             ? report.options.funnelWindow
             : undefined,
+        funnelWindowUnit:
+          report.options?.type === 'funnel'
+            ? report.options.funnelWindowUnit
+            : undefined,
         funnelGroup:
           report.options?.type === 'funnel'
             ? report.options.funnelGroup

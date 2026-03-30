@@ -1082,6 +1082,7 @@ export const chartRouter = createTRPCRouter({
             'If true, show users who dropped off at this step. If false, show users who completed at least this step.'
           ),
         funnelWindow: z.number().optional(),
+        funnelWindowUnit: z.enum(['second', 'minute', 'hour', 'day', 'week', 'month']).optional(),
         funnelGroup: z.string().optional(),
         breakdowns: z.array(z.object({ name: z.string() })).optional(),
         range: zRange,
@@ -1109,7 +1110,17 @@ export const chartRouter = createTRPCRouter({
         throw new Error('At least one event series is required');
       }
 
-      const funnelWindowSeconds = (funnelWindow || 24) * 3600;
+      const funnelWindowUnit = input.funnelWindowUnit ?? 'hour';
+      const unitMultipliers: Record<string, number> = {
+        second: 1,
+        minute: 60,
+        hour: 3600,
+        day: 86400,
+        week: 604800,
+        month: 2592000,
+      };
+      const funnelWindowSeconds =
+        (funnelWindow || 24) * (unitMultipliers[funnelWindowUnit] ?? 3600);
       const funnelWindowMilliseconds = funnelWindowSeconds * 1000;
 
       // Get the grouping strategy (profile_id or session_id)
