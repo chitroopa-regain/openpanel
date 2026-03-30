@@ -30,21 +30,8 @@ import { cn } from '@/utils/cn';
 import { getChartColor, getChartTranslucentColor } from '@/utils/theme';
 
 /** Format seconds into compact human-readable duration. */
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  if (seconds < 86400) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.round((seconds % 3600) / 60);
-    return m > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${h}h`;
-  }
-  const d = Math.floor(seconds / 86400);
-  const h = Math.round((seconds % 86400) / 3600);
-  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+export function formatDuration(seconds: number): string {
+  return `${Math.round(seconds)}s`;
 }
 
 type Props = {
@@ -162,13 +149,15 @@ export function Tables({
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
 
-  const handleInspectStep = (step: (typeof steps)[0], stepIndex: number) => {
+  const handleInspectStep = (
+    step: (typeof steps)[0],
+    stepIndex: number,
+    breakdownValues?: string[],
+  ) => {
     if (!(projectId && step.event.id)) {
       return;
     }
 
-    // For funnels, we need to pass the step index so the modal can query
-    // users who completed at least that step in the funnel sequence
     pushModal('ViewChartUsers', {
       type: 'funnel',
       report: {
@@ -184,7 +173,8 @@ export function Tables({
         metric: 'sum',
         options: funnelOptions,
       },
-      stepIndex, // Pass the step index for funnel queries
+      stepIndex,
+      breakdownValues,
     });
   };
   return (

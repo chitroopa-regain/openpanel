@@ -19,6 +19,7 @@ import {
   getChartStartEndDate,
   getCustomEventWhereClause,
   getEventFiltersWhereClause,
+  getTraitBreakdownExpression,
   getEventMetasCached,
   getProfilesCached,
   getReportById,
@@ -1085,6 +1086,8 @@ export const chartRouter = createTRPCRouter({
         funnelWindowUnit: z.enum(['second', 'minute', 'hour', 'day', 'week', 'month']).optional(),
         funnelGroup: z.string().optional(),
         breakdowns: z.array(z.object({ name: z.string() })).optional(),
+        breakdownValues: z.array(z.string()).optional(),
+        breakdownStep: z.number().optional(),
         range: zRange,
       })
     )
@@ -1126,6 +1129,43 @@ export const chartRouter = createTRPCRouter({
       // Get the grouping strategy (profile_id or session_id)
       const group = funnelService.getFunnelGroup(funnelGroup);
 
+      // Build breakdown selects if filtering by breakdown values.
+      // Use the same expression builder as the funnel chart to handle
+      // both event properties and profile.* breakdowns correctly.
+      // When breakdownStep is set, use argMaxIf to extract from that step
+      // (matching how the chart derives breakdown labels).
+      const breakdownDims = input.breakdowns ?? [];
+      const breakdownVals = input.breakdownValues;
+      const breakdownStepIdx = input.breakdownStep;
+      const stepConditions = funnelService.getFunnelConditions(
+        eventSeries,
+        projectId,
+      );
+
+      const breakdownSelects =
+        breakdownVals && breakdownDims.length > 0
+          ? breakdownDims.map((b, i) => {
+              const expr =
+                getTraitBreakdownExpression(b.name, projectId) ??
+                getSelectPropertyKey(b.name);
+              if (
+                breakdownStepIdx !== undefined &&
+                breakdownStepIdx >= 0 &&
+                breakdownStepIdx < stepConditions.length
+              ) {
+                return `argMaxIf(${expr}, created_at, ${stepConditions[breakdownStepIdx]}) as b_${i}`;
+              }
+              return `${expr} as b_${i}`;
+            })
+          : [];
+
+      const breakdownGroupBy =
+        breakdownVals &&
+        breakdownDims.length > 0 &&
+        breakdownStepIdx === undefined
+          ? breakdownDims.map((_, i) => `b_${i}`)
+          : [];
+
       // Create funnel CTE using funnel service
       const funnelCte = funnelService.buildFunnelCte({
         projectId,
@@ -1135,16 +1175,31 @@ export const chartRouter = createTRPCRouter({
         funnelWindowMilliseconds,
         timezone,
         groupBy: group,
+        additionalSelects: breakdownVals ? breakdownSelects : [],
+        additionalGroupBy: breakdownVals ? breakdownGroupBy : [],
       });
 
-      // Check for profile filters and add profile join if needed
+      // Check for profile filters and profile-based breakdowns — add
+      // profiles JOIN if needed by either step filters or breakdown dimensions.
       const profileFilters = funnelService.getProfileFilters(eventSeries);
-      if (profileFilters.length > 0) {
-        const fieldsToSelect = uniq(
-          profileFilters.map((f) => f.split('.')[0])
-        ).join(', ');
+      const breakdownProfileFields = breakdownDims
+        .filter((b) => b.name.startsWith('profile.'))
+        .map((b) => b.name.replace('profile.', ''));
+      const allProfileFields = [...profileFilters, ...breakdownProfileFields];
+
+      if (allProfileFields.length > 0) {
+        const profileColumns = new Set<string>(['id']);
+        for (const f of allProfileFields) {
+          const col = f.split('.')[0]!;
+          if (col === 'properties') {
+            profileColumns.add('properties');
+          } else if (['email', 'first_name', 'last_name'].includes(col)) {
+            profileColumns.add(col);
+          }
+        }
+        const fieldsToSelect = Array.from(profileColumns).join(', ');
         funnelCte.leftJoin(
-          `(SELECT id, ${fieldsToSelect} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) as profile`,
+          `(SELECT ${fieldsToSelect} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) as profile`,
           'profile.id = events.profile_id'
         );
       }
@@ -1154,13 +1209,15 @@ export const chartRouter = createTRPCRouter({
       query.with('session_funnel', funnelCte);
 
       if (group === 'profile_id') {
-        // For profile grouping: re-aggregate by profile_id, taking MAX level per profile.
-        // This ensures a user who completed the funnel with identity change is counted correctly.
-        // NOTE: Wrap in subquery to avoid ClickHouse resolving `level` in WHERE to the
-        // `max(level) AS level` alias (ILLEGAL_AGGREGATION error).
+        // For profile grouping: re-aggregate by profile_id, taking MAX level.
+        // Preserve breakdown columns through regrouping when filtering by breakdown.
+        const breakdownAggregates =
+          breakdownVals && breakdownDims.length > 0
+            ? `, ${breakdownDims.map((_, i) => `any(b_${i}) AS b_${i}`).join(', ')}`
+            : '';
         query.with(
           'funnel',
-          'SELECT profile_id, max(level) AS level FROM (SELECT * FROM session_funnel WHERE level != 0) GROUP BY profile_id'
+          `SELECT profile_id, max(level) AS level${breakdownAggregates} FROM (SELECT * FROM session_funnel WHERE level != 0) GROUP BY profile_id`
         );
       } else {
         // For session grouping: filter out level = 0 inside the CTE
@@ -1177,6 +1234,18 @@ export const chartRouter = createTRPCRouter({
       } else {
         // Show users who completed at least this step
         query.where('level', '>=', targetLevel);
+      }
+
+      // Filter by specific breakdown values if provided
+      if (breakdownVals && breakdownDims.length > 0) {
+        for (let i = 0; i < breakdownVals.length && i < breakdownDims.length; i++) {
+          const val = breakdownVals[i]!;
+          if (val === 'Not set') {
+            query.rawWhere(`(b_${i} = '' OR b_${i} IS NULL)`);
+          } else {
+            query.where(`b_${i}`, '=', val);
+          }
+        }
       }
 
       // Cap the number of profiles to avoid exceeding ClickHouse max_query_size

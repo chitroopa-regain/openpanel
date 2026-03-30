@@ -8,6 +8,8 @@ import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
 import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdowns';
+import { pushModal } from '@/modals';
+import { useCallback } from 'react';
 import { Chart, Summary } from './chart';
 import { BreakdownList } from './breakdown-list';
 
@@ -29,6 +31,33 @@ export function ReportFunnelChart() {
   // Hook for limiting which breakdowns are shown in the chart only
   const { breakdowns: visibleBreakdowns, setVisibleSeries } =
     useVisibleFunnelBreakdowns(res.data?.current ?? [], 10);
+
+  const funnelOptions =
+    report.options?.type === 'funnel' ? report.options : undefined;
+
+  const handleInspectStep = useCallback(
+    (stepIndex: number, breakdownValues?: string[]) => {
+      pushModal('ViewChartUsers', {
+        type: 'funnel',
+        report: {
+          projectId: report.projectId,
+          series: report.series,
+          breakdowns: report.breakdowns || [],
+          interval: report.interval || 'day',
+          startDate: report.startDate,
+          endDate: report.endDate,
+          range: report.range,
+          previous: report.previous,
+          chartType: 'funnel',
+          metric: 'sum',
+          options: funnelOptions,
+        },
+        stepIndex,
+        breakdownValues,
+      });
+    },
+    [report, funnelOptions],
+  );
 
   if (isLazyLoading || res.isLoading) {
     return <Loading />;
@@ -52,6 +81,7 @@ export function ReportFunnelChart() {
         data={res.data}
         visibleSeriesIds={visibleBreakdowns.map((b) => b.id)}
         setVisibleSeries={setVisibleSeries}
+        onInspectStep={handleInspectStep}
       />
     </div>
   );
