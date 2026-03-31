@@ -7,7 +7,16 @@ import {
 
 import { cn } from '@/utils/cn';
 import type { IChartRange, IChartType, IInterval } from '@openpanel/validation';
-import { differenceInDays, isSameDay } from 'date-fns';
+import {
+  differenceInDays,
+  isSameDay,
+  startOfMonth,
+  startOfQuarter,
+  startOfWeek,
+  startOfYear,
+  subDays,
+} from 'date-fns';
+import type { IDateConfig } from '@openpanel/validation';
 import { Button } from '../ui/button';
 import { CommandShortcut } from '../ui/command';
 import {
@@ -29,6 +38,7 @@ interface ReportIntervalProps {
   range: IChartRange;
   startDate?: string | null;
   endDate?: string | null;
+  dateConfig?: IDateConfig;
 }
 export function ReportInterval({
   className,
@@ -38,6 +48,7 @@ export function ReportInterval({
   range,
   startDate,
   endDate,
+  dateConfig,
 }: ReportIntervalProps) {
   if (
     chartType !== 'linear' &&
@@ -51,8 +62,53 @@ export function ReportInterval({
   }
 
   let isHourIntervalEnabled = isHourIntervalEnabledByRange(range);
-  if (startDate && endDate && range === 'custom') {
-    isHourIntervalEnabled = differenceInDays(endDate, startDate) <= 4;
+  if (range === 'custom') {
+    // Resolve effective dates from dateConfig or fallback to raw dates
+    let effectiveStart: Date | undefined;
+    let effectiveEnd: Date | undefined;
+    const now = new Date();
+
+    if (dateConfig) {
+      switch (dateConfig.dateMode) {
+        case 'fixed':
+          if (dateConfig.fixedStartDate && dateConfig.fixedEndDate) {
+            effectiveStart = new Date(dateConfig.fixedStartDate);
+            effectiveEnd = new Date(dateConfig.fixedEndDate);
+          }
+          break;
+        case 'last': {
+          const amt = dateConfig.lastAmount ?? 7;
+          const mult = dateConfig.lastUnit === 'week' ? 7 : dateConfig.lastUnit === 'month' ? 30 : 1;
+          const ending = dateConfig.lastEndingDaysAgo ?? 0;
+          effectiveEnd = subDays(now, ending);
+          effectiveStart = subDays(effectiveEnd, amt * mult);
+          break;
+        }
+        case 'since':
+          if (dateConfig.sinceDate) {
+            effectiveStart = new Date(dateConfig.sinceDate);
+            effectiveEnd = now;
+          }
+          break;
+        case 'period_to_date': {
+          const unit = dateConfig.periodToDateUnit ?? 'month';
+          effectiveStart =
+            unit === 'week' ? startOfWeek(now, { weekStartsOn: 1 })
+            : unit === 'quarter' ? startOfQuarter(now)
+            : unit === 'year' ? startOfYear(now)
+            : startOfMonth(now);
+          effectiveEnd = now;
+          break;
+        }
+      }
+    }
+
+    if (!effectiveStart && startDate) effectiveStart = new Date(startDate);
+    if (!effectiveEnd && endDate) effectiveEnd = new Date(endDate);
+
+    if (effectiveStart && effectiveEnd) {
+      isHourIntervalEnabled = differenceInDays(effectiveEnd, effectiveStart) <= 4;
+    }
   }
 
   const items = [

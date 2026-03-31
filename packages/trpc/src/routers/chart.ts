@@ -37,6 +37,7 @@ import {
   zChartEventFilter,
   zChartSeries,
   zCriteria,
+  zDateConfig,
   zRange,
   zReportInput,
   zTimeInterval,
@@ -662,6 +663,7 @@ export const chartRouter = createTRPCRouter({
         endDate: z.string().nullish(),
         interval: zTimeInterval.default('day'),
         range: zRange,
+        dateConfig: zDateConfig.nullish(),
         shareId: z.string().optional(),
         id: z.string().optional(),
       })
@@ -685,6 +687,9 @@ export const chartRouter = createTRPCRouter({
       const interval = ctx.report
         ? (input.interval ?? ctx.report.interval)
         : input.interval;
+      const dateConfig = ctx.report
+        ? (input.dateConfig ?? (ctx.report as any).dateConfig)
+        : input.dateConfig;
 
       // Resolved custom event WHERE clauses (include per-component filters).
       // When set, these override whereEventNameIs() in the SQL template.
@@ -786,6 +791,7 @@ export const chartRouter = createTRPCRouter({
           range: dateRange,
           startDate,
           endDate,
+          dateConfig: dateConfig ?? undefined,
         },
         timezone
       );
@@ -1089,6 +1095,7 @@ export const chartRouter = createTRPCRouter({
         breakdownValues: z.array(z.string()).optional(),
         breakdownStep: z.number().optional(),
         range: zRange,
+        dateConfig: zDateConfig.nullish(),
       })
     )
     .query(async ({ input }) => {

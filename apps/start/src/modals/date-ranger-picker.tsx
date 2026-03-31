@@ -1,85 +1,490 @@
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
-import { subMonths } from 'date-fns';
+import {
+  addDays,
+  format,
+  isSameDay,
+  startOfMonth,
+  startOfQuarter,
+  startOfWeek,
+  startOfYear,
+  subDays,
+  subMonths,
+} from 'date-fns';
 import { useState } from 'react';
 
-import { Input } from '@/components/ui/input';
-import { formatDate } from '@/utils/date';
-import { CheckIcon, XIcon } from 'lucide-react';
+import { CheckIcon, RotateCcwIcon, XIcon } from 'lucide-react';
 import { popModal } from '.';
-import { ModalContent, ModalHeader } from './Modal/Container';
+import { ModalContent } from './Modal/Container';
+
+type DateMode = 'fixed' | 'last' | 'since' | 'period_to_date';
 
 type Props = {
-  onChange: (payload: { startDate: Date; endDate: Date }) => void;
+  onChange: (payload: {
+    startDate: Date;
+    endDate: Date;
+    dateMode?: DateMode;
+    fixedStartDate?: string;
+    fixedEndDate?: string;
+    lastAmount?: number;
+    lastUnit?: string;
+    lastEndingDaysAgo?: number;
+    sinceDate?: string;
+    periodToDateUnit?: string;
+  }) => void;
   startDate?: Date;
   endDate?: Date;
+  dateMode?: DateMode;
+  fixedStartDate?: string;
+  fixedEndDate?: string;
+  lastAmount?: number;
+  lastUnit?: string;
+  lastEndingDaysAgo?: number;
+  sinceDate?: string;
+  periodToDateUnit?: string;
 };
-export default function DateRangerPicker({
-  onChange,
-  startDate: initialStartDate,
-  endDate: initialEndDate,
-}: Props) {
+
+const modes: { key: DateMode; label: string }[] = [
+  { key: 'fixed', label: 'Fixed' },
+  { key: 'last', label: 'Last' },
+  { key: 'since', label: 'Since' },
+  { key: 'period_to_date', label: 'Period to date' },
+];
+
+const lastUnits = [
+  { value: 'day', label: 'days' },
+  { value: 'week', label: 'weeks' },
+  { value: 'month', label: 'months' },
+];
+
+const periodUnits = [
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'quarter', label: 'Quarter' },
+  { value: 'year', label: 'Year' },
+];
+
+function inferMode(props: Props): DateMode {
+  if (props.dateMode) return props.dateMode;
+  // Only infer from explicit config fields, not from date heuristics
+  if (props.lastAmount) return 'last';
+  if (props.periodToDateUnit) return 'period_to_date';
+  if (props.sinceDate) return 'since';
+  return 'fixed';
+}
+
+function resolvePeriodStart(unit: string): Date {
+  const now = new Date();
+  switch (unit) {
+    case 'week':
+      return startOfWeek(now, { weekStartsOn: 1 });
+    case 'month':
+      return startOfMonth(now);
+    case 'quarter':
+      return startOfQuarter(now);
+    case 'year':
+      return startOfYear(now);
+    default:
+      return startOfMonth(now);
+  }
+}
+
+export default function DateRangerPicker(props: Props) {
+  const { onChange } = props;
   const { isBelowSm } = useBreakpoint('sm');
-  const [startDate, setStartDate] = useState(initialStartDate);
-  const [endDate, setEndDate] = useState(initialEndDate);
+
+  const [mode, setMode] = useState<DateMode>(inferMode(props));
+
+  // Fixed mode
+  const [fixedStart, setFixedStart] = useState<Date | undefined>(
+    props.fixedStartDate
+      ? new Date(props.fixedStartDate)
+      : props.startDate,
+  );
+  const [fixedEnd, setFixedEnd] = useState<Date | undefined>(
+    props.fixedEndDate
+      ? new Date(props.fixedEndDate)
+      : props.endDate,
+  );
+
+  // Last mode
+  const [lastAmount, setLastAmount] = useState(props.lastAmount ?? 7);
+  const [lastUnit, setLastUnit] = useState(props.lastUnit ?? 'day');
+  const [lastEndingDaysAgo, setLastEndingDaysAgo] = useState(
+    (props as any).lastEndingDaysAgo ?? 0,
+  );
+
+  // Since mode
+  const [sinceDate, setSinceDate] = useState<Date | undefined>(
+    props.sinceDate
+      ? new Date(props.sinceDate)
+      : props.startDate,
+  );
+
+  // Period to date
+  const [periodUnit, setPeriodUnit] = useState(
+    props.periodToDateUnit ?? 'month',
+  );
+
+  const canApply = (() => {
+    switch (mode) {
+      case 'fixed':
+        return !!(fixedStart && fixedEnd);
+      case 'last':
+        return lastAmount > 0;
+      case 'since':
+        return !!sinceDate;
+      case 'period_to_date':
+        return !!periodUnit;
+    }
+  })();
+
+  const handleApply = () => {
+    const now = new Date();
+    switch (mode) {
+      case 'fixed':
+        if (fixedStart && fixedEnd) {
+          popModal();
+          onChange({
+            startDate: fixedStart,
+            endDate: fixedEnd,
+            dateMode: 'fixed',
+            fixedStartDate: `${fixedStart.getFullYear()}-${String(fixedStart.getMonth() + 1).padStart(2, '0')}-${String(fixedStart.getDate()).padStart(2, '0')}`,
+            fixedEndDate: `${fixedEnd.getFullYear()}-${String(fixedEnd.getMonth() + 1).padStart(2, '0')}-${String(fixedEnd.getDate()).padStart(2, '0')}`,
+          });
+        }
+        break;
+      case 'last': {
+        const multiplier =
+          lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
+        const end = subDays(now, lastEndingDaysAgo);
+        const start = subDays(end, lastAmount * multiplier);
+        popModal();
+        onChange({
+          startDate: start,
+          endDate: end,
+          dateMode: 'last',
+          lastAmount,
+          lastUnit,
+          lastEndingDaysAgo,
+        });
+        break;
+      }
+      case 'since':
+        if (sinceDate) {
+          popModal();
+          onChange({
+            startDate: sinceDate,
+            endDate: now,
+            dateMode: 'since',
+            sinceDate: `${sinceDate.getFullYear()}-${String(sinceDate.getMonth() + 1).padStart(2, '0')}-${String(sinceDate.getDate()).padStart(2, '0')}`,
+          });
+        }
+        break;
+      case 'period_to_date': {
+        const start = resolvePeriodStart(periodUnit);
+        popModal();
+        onChange({
+          startDate: start,
+          endDate: now,
+          dateMode: 'period_to_date',
+          periodToDateUnit: periodUnit,
+        });
+        break;
+      }
+    }
+  };
+
+  // Preview dates for display
+  const previewDates = (() => {
+    const now = new Date();
+    switch (mode) {
+      case 'fixed':
+        return {
+          label1: 'Starts',
+          value1: fixedStart ? format(fixedStart, 'MMM d, yyyy') : null,
+          label2: 'Ends',
+          value2: fixedEnd ? format(fixedEnd, 'MMM d, yyyy') : null,
+        };
+      case 'last': {
+        if (lastAmount <= 0) {
+          return { label1: 'From', value1: null, label2: 'To', value2: null };
+        }
+        const multiplier =
+          lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
+        const end = subDays(now, lastEndingDaysAgo);
+        const start = subDays(end, lastAmount * multiplier);
+        return {
+          label1: 'From',
+          value1: format(start, 'MMM d, yyyy'),
+          label2: 'To',
+          value2: lastEndingDaysAgo === 0
+            ? 'Today'
+            : format(end, 'MMM d, yyyy'),
+        };
+      }
+      case 'since':
+        return {
+          label1: 'Since',
+          value1: sinceDate ? format(sinceDate, 'MMM d, yyyy') : null,
+          label2: 'To',
+          value2: 'Today',
+        };
+      case 'period_to_date': {
+        const start = resolvePeriodStart(periodUnit);
+        return {
+          label1: 'From',
+          value1: format(start, 'MMM d, yyyy'),
+          label2: 'To',
+          value2: 'Today',
+        };
+      }
+    }
+  })();
 
   return (
-    <ModalContent className="p-4 md:p-8 min-w-fit">
-      <Calendar
-        captionLayout="dropdown"
-        initialFocus
-        mode="range"
-        defaultMonth={subMonths(
-          startDate ? new Date(startDate) : new Date(),
-          isBelowSm ? 0 : 1,
-        )}
-        selected={{
-          from: startDate,
-          to: endDate,
-        }}
-        toDate={new Date()}
-        onSelect={(range) => {
-          if (range?.from) {
-            setStartDate(range.from);
-          }
-          if (range?.to) {
-            setEndDate(range.to);
-          }
-        }}
-        numberOfMonths={isBelowSm ? 1 : 2}
-        className="mx-auto min-h-[310px] [&_table]:mx-auto [&_table]:w-auto p-0"
-      />
-      <div className="col flex-col-reverse md:row gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => popModal()}
-          icon={XIcon}
-        >
-          Cancel
-        </Button>
+    <ModalContent className="p-0 min-w-fit max-w-[720px]">
+      <div className="flex flex-col md:flex-row">
+        {/* Left mode rail */}
+        <div className="flex md:flex-col gap-1 p-3 md:p-4 md:border-r border-b md:border-b-0 border-border md:min-w-[170px] shrink-0">
+          <div className="text-xs font-medium text-muted-foreground mb-1 hidden md:block">
+            Date mode
+          </div>
+          {modes.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              className={`flex items-center justify-between gap-2 px-3 py-1.5 text-sm transition-colors border-l-2 ${
+                mode === m.key
+                  ? 'border-primary text-primary font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setMode(m.key)}
+            >
+              {m.label}
+              {mode === m.key && (
+                <CheckIcon className="size-3.5 shrink-0" />
+              )}
+            </button>
+          ))}
+        </div>
 
-        {startDate && endDate && (
-          <Button
-            type="button"
-            className="md:ml-auto"
-            onClick={() => {
-              popModal();
-              if (startDate && endDate) {
-                onChange({
-                  startDate: startDate,
-                  endDate: endDate,
-                });
-              }
-            }}
-            icon={startDate && endDate ? CheckIcon : XIcon}
-          >
-            {startDate && endDate
-              ? `Select ${formatDate(startDate)} - ${formatDate(endDate)}`
-              : 'Cancel'}
-          </Button>
-        )}
+        {/* Right content */}
+        <div className="flex-1 p-4 md:p-6 col gap-4">
+          {/* Date fields — shown for Fixed and Since modes only */}
+          {(mode === 'fixed' || mode === 'since') && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1">
+                <div className="text-xs text-muted-foreground mb-1">
+                  {previewDates.label1}
+                </div>
+                <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
+                  {previewDates.value1 ?? (
+                    <span className="text-muted-foreground">Select date</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex-1">
+                <div className="text-xs text-muted-foreground mb-1">
+                  {previewDates.label2}
+                </div>
+                <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
+                  {previewDates.value2 ?? (
+                    <span className="text-muted-foreground">Select date</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Mode-specific controls — replace date fields for Last and Period to date */}
+          {mode === 'last' && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1">
+                <div className="text-xs text-muted-foreground mb-1">Last</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    value={lastAmount || ''}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setLastAmount(Number.isNaN(v) ? 0 : v);
+                    }}
+                    className="w-20 rounded border border-border bg-card px-3 py-1.5 text-sm font-mono"
+                  />
+                  <select
+                    value={lastUnit}
+                    onChange={(e) => setLastUnit(e.target.value)}
+                    className="rounded border border-border bg-card px-3 py-1.5 text-sm"
+                  >
+                    {lastUnits.map((u) => (
+                      <option key={u.value} value={u.value}>
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="flex-1">
+                <div className="text-xs text-muted-foreground mb-1">Ending</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    value={lastEndingDaysAgo}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setLastEndingDaysAgo(Number.isNaN(v) ? 0 : v);
+                    }}
+                    className="w-20 rounded border border-border bg-card px-3 py-1.5 text-sm font-mono"
+                  />
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">days ago</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {mode === 'period_to_date' && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1">
+                <div className="text-xs text-muted-foreground mb-1">This</div>
+                <select
+                  value={periodUnit}
+                  onChange={(e) => setPeriodUnit(e.target.value)}
+                  className="w-full rounded border border-border bg-card px-3 py-1.5 text-sm"
+                >
+                  {periodUnits.map((u) => (
+                    <option key={u.value} value={u.value}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1">
+                <div className="text-xs text-muted-foreground mb-1">To</div>
+                <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
+                  Today
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Calendar — always visible, mode determines interaction */}
+          {mode === 'fixed' ? (
+            <Calendar
+              captionLayout="dropdown" showOutsideDays={false} fixedWeeks
+              initialFocus
+              mode="range"
+              defaultMonth={subMonths(
+                fixedStart ?? new Date(),
+                isBelowSm ? 0 : 1,
+              )}
+              selected={{ from: fixedStart, to: fixedEnd }}
+              toDate={new Date()}
+              onSelect={(range) => {
+                if (range?.from) setFixedStart(range.from);
+                setFixedEnd(range?.to);
+              }}
+              numberOfMonths={isBelowSm ? 1 : 2}
+              className="mx-auto min-h-[370px] [&_table]:mx-auto [&_table]:w-auto p-0 pt-2"
+            />
+          ) : mode === 'since' ? (
+            <Calendar
+              captionLayout="dropdown" showOutsideDays={false} fixedWeeks
+              initialFocus
+              mode="range"
+              defaultMonth={subMonths(
+                sinceDate ?? new Date(),
+                isBelowSm ? 0 : 1,
+              )}
+              selected={sinceDate ? { from: sinceDate, to: new Date() } : undefined}
+              toDate={new Date()}
+              onSelect={(range) => {
+                if (range?.from) setSinceDate(range.from);
+              }}
+              numberOfMonths={isBelowSm ? 1 : 2}
+              className="mx-auto min-h-[370px] [&_table]:mx-auto [&_table]:w-auto p-0 pt-2"
+            />
+          ) : mode === 'last' ? (
+            <Calendar
+              key={`last-${lastAmount}-${lastUnit}`}
+              captionLayout="dropdown" showOutsideDays={false} fixedWeeks
+              mode="range"
+              defaultMonth={(() => {
+                if (lastAmount <= 0) return subMonths(new Date(), isBelowSm ? 0 : 1);
+                const mult = lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
+                const end = subDays(new Date(), lastEndingDaysAgo);
+                return subMonths(subDays(end, lastAmount * mult), isBelowSm ? 0 : 1);
+              })()}
+              selected={lastAmount > 0 ? {
+                from: (() => {
+                  const mult = lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
+                  const end = subDays(new Date(), lastEndingDaysAgo);
+                  return subDays(end, lastAmount * mult);
+                })(),
+                to: subDays(new Date(), lastEndingDaysAgo),
+              } : undefined}
+              toDate={new Date()}
+              numberOfMonths={isBelowSm ? 1 : 2}
+              className="mx-auto min-h-[370px] [&_table]:mx-auto [&_table]:w-auto p-0 pt-2 [&_td]:pointer-events-none [&_td]:opacity-70"
+            />
+          ) : (
+            <Calendar
+              key={`period-${periodUnit}`}
+              captionLayout="dropdown" showOutsideDays={false} fixedWeeks
+              mode="range"
+              defaultMonth={subMonths(resolvePeriodStart(periodUnit), isBelowSm ? 0 : 1)}
+              selected={{
+                from: resolvePeriodStart(periodUnit),
+                to: new Date(),
+              }}
+              toDate={new Date()}
+              numberOfMonths={isBelowSm ? 1 : 2}
+              className="mx-auto min-h-[370px] [&_table]:mx-auto [&_table]:w-auto p-0 pt-2 [&_td]:pointer-events-none [&_td]:opacity-70"
+            />
+          )}
+
+          {/* Actions */}
+          <div className="col flex-col-reverse md:row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => popModal()}
+              icon={XIcon}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              title="Reset selection and navigation to default"
+              onClick={() => {
+                if (mode === 'fixed') {
+                  setFixedStart(undefined);
+                  setFixedEnd(undefined);
+                } else if (mode === 'since') {
+                  setSinceDate(undefined);
+                } else if (mode === 'last') {
+                  setLastAmount(0);
+                }
+              }}
+              icon={RotateCcwIcon}
+            >
+              Reset
+            </Button>
+            <Button
+              type="button"
+              className="md:ml-auto"
+              disabled={!canApply}
+              onClick={handleApply}
+              icon={CheckIcon}
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
       </div>
     </ModalContent>
   );

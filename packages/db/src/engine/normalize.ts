@@ -23,6 +23,7 @@ export async function normalize(
       range: input.range,
       startDate: input.startDate ?? undefined,
       endDate: input.endDate ?? undefined,
+      dateConfig: input.dateConfig,
     },
     timezone,
   );

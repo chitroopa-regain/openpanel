@@ -63,6 +63,7 @@ export function ReportFunnelChart() {
           chartType: 'funnel',
           metric: 'sum',
           options: funnelOptions,
+          dateConfig: report.dateConfig,
         },
         stepIndex,
         breakdownValues,

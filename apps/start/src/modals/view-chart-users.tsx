@@ -295,6 +295,7 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
         startDate: report.startDate!,
         endDate: report.endDate!,
         range: report.range,
+        dateConfig: report.dateConfig,
         series: report.series,
         stepIndex: stepIndex,
         showDropoffs: showDropoffs,

@@ -1197,20 +1197,77 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[], project
 }
 
 export function getChartStartEndDate(
-  {
-    startDate,
-    endDate,
-    range,
-  }: Pick<IReportInput, 'endDate' | 'startDate' | 'range'>,
+  input: Pick<IReportInput, 'endDate' | 'startDate' | 'range' | 'dateConfig'>,
   timezone: string
 ) {
+  const { startDate, endDate, range, dateConfig } = input;
+
+  // Explicit startDate/endDate always take precedence (ad-hoc overrides)
   if (startDate && endDate) {
-    return { startDate: startDate, endDate: endDate };
+    return { startDate, endDate };
+  }
+
+  // If dateConfig exists and no explicit override, resolve dynamically
+  if (dateConfig && range === 'custom') {
+    const now = DateTime.now().setZone(timezone);
+    switch (dateConfig.dateMode) {
+      case 'fixed':
+        if (dateConfig.fixedStartDate && dateConfig.fixedEndDate) {
+          return {
+            startDate: DateTime.fromISO(dateConfig.fixedStartDate)
+              .setZone(timezone)
+              .startOf('day')
+              .toFormat('yyyy-MM-dd HH:mm:ss'),
+            endDate: DateTime.fromISO(dateConfig.fixedEndDate)
+              .setZone(timezone)
+              .endOf('day')
+              .toFormat('yyyy-MM-dd HH:mm:ss'),
+          };
+        }
+        break;
+      case 'last': {
+        const amount = dateConfig.lastAmount ?? 7;
+        const unit = dateConfig.lastUnit ?? 'day';
+        const endingDaysAgo = dateConfig.lastEndingDaysAgo ?? 0;
+        const mult = unit === 'week' ? 7 : unit === 'month' ? 30 : 1;
+        const end = now.minus({ day: endingDaysAgo }).endOf('day');
+        const start = end.minus({ day: amount * mult }).startOf('day');
+        return {
+          startDate: start.toFormat('yyyy-MM-dd HH:mm:ss'),
+          endDate: end.toFormat('yyyy-MM-dd HH:mm:ss'),
+        };
+      }
+      case 'since':
+        if (dateConfig.sinceDate) {
+          return {
+            startDate: DateTime.fromISO(dateConfig.sinceDate)
+              .setZone(timezone)
+              .startOf('day')
+              .toFormat('yyyy-MM-dd HH:mm:ss'),
+            endDate: now.endOf('day').toFormat('yyyy-MM-dd HH:mm:ss'),
+          };
+        }
+        break;
+      case 'period_to_date': {
+        const periodUnit = dateConfig.periodToDateUnit ?? 'month';
+        const unitMap: Record<string, 'week' | 'month' | 'quarter' | 'year'> = {
+          week: 'week',
+          month: 'month',
+          quarter: 'quarter',
+          year: 'year',
+        };
+        const luxonUnit = unitMap[periodUnit] ?? 'month';
+        return {
+          startDate: now.startOf(luxonUnit).toFormat('yyyy-MM-dd HH:mm:ss'),
+          endDate: now.endOf('day').toFormat('yyyy-MM-dd HH:mm:ss'),
+        };
+      }
+    }
   }
 
   const ranges = getDatesFromRange(range, timezone);
   if (!startDate && endDate) {
-    return { startDate: ranges.startDate, endDate: endDate };
+    return { startDate: ranges.startDate, endDate };
   }
 
   return ranges;

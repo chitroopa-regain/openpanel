@@ -5,6 +5,7 @@ import { ReportLineType } from '@/components/report/ReportLineType';
 import { ReportSaveButton } from '@/components/report/ReportSaveButton';
 import {
   changeChartType,
+  changeDateConfig,
   changeDateRanges,
   changeEndDate,
   changeInterval,
@@ -119,6 +120,7 @@ function ShowQueryButton() {
         range: report.range,
         startDate: report.startDate,
         endDate: report.endDate,
+        dateConfig: report.dateConfig,
         criteria: retentionOptions?.criteria,
         interval: report.interval,
         id: 'id' in report ? report.id : undefined,
@@ -325,6 +327,8 @@ export default function ReportEditor({
               onEndDateChange={(date) => dispatch(changeEndDate(date))}
               endDate={report.endDate}
               startDate={report.startDate}
+              dateConfig={report.dateConfig}
+              onDateConfigChange={(config) => dispatch(changeDateConfig(config))}
             />
             <ReportInterval
               className="min-w-0 flex-1"
@@ -334,6 +338,7 @@ export default function ReportEditor({
               chartType={report.chartType}
               startDate={report.startDate}
               endDate={report.endDate}
+              dateConfig={report.dateConfig}
             />
             <ReportLineType className="min-w-0 flex-1" />
           </div>

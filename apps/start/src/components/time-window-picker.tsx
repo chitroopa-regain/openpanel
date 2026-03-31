@@ -17,8 +17,8 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { shouldIgnoreKeypress } from '@/utils/should-ignore-keypress';
 import { timeWindows } from '@openpanel/constants';
-import type { IChartRange } from '@openpanel/validation';
-import { endOfDay, format, startOfDay } from 'date-fns';
+import type { IChartRange, IDateConfig } from '@openpanel/validation';
+import { endOfDay, format, isSameDay, startOfDay } from 'date-fns';
 
 type Props = {
   value: IChartRange;
@@ -28,6 +28,8 @@ type Props = {
   endDate: string | null;
   startDate: string | null;
   className?: string;
+  dateConfig?: IDateConfig;
+  onDateConfigChange?: (config: IDateConfig) => void;
 };
 export function TimeWindowPicker({
   value,
@@ -37,6 +39,8 @@ export function TimeWindowPicker({
   endDate,
   onEndDateChange,
   className,
+  dateConfig,
+  onDateConfigChange,
 }: Props) {
   const isDateRangerPickerOpen = useRef(false);
   useOnPushModal('DateRangerPicker', (open) => {
@@ -46,15 +50,33 @@ export function TimeWindowPicker({
 
   const handleCustom = useCallback(() => {
     pushModal('DateRangerPicker', {
-      onChange: ({ startDate, endDate }) => {
+      onChange: ({ startDate, endDate, dateMode, fixedStartDate, fixedEndDate, lastAmount, lastUnit, lastEndingDaysAgo, sinceDate, periodToDateUnit }: any) => {
         onStartDateChange(format(startOfDay(startDate), 'yyyy-MM-dd HH:mm:ss'));
         onEndDateChange(format(endOfDay(endDate), 'yyyy-MM-dd HH:mm:ss'));
         onChange('custom');
+        onDateConfigChange?.({
+          dateMode: dateMode ?? 'fixed',
+          fixedStartDate,
+          fixedEndDate,
+          lastAmount,
+          lastUnit,
+          lastEndingDaysAgo,
+          sinceDate,
+          periodToDateUnit,
+        });
       },
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
+      dateMode: dateConfig?.dateMode,
+      fixedStartDate: dateConfig?.fixedStartDate,
+      fixedEndDate: dateConfig?.fixedEndDate,
+      lastAmount: dateConfig?.lastAmount,
+      lastUnit: dateConfig?.lastUnit,
+      lastEndingDaysAgo: dateConfig?.lastEndingDaysAgo,
+      sinceDate: dateConfig?.sinceDate,
+      periodToDateUnit: dateConfig?.periodToDateUnit,
     });
-  }, [startDate, endDate]);
+  }, [startDate, endDate, dateConfig]);
 
   useEffect(() => {
     return bind(document, {
@@ -88,7 +110,23 @@ export function TimeWindowPicker({
           icon={CalendarIcon}
           className={cn('justify-start', className)}
         >
-          {timeWindow?.label}
+          <span className="truncate">
+            {value === 'custom' && dateConfig
+              ? dateConfig.dateMode === 'fixed' && dateConfig.fixedStartDate && dateConfig.fixedEndDate
+                ? `${format(new Date(dateConfig.fixedStartDate), 'MMM d')} – ${format(new Date(dateConfig.fixedEndDate), 'MMM d')}`
+                : dateConfig.dateMode === 'last' && dateConfig.lastAmount
+                  ? `Last ${dateConfig.lastAmount} ${dateConfig.lastUnit === 'week' ? 'weeks' : dateConfig.lastUnit === 'month' ? 'months' : 'days'}`
+                  : dateConfig.dateMode === 'period_to_date' && dateConfig.periodToDateUnit
+                    ? `${dateConfig.periodToDateUnit.charAt(0).toUpperCase()}${dateConfig.periodToDateUnit.slice(1)} to date`
+                    : dateConfig.dateMode === 'since' && dateConfig.sinceDate
+                      ? `Since ${format(new Date(dateConfig.sinceDate), "MMM d,''yy")}`
+                      : startDate
+                        ? `Since ${format(new Date(startDate), "MMM d,''yy")}`
+                        : 'Custom'
+              : value === 'custom' && startDate
+                ? `Since ${format(new Date(startDate), "MMM d,''yy")}`
+                : (timeWindow?.label ?? 'Select date')}
+          </span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-56">

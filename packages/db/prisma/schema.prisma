@@ -333,6 +333,8 @@ model Report {
   funnelWindow Float?
   /// [IReportOptions]
   options      Json?
+  /// [IDateConfig]
+  dateConfig   Json?
 
   dashboardId String
   dashboard   Dashboard     @relation(fields: [dashboardId], references: [id], onDelete: Cascade)

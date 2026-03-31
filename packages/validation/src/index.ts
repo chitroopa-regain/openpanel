@@ -220,6 +220,19 @@ export type IWidgetOptions = z.infer<typeof zWidgetOptions>;
 export type ICounterWidgetOptions = z.infer<typeof zCounterWidgetOptions>;
 export type IRealtimeWidgetOptions = z.infer<typeof zRealtimeWidgetOptions>;
 
+export const zDateConfig = z.object({
+  dateMode: z.enum(['fixed', 'last', 'since', 'period_to_date']),
+  fixedStartDate: z.string().nullish(),
+  fixedEndDate: z.string().nullish(),
+  lastAmount: z.number().nullish(),
+  lastUnit: z.string().nullish(),
+  lastEndingDaysAgo: z.number().nullish(),
+  sinceDate: z.string().nullish(),
+  periodToDateUnit: z.string().nullish(),
+});
+
+export type IDateConfig = z.infer<typeof zDateConfig>;
+
 // Base input schema - for API calls, engine, chart queries
 export const zReportInput = z.object({
   projectId: z.string().describe('The ID of the project this chart belongs to'),
@@ -276,6 +289,10 @@ export const zReportInput = z.object({
   options: zReportOptions
     .optional()
     .describe('Chart-specific options (funnel, retention, sankey)'),
+  dateConfig: zDateConfig
+    .passthrough()
+    .optional()
+    .describe('Custom date mode config (fixed, last, since, period_to_date)'),
   // Optional display fields
   name: z.string().optional().describe('The user-defined name for the report'),
   lineType: zLineType

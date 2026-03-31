@@ -105,6 +105,7 @@ export function transformReport(
     unit: report.unit ?? undefined,
     layout: report.layout ?? undefined,
     options: options ?? undefined,
+    dateConfig: (report as any).dateConfig ?? undefined,
   };
 }
 

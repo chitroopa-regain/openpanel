@@ -51,12 +51,17 @@ export const reportRouter = createTRPCRouter({
           breakdowns: report.breakdowns,
           chartType: report.chartType,
           lineType: report.lineType,
-          range: report.range === 'custom' ? '30d' : report.range,
+          range: report.range === 'custom' && (report as any).dateConfig
+            ? 'custom'
+            : report.range === 'custom'
+              ? '30d'
+              : report.range,
           formula: report.formula,
           previous: report.previous ?? false,
           unit: report.unit,
           metric: report.metric === 'count' ? 'sum' : report.metric,
           options: report.options,
+          dateConfig: (report as any).dateConfig ?? null,
         },
       });
     }),
@@ -94,12 +99,17 @@ export const reportRouter = createTRPCRouter({
           breakdowns: report.breakdowns,
           chartType: report.chartType,
           lineType: report.lineType,
-          range: report.range === 'custom' ? '30d' : report.range,
+          range: report.range === 'custom' && (report as any).dateConfig
+            ? 'custom'
+            : report.range === 'custom'
+              ? '30d'
+              : report.range,
           formula: report.formula,
           previous: report.previous ?? false,
           unit: report.unit,
           metric: report.metric === 'count' ? 'sum' : report.metric,
           options: report.options,
+          dateConfig: (report as any).dateConfig ?? null,
         },
       });
     }),
@@ -169,6 +179,7 @@ export const reportRouter = createTRPCRouter({
           unit: report.unit,
           metric: report.metric,
           options: report.options,
+          dateConfig: (report as any).dateConfig ?? undefined,
         },
       });
     }),

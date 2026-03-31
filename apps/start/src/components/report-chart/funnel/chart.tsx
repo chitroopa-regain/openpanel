@@ -144,6 +144,7 @@ export function Tables({
       breakdowns: reportBreakdowns,
       previous,
       options,
+      dateConfig,
     },
   } = useReportChartContext();
 
@@ -172,6 +173,7 @@ export function Tables({
         chartType: 'funnel',
         metric: 'sum',
         options: funnelOptions,
+        dateConfig,
       },
       stepIndex,
       breakdownValues,

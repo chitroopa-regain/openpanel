@@ -14,6 +14,7 @@ import type {
   IChartLineType,
   IChartRange,
   IChartType,
+  IDateConfig,
   IInterval,
   IReport,
   IReportOptions,
@@ -50,6 +51,7 @@ const initialState: InitialState = {
   metric: 'sum',
   limit: 500,
   options: undefined,
+  dateConfig: undefined,
 };
 
 export const reportSlice = createSlice({
@@ -271,6 +273,7 @@ export const reportSlice = createSlice({
       if (action.payload !== 'custom') {
         state.startDate = null;
         state.endDate = null;
+        state.dateConfig = undefined;
         state.interval = getDefaultIntervalByRange(action.payload);
       }
     },
@@ -356,6 +359,14 @@ export const reportSlice = createSlice({
       } else {
         state.options.topN = action.payload;
       }
+    },
+
+    changeDateConfig(
+      state,
+      action: PayloadAction<IDateConfig | undefined>,
+    ) {
+      state.dirty = true;
+      state.dateConfig = action.payload;
     },
 
     changeFunnelBreakdownStep(
@@ -487,6 +498,7 @@ export const {
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changeFunnelTopN,
+  changeDateConfig,
   changeFunnelBreakdownStep,
   changeOptions,
   changeSankeyMode,
