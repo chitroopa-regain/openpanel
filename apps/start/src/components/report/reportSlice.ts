@@ -367,6 +367,11 @@ export const reportSlice = createSlice({
     ) {
       state.dirty = true;
       state.dateConfig = action.payload;
+      // Clear concrete dates for relative modes — they resolve from dateConfig at query time
+      if (action.payload && action.payload.dateMode !== 'fixed') {
+        state.startDate = null;
+        state.endDate = null;
+      }
     },
 
     changeFunnelBreakdownStep(

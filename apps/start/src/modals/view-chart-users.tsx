@@ -292,8 +292,8 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
     trpc.chart.getFunnelProfiles.queryOptions(
       {
         projectId: report.projectId,
-        startDate: report.startDate!,
-        endDate: report.endDate!,
+        startDate: report.startDate,
+        endDate: report.endDate,
         range: report.range,
         dateConfig: report.dateConfig,
         series: report.series,

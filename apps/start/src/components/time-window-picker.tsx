@@ -18,7 +18,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import { shouldIgnoreKeypress } from '@/utils/should-ignore-keypress';
 import { timeWindows } from '@openpanel/constants';
 import type { IChartRange, IDateConfig } from '@openpanel/validation';
-import { endOfDay, format, isSameDay, startOfDay } from 'date-fns';
+import type { DateRangerPickerPayload } from '@/modals/date-ranger-picker';
+import { endOfDay, format, isSameDay, parseISO, startOfDay } from 'date-fns';
 
 type Props = {
   value: IChartRange;
@@ -50,12 +51,16 @@ export function TimeWindowPicker({
 
   const handleCustom = useCallback(() => {
     pushModal('DateRangerPicker', {
-      onChange: ({ startDate, endDate, dateMode, fixedStartDate, fixedEndDate, lastAmount, lastUnit, lastEndingDaysAgo, sinceDate, periodToDateUnit }: any) => {
-        onStartDateChange(format(startOfDay(startDate), 'yyyy-MM-dd HH:mm:ss'));
-        onEndDateChange(format(endOfDay(endDate), 'yyyy-MM-dd HH:mm:ss'));
+      onChange: ({ startDate, endDate, dateMode, fixedStartDate, fixedEndDate, lastAmount, lastUnit, lastEndingDaysAgo, sinceDate, periodToDateUnit }: DateRangerPickerPayload) => {
+        // Only set concrete startDate/endDate for fixed mode.
+        // Relative modes (last/since/period_to_date) resolve from dateConfig at query time.
+        if (startDate && endDate) {
+          onStartDateChange(format(startOfDay(startDate), 'yyyy-MM-dd HH:mm:ss'));
+          onEndDateChange(format(endOfDay(endDate), 'yyyy-MM-dd HH:mm:ss'));
+        }
         onChange('custom');
         onDateConfigChange?.({
-          dateMode: dateMode ?? 'fixed',
+          dateMode,
           fixedStartDate,
           fixedEndDate,
           lastAmount,
@@ -113,13 +118,13 @@ export function TimeWindowPicker({
           <span className="truncate">
             {value === 'custom' && dateConfig
               ? dateConfig.dateMode === 'fixed' && dateConfig.fixedStartDate && dateConfig.fixedEndDate
-                ? `${format(new Date(dateConfig.fixedStartDate), 'MMM d')} – ${format(new Date(dateConfig.fixedEndDate), 'MMM d')}`
+                ? `${format(parseISO(dateConfig.fixedStartDate), 'MMM d')} – ${format(parseISO(dateConfig.fixedEndDate), 'MMM d')}`
                 : dateConfig.dateMode === 'last' && dateConfig.lastAmount
                   ? `Last ${dateConfig.lastAmount} ${dateConfig.lastUnit === 'week' ? 'weeks' : dateConfig.lastUnit === 'month' ? 'months' : 'days'}`
                   : dateConfig.dateMode === 'period_to_date' && dateConfig.periodToDateUnit
                     ? `${dateConfig.periodToDateUnit.charAt(0).toUpperCase()}${dateConfig.periodToDateUnit.slice(1)} to date`
                     : dateConfig.dateMode === 'since' && dateConfig.sinceDate
-                      ? `Since ${format(new Date(dateConfig.sinceDate), "MMM d,''yy")}`
+                      ? `Since ${format(parseISO(dateConfig.sinceDate), "MMM d,''yy")}`
                       : startDate
                         ? `Since ${format(new Date(startDate), "MMM d,''yy")}`
                         : 'Custom'

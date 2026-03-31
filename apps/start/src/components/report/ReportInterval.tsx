@@ -10,6 +10,7 @@ import type { IChartRange, IChartType, IInterval } from '@openpanel/validation';
 import {
   differenceInDays,
   isSameDay,
+  parseISO,
   startOfMonth,
   startOfQuarter,
   startOfWeek,
@@ -72,8 +73,8 @@ export function ReportInterval({
       switch (dateConfig.dateMode) {
         case 'fixed':
           if (dateConfig.fixedStartDate && dateConfig.fixedEndDate) {
-            effectiveStart = new Date(dateConfig.fixedStartDate);
-            effectiveEnd = new Date(dateConfig.fixedEndDate);
+            effectiveStart = parseISO(dateConfig.fixedStartDate);
+            effectiveEnd = parseISO(dateConfig.fixedEndDate);
           }
           break;
         case 'last': {
@@ -86,7 +87,7 @@ export function ReportInterval({
         }
         case 'since':
           if (dateConfig.sinceDate) {
-            effectiveStart = new Date(dateConfig.sinceDate);
+            effectiveStart = parseISO(dateConfig.sinceDate);
             effectiveEnd = now;
           }
           break;

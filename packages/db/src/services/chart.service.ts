@@ -1214,12 +1214,10 @@ export function getChartStartEndDate(
       case 'fixed':
         if (dateConfig.fixedStartDate && dateConfig.fixedEndDate) {
           return {
-            startDate: DateTime.fromISO(dateConfig.fixedStartDate)
-              .setZone(timezone)
+            startDate: DateTime.fromISO(dateConfig.fixedStartDate, { zone: timezone })
               .startOf('day')
               .toFormat('yyyy-MM-dd HH:mm:ss'),
-            endDate: DateTime.fromISO(dateConfig.fixedEndDate)
-              .setZone(timezone)
+            endDate: DateTime.fromISO(dateConfig.fixedEndDate, { zone: timezone })
               .endOf('day')
               .toFormat('yyyy-MM-dd HH:mm:ss'),
           };
@@ -1240,8 +1238,7 @@ export function getChartStartEndDate(
       case 'since':
         if (dateConfig.sinceDate) {
           return {
-            startDate: DateTime.fromISO(dateConfig.sinceDate)
-              .setZone(timezone)
+            startDate: DateTime.fromISO(dateConfig.sinceDate, { zone: timezone })
               .startOf('day')
               .toFormat('yyyy-MM-dd HH:mm:ss'),
             endDate: now.endOf('day').toFormat('yyyy-MM-dd HH:mm:ss'),

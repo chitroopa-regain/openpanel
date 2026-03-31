@@ -5,6 +5,7 @@ import {
   addDays,
   format,
   isSameDay,
+  parseISO,
   startOfMonth,
   startOfQuarter,
   startOfWeek,
@@ -20,19 +21,21 @@ import { ModalContent } from './Modal/Container';
 
 type DateMode = 'fixed' | 'last' | 'since' | 'period_to_date';
 
+export type DateRangerPickerPayload = {
+  startDate?: Date;
+  endDate?: Date;
+  dateMode: DateMode;
+  fixedStartDate?: string;
+  fixedEndDate?: string;
+  lastAmount?: number;
+  lastUnit?: string;
+  lastEndingDaysAgo?: number;
+  sinceDate?: string;
+  periodToDateUnit?: string;
+};
+
 type Props = {
-  onChange: (payload: {
-    startDate: Date;
-    endDate: Date;
-    dateMode?: DateMode;
-    fixedStartDate?: string;
-    fixedEndDate?: string;
-    lastAmount?: number;
-    lastUnit?: string;
-    lastEndingDaysAgo?: number;
-    sinceDate?: string;
-    periodToDateUnit?: string;
-  }) => void;
+  onChange: (payload: DateRangerPickerPayload) => void;
   startDate?: Date;
   endDate?: Date;
   dateMode?: DateMode;
@@ -96,15 +99,15 @@ export default function DateRangerPicker(props: Props) {
 
   const [mode, setMode] = useState<DateMode>(inferMode(props));
 
-  // Fixed mode
+  // Fixed mode — parseISO treats YYYY-MM-DD as local date (not UTC)
   const [fixedStart, setFixedStart] = useState<Date | undefined>(
     props.fixedStartDate
-      ? new Date(props.fixedStartDate)
+      ? parseISO(props.fixedStartDate)
       : props.startDate,
   );
   const [fixedEnd, setFixedEnd] = useState<Date | undefined>(
     props.fixedEndDate
-      ? new Date(props.fixedEndDate)
+      ? parseISO(props.fixedEndDate)
       : props.endDate,
   );
 
@@ -115,10 +118,10 @@ export default function DateRangerPicker(props: Props) {
     (props as any).lastEndingDaysAgo ?? 0,
   );
 
-  // Since mode
+  // Since mode — parseISO treats YYYY-MM-DD as local date (not UTC)
   const [sinceDate, setSinceDate] = useState<Date | undefined>(
     props.sinceDate
-      ? new Date(props.sinceDate)
+      ? parseISO(props.sinceDate)
       : props.startDate,
   );
 
@@ -156,14 +159,8 @@ export default function DateRangerPicker(props: Props) {
         }
         break;
       case 'last': {
-        const multiplier =
-          lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
-        const end = subDays(now, lastEndingDaysAgo);
-        const start = subDays(end, lastAmount * multiplier);
         popModal();
         onChange({
-          startDate: start,
-          endDate: end,
           dateMode: 'last',
           lastAmount,
           lastUnit,
@@ -175,19 +172,14 @@ export default function DateRangerPicker(props: Props) {
         if (sinceDate) {
           popModal();
           onChange({
-            startDate: sinceDate,
-            endDate: now,
             dateMode: 'since',
             sinceDate: `${sinceDate.getFullYear()}-${String(sinceDate.getMonth() + 1).padStart(2, '0')}-${String(sinceDate.getDate()).padStart(2, '0')}`,
           });
         }
         break;
       case 'period_to_date': {
-        const start = resolvePeriodStart(periodUnit);
         popModal();
         onChange({
-          startDate: start,
-          endDate: now,
           dateMode: 'period_to_date',
           periodToDateUnit: periodUnit,
         });
