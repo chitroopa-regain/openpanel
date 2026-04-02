@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import VirtualList from 'rc-virtual-list';
 import * as React from 'react';
+import { filterEventSearchItems } from './combobox-events-search';
 import { EventIcon } from '../events/event-icon';
 
 /**
@@ -103,6 +104,10 @@ export function ComboboxEvents<
     selectedValues.length > 0 && selectedValues[0]
       ? find(selectedValues[0])
       : null;
+  const filteredItems = React.useMemo(
+    () => filterEventSearchItems(items, search),
+    [items, search]
+  );
 
   const handleSelection = (selectedValue: string) => {
     if (multiple) {
@@ -181,13 +186,10 @@ export function ComboboxEvents<
               />
             )}
 
-            <CommandEmpty>Nothing selected</CommandEmpty>
+            <CommandEmpty>No events found</CommandEmpty>
             <VirtualList
               height={300}
-              data={items.filter((item) => {
-                if (search === '') return true;
-                return item.name.toLowerCase().includes(search.toLowerCase());
-              })}
+              data={filteredItems}
               itemHeight={32}
               itemKey="value"
               className="w-[33em] max-sm:max-w-[100vw]"
