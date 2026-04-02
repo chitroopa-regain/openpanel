@@ -18,6 +18,7 @@ import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
 import { createChartTooltip } from '@/components/charts/chart-tooltip';
+import { BarShapeProps } from '@/components/charts/common-bar';
 import { ColorSquare } from '@/components/color-square';
 import { Button } from '@/components/ui/button';
 import { Tooltiper } from '@/components/ui/tooltip';
@@ -479,7 +480,11 @@ function FunnelOverallLegend({
   const number = useNumber();
 
   return (
-    <div className="mb-2 flex items-center justify-center text-sm">
+    <div className="mb-2 flex items-center justify-center gap-2 text-sm">
+      <div
+        className="size-2.5 rounded-[3px] shrink-0"
+        style={{ backgroundColor: getChartColor(0) }}
+      />
       <span className="font-medium text-foreground">
         Overall • {number.formatWithUnit(percent / 100, '%')}
       </span>
@@ -494,6 +499,14 @@ function formatFunnelPercent(percent: number) {
 
 function formatFunnelCount(count: number) {
   return new Intl.NumberFormat('en-US').format(count);
+}
+
+function truncateFunnelLabel(label: string, maxChars: number) {
+  if (label.length <= maxChars) {
+    return label;
+  }
+
+  return `${label.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
 function getFunnelBarGeometry({
@@ -545,15 +558,16 @@ function FunnelBarLabel({
     value,
   });
 
-  const labelX = x + width / 2;
   const labelWidth = 56;
   const labelHeight = 32;
+  const labelRectX = x + width / 2 - labelWidth / 2;
   const labelY = effectiveY - labelHeight + 4;
+  const labelX = x + width / 2;
 
   return (
     <g>
       <rect
-        x={labelX - labelWidth / 2}
+        x={labelRectX}
         y={labelY}
         width={labelWidth}
         height={labelHeight}
@@ -568,7 +582,7 @@ function FunnelBarLabel({
         fill="rgba(255, 255, 255, 0.98)"
         fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
         fontSize={11}
-        fontWeight={700}
+        fontWeight={600}
       >
         {formatFunnelPercent(currentVariant.step.percent)}
       </text>
@@ -622,30 +636,75 @@ function FunnelBarShape(props: FunnelBarShapeProps) {
         ? stroke.replace(/, 0\.\d+\)$/, ', 1)')
         : stroke
       : stroke;
+  const radius = Math.min(4, width / 2, effectiveHeight);
+  const topRoundedPath =
+    effectiveHeight > radius
+      ? [
+          `M ${x} ${effectiveY + effectiveHeight}`,
+          `L ${x} ${effectiveY + radius}`,
+          `Q ${x} ${effectiveY} ${x + radius} ${effectiveY}`,
+          `L ${x + width - radius} ${effectiveY}`,
+          `Q ${x + width} ${effectiveY} ${x + width} ${effectiveY + radius}`,
+          `L ${x + width} ${effectiveY + effectiveHeight}`,
+          'Z',
+        ].join(' ')
+      : [
+          `M ${x} ${effectiveY + effectiveHeight}`,
+          `L ${x} ${effectiveY + radius}`,
+          `Q ${x} ${effectiveY} ${x + radius} ${effectiveY}`,
+          `L ${x + width - radius} ${effectiveY}`,
+          `Q ${x + width} ${effectiveY} ${x + width} ${effectiveY + radius}`,
+          `L ${x + width} ${effectiveY + effectiveHeight}`,
+          'Z',
+        ].join(' ');
 
   return (
     <g>
-      <rect
-        x={x}
-        y={effectiveY}
-        width={width}
-        height={effectiveHeight}
+      <path
+        d={topRoundedPath}
         stroke="none"
         fill={resolvedFill}
-        rx={3}
       />
-      {effectiveHeight > 0 && (
-        <rect
-          x={x}
-          y={effectiveY - 3}
-          width={width}
-          height={2}
-          stroke="none"
-          fill={resolvedStroke}
-          rx={2}
-        />
-      )}
       <FunnelBarLabel {...props} />
+    </g>
+  );
+}
+
+function FunnelXAxisTick({
+  x,
+  y,
+  payload,
+  steps,
+  totalSteps,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string };
+  steps: RouterOutputs['chart']['funnel']['current'][number]['steps'];
+  totalSteps: number;
+}) {
+  if (typeof x !== 'number' || typeof y !== 'number' || !payload?.value) {
+    return null;
+  }
+
+  const index = steps.findIndex((step) => (step?.event.id ?? '') === payload.value);
+  const displayName = index >= 0 ? (steps[index]?.event.displayName ?? '') : '';
+  const truncatedName = truncateFunnelLabel(
+    displayName,
+    totalSteps >= 4 ? 14 : totalSteps === 3 ? 18 : 24,
+  );
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        y={8}
+        textAnchor="middle"
+        fontSize={11}
+        fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
+      >
+        <tspan fill="rgba(255, 255, 255, 0.45)">{index + 1} </tspan>
+        <tspan fill="rgba(255, 255, 255, 0.98)">{truncatedName}</tspan>
+      </text>
     </g>
   );
 }
@@ -669,6 +728,7 @@ export function Chart({
   const showPreviousBars = hasPrevious && !hasBreakdowns;
   const showSingleFunnelLabels = !hasBreakdowns;
   const overallPercent = data.current[0]?.lastStep.percent;
+  const steps = data.current[0]?.steps ?? [];
 
   const CustomLegend = useCallback(() => {
     if (!hasVisibleBreakdowns) {
@@ -764,7 +824,7 @@ export function Chart({
         <ResponsiveContainer>
           <BarChart
             data={rechartData}
-            margin={{ top: 48, right: 8, left: 0, bottom: 0 }}
+            margin={{ top: 48, right: 8, left: 0, bottom: 18 }}
           >
             <CartesianGrid
               className="stroke-border"
@@ -779,11 +839,20 @@ export function Chart({
               domain={undefined}
               interval="preserveStartEnd"
               scale="auto"
-              tickFormatter={(_id, index) => {
-                const name =
-                  data.current[0]?.steps[index]?.event.displayName ?? '';
-                return `${index + 1}  ${name}`;
-              }}
+              tick={
+                showSingleFunnelLabels ? (
+                  <FunnelXAxisTick steps={steps} totalSteps={steps.length} />
+                ) : undefined
+              }
+              tickFormatter={
+                showSingleFunnelLabels
+                  ? undefined
+                  : (_id, index) => {
+                      const name =
+                        data.current[0]?.steps[index]?.event.displayName ?? '';
+                      return `${index + 1}  ${name}`;
+                    }
+              }
               tickMargin={4}
               tickSize={0}
               type={'category'}
@@ -819,9 +888,9 @@ export function Chart({
               >
                 {rechartData.map((item, index) => (
                   <Cell
-                    fill={getChartTranslucentColor(index)}
+                    fill={getChartColor(0)}
                     key={item.name}
-                    stroke={getChartColor(index)}
+                    stroke={getChartColor(0)}
                   />
                 ))}
               </Bar>
@@ -954,7 +1023,9 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
           (b) => b.id === variant.id
         );
         let colorIndex = index;
-        if (visibleVariants.length > 1) {
+        if (!context.hasBreakdowns) {
+          colorIndex = 0;
+        } else if (visibleVariants.length > 1) {
           colorIndex =
             originalBreakdownIndex >= 0 ? originalBreakdownIndex : visibleIndex;
         }
