@@ -7,7 +7,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  LabelList,
   Legend,
   ResponsiveContainer,
   XAxis,
@@ -19,7 +18,6 @@ import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
 import { createChartTooltip } from '@/components/charts/chart-tooltip';
-import { BarShapeProps } from '@/components/charts/common-bar';
 import { ColorSquare } from '@/components/color-square';
 import { Button } from '@/components/ui/button';
 import { Tooltiper } from '@/components/ui/tooltip';
@@ -498,11 +496,36 @@ function formatFunnelCount(count: number) {
   return new Intl.NumberFormat('en-US').format(count);
 }
 
+function getFunnelBarGeometry({
+  y,
+  height,
+  value,
+}: {
+  y: number;
+  height: number;
+  value?: number | string | null;
+}) {
+  const numericValue =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : 0;
+  const hasZeroValue = !Number.isNaN(numericValue) && numericValue <= 0;
+  const minVisibleHeight = hasZeroValue ? 6 : 0;
+
+  return {
+    effectiveHeight: Math.max(height, minVisibleHeight),
+    effectiveY: hasZeroValue ? y - minVisibleHeight : y,
+  };
+}
+
 function FunnelBarLabel({
   x,
   y,
   width,
   height,
+  value,
   payload,
 }: FunnelBarLabelProps) {
   const currentVariant = payload?.['step:data:0'];
@@ -516,12 +539,16 @@ function FunnelBarLabel({
   ) {
     return null;
   }
+  const { effectiveY } = getFunnelBarGeometry({
+    y,
+    height,
+    value,
+  });
 
   const labelX = x + width / 2;
-  const hasRoomAboveBar = y > 38;
   const labelWidth = 56;
   const labelHeight = 32;
-  const labelY = hasRoomAboveBar ? y - 36 : y + height - labelHeight - 8;
+  const labelY = effectiveY - labelHeight + 4;
 
   return (
     <g>
@@ -543,7 +570,7 @@ function FunnelBarLabel({
         fontSize={11}
         fontWeight={700}
       >
-        {formatFunnelPercent(currentVariant.step.percent / 100)}
+        {formatFunnelPercent(currentVariant.step.percent)}
       </text>
       <text
         x={labelX}
@@ -555,6 +582,70 @@ function FunnelBarLabel({
       >
         {formatFunnelCount(currentVariant.step.count)}
       </text>
+    </g>
+  );
+}
+
+type FunnelBarShapeProps = FunnelBarLabelProps & {
+  fill?: string;
+  stroke?: string;
+  value?: number;
+  isActive?: boolean;
+};
+
+function FunnelBarShape(props: FunnelBarShapeProps) {
+  const { x, y, width, height, fill, stroke, value, isActive } = props;
+
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number'
+  ) {
+    return null;
+  }
+  const { effectiveHeight, effectiveY } = getFunnelBarGeometry({
+    y,
+    height,
+    value,
+  });
+
+  const resolvedFill =
+    typeof fill === 'string'
+      ? isActive && fill.startsWith('rgba')
+        ? fill.replace(/, 0\.\d+\)$/, ', 0.4)')
+        : fill
+      : fill;
+  const resolvedStroke =
+    typeof stroke === 'string'
+      ? isActive && stroke.startsWith('rgba')
+        ? stroke.replace(/, 0\.\d+\)$/, ', 1)')
+        : stroke
+      : stroke;
+
+  return (
+    <g>
+      <rect
+        x={x}
+        y={effectiveY}
+        width={width}
+        height={effectiveHeight}
+        stroke="none"
+        fill={resolvedFill}
+        rx={3}
+      />
+      {effectiveHeight > 0 && (
+        <rect
+          x={x}
+          y={effectiveY - 3}
+          width={width}
+          height={2}
+          stroke="none"
+          fill={resolvedStroke}
+          rx={2}
+        />
+      )}
+      <FunnelBarLabel {...props} />
     </g>
   );
 }
@@ -673,7 +764,7 @@ export function Chart({
         <ResponsiveContainer>
           <BarChart
             data={rechartData}
-            margin={{ top: 36, right: 8, left: 0, bottom: 0 }}
+            margin={{ top: 48, right: 8, left: 0, bottom: 0 }}
           >
             <CartesianGrid
               className="stroke-border"
@@ -722,8 +813,10 @@ export function Chart({
                 );
               })}
             {!hasBreakdowns && (
-              <Bar dataKey="step:percent:0" shape={<BarShapeProps />}>
-                <LabelList content={(props) => <FunnelBarLabel {...props} />} />
+              <Bar
+                dataKey="step:percent:0"
+                shape={<FunnelBarShape />}
+              >
                 {rechartData.map((item, index) => (
                   <Cell
                     fill={getChartTranslucentColor(index)}
