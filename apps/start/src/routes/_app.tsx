@@ -41,7 +41,7 @@ function AppLayout() {
   return (
     <div className="flex h-screen w-full">
       <Sidebar />
-      <div className="w-full lg:pl-72">
+      <div className="w-full lg:pl-16">
         <div className="fixed top-0 z-10 block h-16 w-full border-b bg-background lg:hidden" />
         <div className="block h-16 lg:hidden" />
         <Outlet />

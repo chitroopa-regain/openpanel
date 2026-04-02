@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { SheetClose, SheetFooter } from '@/components/ui/sheet';
+import { cn } from '@/utils/cn';
 import { useSelector } from '@/redux';
 
 import { ReportBreakdowns } from './ReportBreakdowns';
@@ -7,7 +8,15 @@ import { ReportSeries } from './ReportSeries';
 import { ReportSettings } from './ReportSettings';
 import { ReportFixedEvents } from './report-fixed-events';
 
-export function ReportSidebar() {
+interface ReportSidebarProps {
+  className?: string;
+  showFooter?: boolean;
+}
+
+export function ReportSidebar({
+  className,
+  showFooter = true,
+}: ReportSidebarProps) {
   const { chartType, options, series } = useSelector((state) => state.report);
   const hasFrequencyDistribution = series.some(
     (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
@@ -19,7 +28,7 @@ export function ReportSidebar() {
   const showFixedEvents = chartType === 'sankey';
   return (
     <>
-      <div className="flex flex-col gap-8">
+      <div className={cn('flex flex-col gap-8', className)}>
         {showFixedEvents ? (
           <ReportFixedEvents
             numberOfEvents={
@@ -32,11 +41,13 @@ export function ReportSidebar() {
         {showBreakdown && <ReportBreakdowns />}
         <ReportSettings />
       </div>
-      <SheetFooter>
-        <SheetClose asChild>
-          <Button className="w-full">Done</Button>
-        </SheetClose>
-      </SheetFooter>
+      {showFooter && (
+        <SheetFooter>
+          <SheetClose asChild>
+            <Button className="w-full">Done</Button>
+          </SheetClose>
+        </SheetFooter>
+      )}
     </>
   );
 }

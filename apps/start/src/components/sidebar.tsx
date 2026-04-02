@@ -46,8 +46,8 @@ export function Sidebar() {
   if (projectId && organizationId) {
     return (
       <SidebarContainer organizations={organizations} projects={projects}>
-        <ActionProjectCTAButton />
-        <SidebarProjectMenu dashboards={dashboards} />
+        <ActionProjectCTAButton compact />
+        <SidebarProjectMenu compact dashboards={dashboards} />
       </SidebarContainer>
     );
   }
@@ -55,9 +55,10 @@ export function Sidebar() {
   // Otherwise show the original sidebar structure
   return (
     <SidebarContainer organizations={organizations} projects={projects}>
-      <ActionOrganizationCTAButton />
-      <div className="mb-2 font-medium text-muted-foreground">Organization</div>
+      <ActionOrganizationCTAButton compact />
+      <div className="mb-2 font-medium text-muted-foreground lg:hidden">Organization</div>
       <SidebarOrganizationMenu
+        compact
         organization={organizations.find((o) => o.id === organizationId)!}
       />
     </SidebarContainer>
@@ -97,7 +98,7 @@ export function SidebarContainer({
       />
       <div
         className={cn(
-          'fixed top-0 left-0 z-40 flex h-screen w-72 flex-col border-border border-r bg-card transition-transform',
+          'fixed top-0 left-0 z-40 flex h-screen w-72 flex-col border-border border-r bg-card transition-transform lg:w-16',
           '-translate-x-72 lg:-translate-x-0', // responsive
           active && 'translate-x-0' // force active on mobile
         )}
@@ -111,19 +112,20 @@ export function SidebarContainer({
             {active ? <XIcon size={16} /> : <MenuIcon size={16} />}
           </Button>
         </div>
-        <div className="flex h-16 shrink-0 items-center gap-2 border-border border-b px-4">
+        <div className="flex h-16 shrink-0 items-center gap-2 border-border border-b px-4 lg:h-auto lg:flex-col lg:justify-center lg:px-2 lg:py-2">
           <Link to="/">
             <LogoSquare className="max-h-8" />
           </Link>
           <ProjectSelector
             align="start"
+            compact
             organizations={organizations}
             projects={projects}
           />
         </div>
         <div
           className={cn([
-            'hide-scrollbar flex-1 overflow-auto p-4',
+            'hide-scrollbar flex-1 overflow-auto p-4 lg:px-2 lg:py-3',
             "[&_a[data-status='active']]:bg-def-200",
           ])}
         >
@@ -132,21 +134,22 @@ export function SidebarContainer({
         <div className="relative">
           <div className="pointer-events-none absolute right-0 bottom-full left-0 h-8 bg-gradient-to-t from-card to-card/0" />
           <div className="border-border border-t bg-card">
-            <div className="flex items-center">
-              <FeedbackButton className="h-12 flex-1 whitespace-nowrap rounded-none border-border border-r px-4 text-muted-foreground outline-0 hover:bg-accent hover:text-accent-foreground" />
+            <div className="flex items-center lg:flex-col">
+              <FeedbackButton className="h-12 flex-1 whitespace-nowrap rounded-none border-border border-r px-4 text-muted-foreground outline-0 hover:bg-accent hover:text-accent-foreground lg:h-12 lg:w-full lg:flex-none lg:border-r-0 lg:border-b lg:px-0" />
               <a
-                className="flex h-12 flex-1 items-center justify-center gap-2 border-border border-r font-medium text-muted-foreground text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="flex h-12 flex-1 items-center justify-center gap-2 border-border border-r font-medium text-muted-foreground text-sm transition-colors hover:bg-accent hover:text-accent-foreground lg:h-12 lg:w-full lg:flex-none lg:border-r-0 lg:border-b"
                 href="https://openpanel.dev/docs"
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                Docs
+                <span className="lg:hidden">Docs</span>
+                <span className="hidden lg:inline">?</span>
               </a>
-              <ProfileToggle className="h-12 flex-1 rounded-none hover:bg-accent hover:text-accent-foreground" />
+              <ProfileToggle className="h-12 flex-1 rounded-none hover:bg-accent hover:text-accent-foreground lg:h-12 lg:w-full lg:flex-none" />
             </div>
             {isSelfHosted && (
               <a
-                className="center-center flex h-12 cursor-pointer gap-2 border-border border-t px-4 font-medium text-muted-foreground text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="center-center flex h-12 cursor-pointer gap-2 border-border border-t px-4 font-medium text-muted-foreground text-sm transition-colors hover:bg-accent hover:text-accent-foreground lg:hidden"
                 href="https://openpanel.dev/supporter"
               >
                 <span>Support Us</span>

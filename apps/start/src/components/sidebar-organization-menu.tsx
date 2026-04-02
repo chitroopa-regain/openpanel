@@ -18,84 +18,110 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
+import { Tooltiper } from '@/components/ui/tooltip';
 import { useAppContext } from '@/hooks/use-app-context';
 import { pushModal } from '@/modals';
 import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 
+function OrganizationSidebarLink({
+  compact = false,
+  to,
+  icon: Icon,
+  label,
+  exact = true,
+  children,
+}: {
+  compact?: boolean;
+  to: string;
+  icon: typeof LayoutListIcon;
+  label: React.ReactNode;
+  exact?: boolean;
+  children?: React.ReactNode;
+}) {
+  const link = (
+    <Link
+      activeOptions={{ exact }}
+      className={cn(
+        'flex items-center gap-2 rounded-md px-3 py-2 font-medium text-[13px] transition-all hover:bg-def-200',
+        compact && 'lg:justify-center lg:px-0 lg:py-2.5'
+      )}
+      from="/$organizationId"
+      to={to as any}
+    >
+      <Icon size={20} />
+      <div className={cn('flex-1', compact && 'lg:hidden')}>{label}</div>
+      <div className={cn(compact && 'lg:hidden')}>{children}</div>
+    </Link>
+  );
+
+  if (!compact) return link;
+
+  return (
+    <Tooltiper align="center" asChild content={label} side="right">
+      {link}
+    </Tooltiper>
+  );
+}
+
 export default function SidebarOrganizationMenu({
   organization,
+  compact = false,
 }: {
   organization: RouterOutputs['organization']['list'][number];
+  compact?: boolean;
 }) {
   const { isSelfHosted } = useAppContext();
 
   return (
     <>
-      <Link
-        activeOptions={{ exact: true }}
-        className={cn(
-          'flex items-center gap-2 rounded-md px-3 py-2 font-medium text-[13px] transition-all hover:bg-def-200'
-        )}
-        from="/$organizationId"
+      <OrganizationSidebarLink
+        compact={compact}
+        exact
+        icon={LayoutListIcon}
+        label="Projects"
         to="/$organizationId"
-      >
-        <LayoutListIcon size={20} />
-        <div className="flex-1">Projects</div>
-      </Link>
-      <Link
-        activeOptions={{ exact: true }}
-        className={cn(
-          'flex items-center gap-2 rounded-md px-3 py-2 font-medium text-[13px] transition-all hover:bg-def-200'
-        )}
-        from="/$organizationId"
+      />
+      <OrganizationSidebarLink
+        compact={compact}
+        exact
+        icon={CogIcon}
+        label="Settings"
         to="/$organizationId/settings"
-      >
-        <CogIcon size={20} />
-        <div className="flex-1">Settings</div>
-      </Link>
+      />
       {!isSelfHosted && (
-        <Link
-          activeOptions={{ exact: true }}
-          className={cn(
-            'flex items-center gap-2 rounded-md px-3 py-2 font-medium text-[13px] transition-all hover:bg-def-200'
-          )}
-          from="/$organizationId"
+        <OrganizationSidebarLink
+          compact={compact}
+          exact
+          icon={CreditCardIcon}
+          label="Billing"
           to="/$organizationId/billing"
         >
-          <CreditCardIcon size={20} />
-          <div className="flex-1">Billing</div>
           {organization?.isTrial && <Badge>Trial</Badge>}
           {organization?.isExpired && <Badge>Expired</Badge>}
           {organization?.isWillBeCanceled && <Badge>Canceled</Badge>}
           {organization?.isCanceled && <Badge>Canceled</Badge>}
-        </Link>
+        </OrganizationSidebarLink>
       )}
-      <Link
-        className={cn(
-          'flex items-center gap-2 rounded-md px-3 py-2 font-medium text-[13px] transition-all hover:bg-def-200'
-        )}
-        from="/$organizationId"
+      <OrganizationSidebarLink
+        compact={compact}
+        exact={false}
+        icon={UsersIcon}
+        label="Members"
         to="/$organizationId/members"
-      >
-        <UsersIcon size={20} />
-        <div className="flex-1">Members</div>
-      </Link>
-      <Link
-        className={cn(
-          'flex items-center gap-2 rounded-md px-3 py-2 font-medium text-[13px] transition-all hover:bg-def-200'
-        )}
-        from="/$organizationId"
+      />
+      <OrganizationSidebarLink
+        compact={compact}
+        exact={false}
+        icon={WorkflowIcon}
+        label="Integrations"
         to="/$organizationId/integrations"
-      >
-        <WorkflowIcon size={20} />
-        <div className="flex-1">Integrations</div>
-      </Link>
+      />
     </>
   );
 }
 
-export function ActionCTAButton() {
+export function ActionCTAButton({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
 
   const ACTIONS = [
@@ -134,10 +160,14 @@ export function ActionCTAButton() {
     <div className="mb-4">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button className="w-full justify-between" size="default">
-            <div className="flex items-center gap-2">
+          {compact ? (
+            <Button
+              className="w-full justify-between lg:size-10 lg:justify-center lg:px-0"
+              size="default"
+              title={ACTIONS[currentActionIndex].label}
+            >
               <PlusIcon size={16} />
-              <div className="relative flex h-5 items-center">
+              <div className="relative flex h-5 items-center lg:hidden">
                 <AnimatePresence mode="popLayout">
                   <motion.span
                     animate={{ y: 0, opacity: 1 }}
@@ -156,9 +186,35 @@ export function ActionCTAButton() {
                   </motion.span>
                 </AnimatePresence>
               </div>
-            </div>
-            <ChevronDownIcon size={16} />
-          </Button>
+              <ChevronDownIcon className="lg:hidden" size={16} />
+            </Button>
+          ) : (
+            <Button className="w-full justify-between" size="default">
+              <div className="flex items-center gap-2">
+                <PlusIcon size={16} />
+                <div className="relative flex h-5 items-center">
+                  <AnimatePresence mode="popLayout">
+                    <motion.span
+                      animate={{ y: 0, opacity: 1 }}
+                      className="absolute whitespace-nowrap"
+                      exit={{ y: -20, opacity: 0 }}
+                      initial={{ y: 20, opacity: 0 }}
+                      key={currentActionIndex}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 300,
+                        damping: 25,
+                        duration: 0.3,
+                      }}
+                    >
+                      {ACTIONS[currentActionIndex].label}
+                    </motion.span>
+                  </AnimatePresence>
+                </div>
+              </div>
+              <ChevronDownIcon size={16} />
+            </Button>
+          )}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
           {ACTIONS.map((action) => (

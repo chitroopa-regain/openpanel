@@ -15,14 +15,15 @@ import {
   setReport,
 } from '@/components/report/reportSlice';
 import { ReportSidebar } from '@/components/report/sidebar/ReportSidebar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TimeWindowPicker } from '@/components/time-window-picker';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useAppParams } from '@/hooks/use-app-params';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { pushModal } from '@/modals';
 import { useDispatch, useSelector } from '@/redux';
-import { bind } from 'bind-event-listener';
-import { CodeIcon, GanttChartSquareIcon, ShareIcon } from 'lucide-react';
+import { CodeIcon, GanttChartSquareIcon, Settings2Icon, ShareIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { IServiceReport } from '@openpanel/db';
@@ -39,15 +40,14 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import EditReportName from '../report/edit-report-name';
 
-function ShowQueryButton() {
+function ReportSqlContent({ active }: { active: boolean }) {
   const report = useSelector((state) => state.report);
   const { projectId } = useAppParams();
   const trpc = useTRPC();
-  const [open, setOpen] = useState(false);
 
   const input = { ...report, projectId };
   const queryOpts = {
-    enabled: open && report.ready,
+    enabled: active && report.ready,
     staleTime: 1000 * 60,
     retry: false,
   };
@@ -166,9 +166,9 @@ function ShowQueryButton() {
   const timezone = res.data?.timezone ?? 'UTC';
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     void res.refetch();
-  }, [open, chartType, res.refetch]);
+  }, [active, chartType, res.refetch]);
 
   const toPlayQuery = useCallback(
     (sql: string) => {
@@ -208,10 +208,50 @@ function ShowQueryButton() {
   }, [queries, toPlayQuery]);
 
   return (
+    <>
+      {res.isLoading ? (
+        <div className="p-4 text-muted-foreground">Loading...</div>
+      ) : res.isError ? (
+        <div className="p-4 text-destructive">
+          Failed to load queries
+          {'message' in res.error && res.error.message
+            ? `: ${res.error.message}`
+            : ''}
+        </div>
+      ) : queries.length === 0 ? (
+        <div className="p-4 text-muted-foreground">No queries available</div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleCopy}>
+              Copy
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCopyForPlay}>
+              Copy for CH Play
+            </Button>
+          </div>
+          {queries.map((sql, i) => (
+            <pre
+              key={i}
+              className="rounded bg-muted p-4 text-xs overflow-x-auto whitespace-pre-wrap font-mono"
+            >
+              {sql}
+            </pre>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ShowQueryButton() {
+  const [open, setOpen] = useState(false);
+
+  return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" icon={CodeIcon}>
-          Query
+          SQL
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-auto">
@@ -222,39 +262,48 @@ function ShowQueryButton() {
             ClickHouse Play if needed.
           </DialogDescription>
         </DialogHeader>
-        {res.isLoading ? (
-          <div className="p-4 text-muted-foreground">Loading...</div>
-        ) : res.isError ? (
-          <div className="p-4 text-destructive">
-            Failed to load queries
-            {'message' in res.error && res.error.message
-              ? `: ${res.error.message}`
-              : ''}
-          </div>
-        ) : queries.length === 0 ? (
-          <div className="p-4 text-muted-foreground">No queries available</div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleCopy}>
-                Copy
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleCopyForPlay}>
-                Copy for CH Play
-              </Button>
-            </div>
-            {queries.map((sql, i) => (
-              <pre
-                key={i}
-                className="rounded bg-muted p-4 text-xs overflow-x-auto whitespace-pre-wrap font-mono"
-              >
-                {sql}
-              </pre>
-            ))}
-          </div>
-        )}
+        <ReportSqlContent active={open} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ReportInspector() {
+  const [tab, setTab] = useState<'query' | 'sql'>('query');
+
+  return (
+    <aside className="hidden lg:flex lg:w-[22rem] lg:shrink-0 lg:flex-col lg:rounded-xl lg:border lg:bg-card">
+      <Tabs
+        className="flex h-full min-h-0 flex-col"
+        onValueChange={(value) => setTab(value as 'query' | 'sql')}
+        value={tab}
+      >
+        <div className="border-b px-4 pt-4">
+          <TabsList>
+            <TabsTrigger className="gap-2" value="query">
+              <Settings2Icon className="h-4 w-4" />
+              Query
+            </TabsTrigger>
+            <TabsTrigger className="gap-2" value="sql">
+              <CodeIcon className="h-4 w-4" />
+              SQL
+            </TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-y-auto p-4"
+          value="query"
+        >
+          <ReportSidebar showFooter={false} />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-y-auto p-4"
+          value="sql"
+        >
+          <ReportSqlContent active={tab === 'sql'} />
+        </TabsContent>
+      </Tabs>
+    </aside>
   );
 }
 
@@ -266,6 +315,7 @@ export default function ReportEditor({
   report: initialReport,
 }: ReportEditorProps) {
   const { projectId } = useAppParams();
+  const { isAboveLg } = useBreakpoint('lg');
   const dispatch = useDispatch();
   const report = useSelector((state) => state.report);
 
@@ -300,16 +350,24 @@ export default function ReportEditor({
           )}
         </div>
         <div className="grid grid-cols-2 gap-2 p-4 pt-0 md:grid-cols-6">
-          <SheetTrigger asChild>
-            <Button
-              icon={GanttChartSquareIcon}
-              variant="cta"
-              className="self-start"
-            >
-              Pick events
-            </Button>
-          </SheetTrigger>
-          <div className="col-span-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {!isAboveLg && (
+            <SheetTrigger asChild>
+              <Button
+                icon={GanttChartSquareIcon}
+                variant="cta"
+                className="self-start"
+              >
+                Pick events
+              </Button>
+            </SheetTrigger>
+          )}
+          <div
+            className={
+              isAboveLg
+                ? 'col-span-5 grid grid-cols-2 gap-2 md:grid-cols-4'
+                : 'col-span-4 grid grid-cols-2 gap-2 md:grid-cols-4'
+            }
+          >
             <ReportChartType
               className="min-w-0 flex-1"
               onChange={(type) => {
@@ -342,15 +400,24 @@ export default function ReportEditor({
             />
             <ReportLineType className="min-w-0 flex-1" />
           </div>
-          <div className="col-start-2 row-start-1 flex items-center justify-end gap-2 md:col-start-6">
-            <ShowQueryButton />
+          <div
+            className={
+              isAboveLg
+                ? 'col-start-1 row-start-2 flex items-center justify-end gap-2 md:col-start-6 md:row-start-1'
+                : 'col-start-2 row-start-1 flex items-center justify-end gap-2 md:col-start-6'
+            }
+          >
+            {!isAboveLg && <ShowQueryButton />}
             <ReportSaveButton />
           </div>
         </div>
-        <div className="flex flex-col gap-4 p-4" id="report-editor">
-          {report.ready && (
-            <ReportChart report={{ ...report, projectId }} isEditMode />
-          )}
+        <div className="flex flex-col gap-4 p-4 lg:flex-row" id="report-editor">
+          <div className="min-w-0 flex-1">
+            {report.ready && (
+              <ReportChart report={{ ...report, projectId }} isEditMode />
+            )}
+          </div>
+          {report.ready && <ReportInspector />}
         </div>
       </div>
       <SheetContent className="!max-w-lg" side="left">

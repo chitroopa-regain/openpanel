@@ -25,12 +25,14 @@ interface ProjectSelectorProps {
   projects: Array<{ id: string; name: string; organizationId: string }>;
   organizations?: IServiceOrganization[];
   align?: 'start' | 'end';
+  compact?: boolean;
 }
 
 export default function ProjectSelector({
   projects,
   organizations,
   align = 'start',
+  compact = false,
 }: ProjectSelectorProps) {
   const router = useRouter();
   const { organizationId, projectId } = useAppParams();
@@ -66,26 +68,44 @@ export default function ProjectSelector({
     });
   };
 
+  const currentLabel = projectId
+    ? projects.find((p) => p.id === projectId)?.name
+    : organizationId
+      ? organizations?.find((o) => o.id === organizationId)?.name
+      : 'Select project';
+
+  const trigger = compact ? (
+    <Button
+      aria-expanded={open}
+      className="flex min-w-0 flex-1 items-center justify-start lg:size-10 lg:flex-none lg:justify-center"
+      role="combobox"
+      size="sm"
+      title={currentLabel}
+      variant="outline"
+    >
+      <Building2Icon className="shrink-0" size={16} />
+      <span className="mx-2 truncate lg:hidden">{currentLabel}</span>
+      <ChevronsUpDownIcon className="ml-auto h-4 w-4 shrink-0 opacity-50 lg:hidden" />
+      <span className="sr-only">{currentLabel}</span>
+    </Button>
+  ) : (
+    <Button
+      aria-expanded={open}
+      className="flex min-w-0 flex-1 items-center justify-start"
+      role="combobox"
+      size={'sm'}
+      variant="outline"
+    >
+      <Building2Icon className="shrink-0" size={16} />
+      <span className="mx-2 truncate">{currentLabel}</span>
+      <ChevronsUpDownIcon className="ml-auto h-4 w-4 shrink-0 opacity-50" />
+    </Button>
+  );
+
   return (
     <DropdownMenu onOpenChange={setOpen} open={open}>
       <DropdownMenuTrigger asChild>
-        <Button
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center justify-start"
-          role="combobox"
-          size={'sm'}
-          variant="outline"
-        >
-          <Building2Icon className="shrink-0" size={16} />
-          <span className="mx-2 truncate">
-            {projectId
-              ? projects.find((p) => p.id === projectId)?.name
-              : organizationId
-                ? organizations?.find((o) => o.id === organizationId)?.name
-                : 'Select project'}
-          </span>
-          <ChevronsUpDownIcon className="ml-auto h-4 w-4 shrink-0 opacity-50" />
-        </Button>
+        {trigger}
       </DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="w-[200px]">
         <DropdownMenuLabel>Projects</DropdownMenuLabel>

@@ -30,57 +30,64 @@ import {
 } from './ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { pushModal } from '@/modals';
+import { Tooltiper } from './ui/tooltip';
 
 interface SidebarProjectMenuProps {
   dashboards: IServiceDashboards;
+  compact?: boolean;
 }
 
 export default function SidebarProjectMenu({
   dashboards,
+  compact = false,
 }: SidebarProjectMenuProps) {
   return (
     <>
-      <div className="mb-2 font-medium text-muted-foreground text-sm">
+      <div className="mb-2 font-medium text-muted-foreground text-sm lg:hidden">
         Analytics
       </div>
-      <SidebarLink href={'/'} icon={WallpaperIcon} label="Overview" />
+      <SidebarLink compact={compact} href={'/'} icon={WallpaperIcon} label="Overview" />
       <SidebarLink
+        compact={compact}
         href={'/dashboards'}
         icon={LayoutPanelTopIcon}
         label="Dashboards"
       />
       <SidebarLink
+        compact={compact}
         href={'/insights'}
         icon={TrendingUpDownIcon}
         label="Insights"
       />
-      <SidebarLink href={'/pages'} icon={LayersIcon} label="Pages" />
-      <SidebarLink href={'/realtime'} icon={Globe2Icon} label="Realtime" />
-      <SidebarLink href={'/events'} icon={GanttChartIcon} label="Events" />
-      <SidebarLink href={'/sessions'} icon={UsersIcon} label="Sessions" />
-      <SidebarLink href={'/profiles'} icon={UsersIcon} label="Profiles" />
-      <div className="mt-4 mb-2 font-medium text-muted-foreground text-sm">
+      <SidebarLink compact={compact} href={'/pages'} icon={LayersIcon} label="Pages" />
+      <SidebarLink compact={compact} href={'/realtime'} icon={Globe2Icon} label="Realtime" />
+      <SidebarLink compact={compact} href={'/events'} icon={GanttChartIcon} label="Events" />
+      <SidebarLink compact={compact} href={'/sessions'} icon={UsersIcon} label="Sessions" />
+      <SidebarLink compact={compact} href={'/profiles'} icon={UsersIcon} label="Profiles" />
+      <div className="mt-4 mb-2 font-medium text-muted-foreground text-sm lg:hidden">
         Manage
       </div>
       <SidebarLink
+        compact={compact}
         exact={false}
         href={'/settings'}
         icon={CogIcon}
         label="Settings"
       />
-      <SidebarLink href={'/references'} icon={GridIcon} label="References" />
+      <SidebarLink compact={compact} href={'/references'} icon={GridIcon} label="References" />
       <SidebarLink
+        compact={compact}
         exact={false}
         href={'/notifications'}
         icon={BellIcon}
         label="Notifications"
       />
-      <SidebarLink href={'..'} icon={UndoDotIcon} label="Back to workspace" />
+      <SidebarLink compact={compact} href={'..'} icon={UndoDotIcon} label="Back to workspace" />
     </>
   );
 }
 
-export function ActionCTAButton() {
+export function ActionCTAButton({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
 
   const ACTIONS = [
@@ -144,10 +151,14 @@ export function ActionCTAButton() {
     <div className="mb-4">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button className="w-full justify-between" size="default">
-            <div className="flex items-center gap-2">
+          {compact ? (
+            <Button
+              className="w-full justify-between lg:size-10 lg:justify-center lg:px-0"
+              size="default"
+              title={ACTIONS[currentActionIndex].label}
+            >
               <PlusIcon size={16} />
-              <div className="relative flex h-5 items-center">
+              <div className="relative flex h-5 items-center lg:hidden">
                 <AnimatePresence mode="popLayout">
                   <motion.span
                     animate={{ y: 0, opacity: 1 }}
@@ -166,9 +177,35 @@ export function ActionCTAButton() {
                   </motion.span>
                 </AnimatePresence>
               </div>
-            </div>
-            <ChevronDownIcon size={16} />
-          </Button>
+              <ChevronDownIcon className="lg:hidden" size={16} />
+            </Button>
+          ) : (
+            <Button className="w-full justify-between" size="default">
+              <div className="flex items-center gap-2">
+                <PlusIcon size={16} />
+                <div className="relative flex h-5 items-center">
+                  <AnimatePresence mode="popLayout">
+                    <motion.span
+                      animate={{ y: 0, opacity: 1 }}
+                      className="absolute whitespace-nowrap"
+                      exit={{ y: -20, opacity: 0 }}
+                      initial={{ y: 20, opacity: 0 }}
+                      key={currentActionIndex}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 300,
+                        damping: 25,
+                        duration: 0.3,
+                      }}
+                    >
+                      {ACTIONS[currentActionIndex].label}
+                    </motion.span>
+                  </AnimatePresence>
+                </div>
+              </div>
+              <ChevronDownIcon size={16} />
+            </Button>
+          )}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
           {ACTIONS.map((action) => (

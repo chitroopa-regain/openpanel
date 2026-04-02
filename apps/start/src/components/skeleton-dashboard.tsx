@@ -3,7 +3,7 @@ export function SkeletonDashboard() {
     <div className="fixed inset-0 overflow-hidden bg-gradient-to-br from-def-100 to-def-200">
       <div className="fixed inset-0 z-10 bg-background/10 backdrop-blur-xs" />
       {/* Sidebar Skeleton */}
-      <div className="fixed top-0 left-0 h-full w-72 border-def-300/50 border-r bg-background/80 backdrop-blur-sm">
+      <div className="fixed top-0 left-0 h-full w-72 border-def-300/50 border-r bg-background/80 backdrop-blur-sm lg:w-16">
         {/* Logo area */}
         <div className="flex h-16 items-center border-def-300/50 border-b px-4">
           <div className="h-8 w-8 rounded-lg bg-def-300/60" />
@@ -48,7 +48,7 @@ export function SkeletonDashboard() {
       </div>
 
       {/* Main content area skeleton */}
-      <div className="ml-72 p-8">
+      <div className="ml-72 p-8 lg:ml-16">
         {/* Header area */}
         <div className="mb-8">
           <div className="mb-4 flex items-center justify-between">
