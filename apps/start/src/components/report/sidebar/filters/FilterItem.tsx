@@ -25,6 +25,7 @@ interface FilterProps {
 
 interface PureFilterProps {
   eventName: string;
+  customEventId?: string;
   filter: IChartEventFilter;
   onRemove: (filter: IChartEventFilter) => void;
   onChangeValue: (
@@ -95,11 +96,14 @@ export function FilterItem({ filter, event }: FilterProps) {
   const dispatch = useDispatch();
   const eventName =
     'name' in event ? event.name : event.displayName ?? '*';
+  const customEventId =
+    'customEventId' in event ? event.customEventId : undefined;
 
   return (
     <PureFilterItem
       filter={filter}
       eventName={eventName}
+      customEventId={customEventId}
       onRemove={onRemove}
       onChangeValue={onChangeValue}
       onChangeOperator={onChangeOperator}
@@ -111,6 +115,7 @@ export function FilterItem({ filter, event }: FilterProps) {
 export function PureFilterItem({
   filter,
   eventName,
+  customEventId,
   onRemove,
   onChangeValue,
   onChangeOperator,
@@ -123,6 +128,7 @@ export function PureFilterItem({
     event: eventName,
     property: filter.name,
     projectId,
+    customEventId,
   });
 
   const valuesCombobox =

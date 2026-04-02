@@ -270,9 +270,10 @@ export const chartRouter = createTRPCRouter({
       z.object({
         event: z.string().optional(),
         projectId: z.string(),
+        customEventId: z.string().optional(),
       })
     )
-    .query(async ({ input: { projectId, event } }) => {
+    .query(async ({ input: { projectId, event, customEventId } }) => {
       const profiles = await clix(ch, 'UTC')
         .select<Pick<IServiceProfile, 'properties'>>(['properties'])
         .from(TABLE_NAMES.profiles)
@@ -308,8 +309,26 @@ export const chartRouter = createTRPCRouter({
         .orderBy('created_at', 'DESC')
         .limit(10_000);
 
-      if (event && event !== '*') {
-        query.where('name', '=', event);
+      // Resolve custom event to component event names for property filtering
+      let propEventNames: string[] = [];
+      if (customEventId) {
+        const ce = await db.customEvent.findUnique({
+          where: { id: customEventId },
+        });
+        if (ce && Array.isArray(ce.components)) {
+          propEventNames = (ce.components as { eventName: string }[]).map(
+            (c) => c.eventName,
+          );
+        }
+      }
+      if (propEventNames.length === 0 && event && event !== '*') {
+        propEventNames = [event];
+      }
+
+      if (propEventNames.length === 1) {
+        query.where('name', '=', propEventNames[0]!);
+      } else if (propEventNames.length > 1) {
+        query.where('name', 'IN', propEventNames);
       }
 
       const res = await query.execute();
@@ -369,13 +388,30 @@ export const chartRouter = createTRPCRouter({
         event: z.string(),
         property: z.string(),
         projectId: z.string(),
+        customEventId: z.string().optional(),
       })
     )
-    .query(async ({ input: { event, property, projectId, ...input } }) => {
+    .query(async ({ input: { event, property, projectId, customEventId, ...input } }) => {
       if (property === 'has_profile') {
         return {
           values: ['true', 'false'],
         };
+      }
+
+      // Resolve custom event to its component event names
+      let eventNames: string[] = [];
+      if (customEventId) {
+        const ce = await db.customEvent.findUnique({
+          where: { id: customEventId },
+        });
+        if (ce && Array.isArray(ce.components)) {
+          eventNames = (ce.components as { eventName: string }[]).map(
+            (c) => c.eventName,
+          );
+        }
+      }
+      if (eventNames.length === 0 && event && event !== '*') {
+        eventNames = [event];
       }
 
       const values: string[] = [];
@@ -408,8 +444,10 @@ export const chartRouter = createTRPCRouter({
           .groupBy(['property_value'])
           .orderBy('created_at', 'DESC');
 
-        if (event && event !== '*') {
-          query.where('name', '=', event);
+        if (eventNames.length === 1) {
+          query.where('name', '=', eventNames[0]!);
+        } else if (eventNames.length > 1) {
+          query.where('name', 'IN', eventNames);
         }
 
         const res = await query.execute();
@@ -426,8 +464,10 @@ export const chartRouter = createTRPCRouter({
           .orderBy('created_at', 'DESC')
           .limit(100_000);
 
-        if (event !== '*') {
-          query.where('name', '=', event);
+        if (eventNames.length === 1) {
+          query.where('name', '=', eventNames[0]!);
+        } else if (eventNames.length > 1) {
+          query.where('name', 'IN', eventNames);
         }
 
         if (property.startsWith('profile.')) {

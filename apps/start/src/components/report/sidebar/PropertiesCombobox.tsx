@@ -18,6 +18,7 @@ import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
 
 interface PropertiesComboboxProps {
   event?: IChartEvent;
+  customEventId?: string;
   children: (setOpen: Dispatch<SetStateAction<boolean>>) => React.ReactNode;
   onSelect: (action: {
     value: string;
@@ -56,6 +57,7 @@ function SearchHeader({
 
 export function PropertiesCombobox({
   event,
+  customEventId,
   children,
   onSelect,
   mode,
@@ -66,6 +68,7 @@ export function PropertiesCombobox({
   const properties = useEventProperties({
     event: event?.name,
     projectId,
+    customEventId,
   });
   const [state, setState] = useState<'index' | 'event' | 'profile'>('index');
   const [search, setSearch] = useState('');

@@ -162,6 +162,7 @@ export function ReportSeriesItem({
           )}
           {showAddFilter && (
             <PropertiesCombobox
+              customEventId={customEvent!.customEventId}
               onSelect={(action) => {
                 dispatch(
                   changeEvent({
@@ -191,6 +192,7 @@ export function ReportSeriesItem({
           )}
           {showSegment && customEvent!.segment.startsWith('property_') && (
             <PropertiesCombobox
+              customEventId={customEvent!.customEventId}
               onSelect={(item) => {
                 dispatch(
                   changeEvent({

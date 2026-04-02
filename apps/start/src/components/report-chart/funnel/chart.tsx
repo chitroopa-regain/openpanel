@@ -7,6 +7,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   ResponsiveContainer,
   XAxis,
@@ -364,6 +365,15 @@ type RechartData = {
     | null;
 };
 
+type FunnelBarLabelProps = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  value?: number | string | null;
+  payload?: RechartData;
+};
+
 const useRechartData = ({
   current,
   previous,
@@ -463,6 +473,92 @@ const StripedBarShape = (props: any) => {
   );
 };
 
+function FunnelOverallLegend({
+  percent,
+}: {
+  percent: number;
+}) {
+  const number = useNumber();
+
+  return (
+    <div className="mb-2 flex items-center justify-center text-sm">
+      <span className="font-medium text-foreground">
+        Overall • {number.formatWithUnit(percent / 100, '%')}
+      </span>
+    </div>
+  );
+}
+
+function formatFunnelPercent(percent: number) {
+  const rounded = Math.round(percent * 100) / 100;
+  return Number.isInteger(rounded) ? `${rounded.toFixed(0)}%` : `${rounded}%`;
+}
+
+function formatFunnelCount(count: number) {
+  return new Intl.NumberFormat('en-US').format(count);
+}
+
+function FunnelBarLabel({
+  x,
+  y,
+  width,
+  height,
+  payload,
+}: FunnelBarLabelProps) {
+  const currentVariant = payload?.['step:data:0'];
+
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number' ||
+    !currentVariant?.step
+  ) {
+    return null;
+  }
+
+  const labelX = x + width / 2;
+  const hasRoomAboveBar = y > 38;
+  const labelWidth = 56;
+  const labelHeight = 32;
+  const labelY = hasRoomAboveBar ? y - 36 : y + height - labelHeight - 8;
+
+  return (
+    <g>
+      <rect
+        x={labelX - labelWidth / 2}
+        y={labelY}
+        width={labelWidth}
+        height={labelHeight}
+        rx={4}
+        fill="rgba(23, 23, 23, 0.96)"
+        stroke="rgba(255, 255, 255, 0.18)"
+      />
+      <text
+        x={labelX}
+        y={labelY + 12}
+        textAnchor="middle"
+        fill="rgba(255, 255, 255, 0.98)"
+        fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
+        fontSize={11}
+        fontWeight={700}
+      >
+        {formatFunnelPercent(currentVariant.step.percent / 100)}
+      </text>
+      <text
+        x={labelX}
+        y={labelY + 26}
+        textAnchor="middle"
+        fill="rgba(255, 255, 255, 0.7)"
+        fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
+        fontSize={11}
+      >
+        {formatFunnelCount(currentVariant.step.count)}
+      </text>
+    </g>
+  );
+}
+
 export function Chart({
   data,
   visibleBreakdowns,
@@ -480,6 +576,8 @@ export function Chart({
     data.previous !== undefined &&
     data.previous.length > 0;
   const showPreviousBars = hasPrevious && !hasBreakdowns;
+  const showSingleFunnelLabels = !hasBreakdowns;
+  const overallPercent = data.current[0]?.lastStep.percent;
 
   const CustomLegend = useCallback(() => {
     if (!hasVisibleBreakdowns) {
@@ -566,9 +664,17 @@ export function Chart({
       hasPrevious={hasPrevious}
       visibleBreakdownIds={new Set(visibleBreakdowns.map((b) => b.id))}
     >
-      <div className="card aspect-video max-h-[250px] w-full p-4 pb-1">
+      <div className="card relative aspect-video max-h-[250px] w-full p-4 pb-1">
+        {showSingleFunnelLabels && typeof overallPercent === 'number' && (
+          <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2">
+            <FunnelOverallLegend percent={overallPercent} />
+          </div>
+        )}
         <ResponsiveContainer>
-          <BarChart data={rechartData}>
+          <BarChart
+            data={rechartData}
+            margin={{ top: 36, right: 8, left: 0, bottom: 0 }}
+          >
             <CartesianGrid
               className="stroke-border"
               horizontal={true}
@@ -617,6 +723,7 @@ export function Chart({
               })}
             {!hasBreakdowns && (
               <Bar dataKey="step:percent:0" shape={<BarShapeProps />}>
+                <LabelList content={(props) => <FunnelBarLabel {...props} />} />
                 {rechartData.map((item, index) => (
                   <Cell
                     fill={getChartTranslucentColor(index)}
