@@ -7,7 +7,7 @@ import type {
   IChartEvent,
   IChartEventItem,
 } from '@openpanel/validation';
-import { DatabaseIcon, FilterIcon, type LucideIcon } from 'lucide-react';
+import { ClockIcon, DatabaseIcon, FilterIcon, type LucideIcon } from 'lucide-react';
 import { ReportSegment } from '../ReportSegment';
 import { changeEvent } from '../reportSlice';
 import { PropertiesCombobox } from './PropertiesCombobox';
@@ -60,6 +60,14 @@ export function ReportSeriesItem({
         )}
         {props.children}
       </div>
+
+      {/* First time ever badge */}
+      {(chartEvent?.firstTimeFilter || customEvent?.firstTimeFilter) && (
+        <div className="flex items-center gap-1 px-2 pb-1 text-xs text-muted-foreground">
+          <ClockIcon className="h-3 w-3 shrink-0" />
+          <span>First time ever</span>
+        </div>
+      )}
 
       {/* Segment and Filter buttons - only for events */}
       {chartEvent && (showSegment || showAddFilter) && (

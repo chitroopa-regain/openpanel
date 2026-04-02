@@ -18,7 +18,6 @@ import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
 import { createChartTooltip } from '@/components/charts/chart-tooltip';
-import { BarShapeProps } from '@/components/charts/common-bar';
 import { ColorSquare } from '@/components/color-square';
 import { Button } from '@/components/ui/button';
 import { Tooltiper } from '@/components/ui/tooltip';
@@ -670,18 +669,66 @@ function FunnelBarShape(props: FunnelBarShapeProps) {
   );
 }
 
+function FunnelBreakdownBarShape({
+  showLabel,
+  ...props
+}: FunnelBarShapeProps & { showLabel?: boolean }) {
+  const { x, y, width, height, fill, value, isActive } = props;
+
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number'
+  ) {
+    return null;
+  }
+
+  const { effectiveHeight, effectiveY } = getFunnelBarGeometry({
+    y,
+    height,
+    value,
+  });
+
+  const resolvedFill =
+    typeof fill === 'string'
+      ? isActive && fill.startsWith('rgba')
+        ? fill.replace(/, 0\.\d+\)$/, ', 0.92)')
+        : fill
+      : fill;
+  const radius = Math.min(4, width / 2, effectiveHeight);
+  const topRoundedPath = [
+    `M ${x} ${effectiveY + effectiveHeight}`,
+    `L ${x} ${effectiveY + radius}`,
+    `Q ${x} ${effectiveY} ${x + radius} ${effectiveY}`,
+    `L ${x + width - radius} ${effectiveY}`,
+    `Q ${x + width} ${effectiveY} ${x + width} ${effectiveY + radius}`,
+    `L ${x + width} ${effectiveY + effectiveHeight}`,
+    'Z',
+  ].join(' ');
+
+  return (
+    <g>
+      <path d={topRoundedPath} fill={resolvedFill} stroke="none" />
+      {showLabel && <FunnelBarLabel {...props} />}
+    </g>
+  );
+}
+
 function FunnelXAxisTick({
   x,
   y,
   payload,
   steps,
   totalSteps,
+  compact,
 }: {
   x?: number;
   y?: number;
   payload?: { value?: string };
   steps: RouterOutputs['chart']['funnel']['current'][number]['steps'];
   totalSteps: number;
+  compact?: boolean;
 }) {
   if (typeof x !== 'number' || typeof y !== 'number' || !payload?.value) {
     return null;
@@ -691,15 +738,25 @@ function FunnelXAxisTick({
   const displayName = index >= 0 ? (steps[index]?.event.displayName ?? '') : '';
   const truncatedName = truncateFunnelLabel(
     displayName,
-    totalSteps >= 4 ? 14 : totalSteps === 3 ? 18 : 24,
+    compact
+      ? totalSteps >= 4
+        ? 16
+        : totalSteps === 3
+          ? 20
+          : 26
+      : totalSteps >= 4
+        ? 14
+        : totalSteps === 3
+          ? 18
+          : 24,
   );
 
   return (
     <g transform={`translate(${x},${y})`}>
       <text
-        y={8}
+        y={compact ? 10 : 8}
         textAnchor="middle"
-        fontSize={11}
+        fontSize={compact ? 10 : 11}
         fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
       >
         <tspan fill="rgba(255, 255, 255, 0.45)">{index + 1} </tspan>
@@ -716,6 +773,7 @@ export function Chart({
   data: RouterOutputs['chart']['funnel'];
   visibleBreakdowns: RouterOutputs['chart']['funnel']['current'];
 }) {
+  const { options } = useReportChartContext();
   const rechartData = useRechartData({ ...data, visibleBreakdowns });
   const xAxisProps = useXAxisProps();
   const yAxisProps = useYAxisProps();
@@ -727,6 +785,8 @@ export function Chart({
     data.previous.length > 0;
   const showPreviousBars = hasPrevious && !hasBreakdowns;
   const showSingleFunnelLabels = !hasBreakdowns;
+  const showBreakdownPreviewLabels =
+    hasBreakdowns && options.showFunnelPreviewLabels === true;
   const overallPercent = data.current[0]?.lastStep.percent;
   const steps = data.current[0]?.steps ?? [];
 
@@ -735,8 +795,8 @@ export function Chart({
       return null;
     }
     return (
-      <div className="mt-4 -mb-2 overflow-x-auto">
-        <div className="flex items-center justify-center gap-6 text-xs whitespace-nowrap px-2 py-1">
+      <div className="mt-4 -mb-2 overflow-x-auto overflow-y-hidden pb-3">
+        <div className="flex min-w-max items-center justify-start gap-6 px-4 py-1 text-xs whitespace-nowrap">
           {visibleBreakdowns.map((breakdown, idx) => {
             const stableIndex = data.current.findIndex(
               (b) => b.id === breakdown.id,
@@ -840,19 +900,13 @@ export function Chart({
               interval="preserveStartEnd"
               scale="auto"
               tick={
-                showSingleFunnelLabels ? (
-                  <FunnelXAxisTick steps={steps} totalSteps={steps.length} />
-                ) : undefined
+                <FunnelXAxisTick
+                  compact={hasBreakdowns}
+                  steps={steps}
+                  totalSteps={steps.length}
+                />
               }
-              tickFormatter={
-                showSingleFunnelLabels
-                  ? undefined
-                  : (_id, index) => {
-                      const name =
-                        data.current[0]?.steps[index]?.event.displayName ?? '';
-                      return `${index + 1}  ${name}`;
-                    }
-              }
+              tickFormatter={undefined}
               tickMargin={4}
               tickSize={0}
               type={'category'}
@@ -869,11 +923,15 @@ export function Chart({
                   <Bar
                     dataKey={`step:percent:${breakdownIndex}`}
                     key={`step:percent:${item.id}`}
-                    shape={<BarShapeProps />}
+                    shape={
+                      <FunnelBreakdownBarShape
+                        showLabel={showBreakdownPreviewLabels}
+                      />
+                    }
                   >
                     {rechartData.map((row, stepIndex) => (
                       <Cell
-                        fill={getChartTranslucentColor(colorIndex)}
+                        fill={getChartColor(colorIndex)}
                         key={`${row.name}-${breakdownIndex}`}
                         stroke={getChartColor(colorIndex)}
                       />
@@ -1025,7 +1083,7 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
         let colorIndex = index;
         if (!context.hasBreakdowns) {
           colorIndex = 0;
-        } else if (visibleVariants.length > 1) {
+        } else {
           colorIndex =
             originalBreakdownIndex >= 0 ? originalBreakdownIndex : visibleIndex;
         }

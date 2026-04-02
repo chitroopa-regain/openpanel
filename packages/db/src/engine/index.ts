@@ -154,6 +154,14 @@ export async function executeAggregateChart(
       eventProperty = event.property;
     }
 
+    // Extract firstTimeFilter
+    const eventFirstTimeFilter =
+      definition.type === 'custom_event'
+        ? (definition as IChartCustomEvent).firstTimeFilter
+        : definition.type === 'event'
+          ? (definition as IChartEventItem & { type: 'event' }).firstTimeFilter
+          : undefined;
+
     // Build query input
     const queryInput = {
       event: {
@@ -163,6 +171,7 @@ export async function executeAggregateChart(
         filters: eventFilters,
         displayName: eventDisplayName,
         property: eventProperty,
+        firstTimeFilter: eventFirstTimeFilter,
       },
       projectId: normalized.projectId,
       startDate: normalized.startDate,

@@ -71,6 +71,7 @@ export async function resolveSeriesForFunnel(
         displayName: item.displayName ?? ce.name,
         filters: item.filters ?? [],
         segment: item.segment ?? 'event',
+        firstTimeFilter: item.firstTimeFilter,
         customEventComponents: components,
       });
     }
@@ -92,8 +93,18 @@ export class FunnelService {
     return group === 'session_id' ? 'session_id' : 'profile_id';
   }
 
-  getFunnelConditions(events: ResolvedFunnelStep[] = [], projectId?: string): string[] {
-    return events.map((event) => {
+  /**
+   * @param firstTimeCteAliases — per-step CTE join alias (e.g. 'ft_0') when
+   *   firstTimeFilter is enabled, or empty string when not. The alias is used
+   *   to append `AND ft_0.ft_profile_id != ''` to the step condition.
+   */
+  getFunnelConditions(
+    events: ResolvedFunnelStep[] = [],
+    projectId?: string,
+    firstTimeCteAliases: string[] = [],
+  ): string[] {
+    return events.map((event, index) => {
+      let condition: string;
       if (event.customEventComponents) {
         // Custom event: use OR-combined component conditions
         const componentClause = getCustomEventWhereClause(
@@ -105,16 +116,28 @@ export class FunnelService {
           const outerWhere = getEventFiltersWhereClause(event.filters, projectId);
           const outerClauses = Object.values(outerWhere);
           if (outerClauses.length > 0) {
-            return `(${componentClause} AND ${outerClauses.join(' AND ')})`;
+            condition = `(${componentClause} AND ${outerClauses.join(' AND ')})`;
+          } else {
+            condition = componentClause;
           }
+        } else {
+          condition = componentClause;
         }
-        return componentClause;
+      } else {
+        // Regular event
+        const { sb, getWhere } = createSqlBuilder();
+        sb.where = getEventFiltersWhereClause(event.filters, projectId);
+        sb.where.name = `name = ${sqlstring.escape(event.name)}`;
+        condition = getWhere().replace('WHERE ', '');
       }
-      // Regular event
-      const { sb, getWhere } = createSqlBuilder();
-      sb.where = getEventFiltersWhereClause(event.filters, projectId);
-      sb.where.name = `name = ${sqlstring.escape(event.name)}`;
-      return getWhere().replace('WHERE ', '');
+
+      // Append first-time-ever check if CTE alias is provided
+      const ftAlias = firstTimeCteAliases[index];
+      if (ftAlias) {
+        condition = `(${condition} AND ${ftAlias}.ft_profile_id != '')`;
+      }
+
+      return condition;
     });
   }
 
@@ -151,7 +174,35 @@ export class FunnelService {
     additionalSelects?: string[];
     additionalGroupBy?: string[];
   }) {
-    const funnels = this.getFunnelConditions(eventSeries, projectId);
+    // Build first-time-ever CTEs and JOIN aliases for steps that have firstTimeFilter
+    const firstTimeCteAliases: string[] = [];
+    const firstTimeCtes: { name: string; sql: string }[] = [];
+    const escapedProject = sqlstring.escape(projectId);
+    const escapedStart = sqlstring.escape(startDate);
+    const escapedEnd = sqlstring.escape(endDate);
+
+    for (let i = 0; i < eventSeries.length; i++) {
+      const step = eventSeries[i]!;
+      if (step.firstTimeFilter) {
+        const alias = `ft_${i}`;
+        firstTimeCteAliases.push(alias);
+        // Build the step predicate for the CTE (same logic as getFunnelConditions)
+        let stepPredicate: string;
+        if (step.customEventComponents) {
+          stepPredicate = getCustomEventWhereClause(step.customEventComponents, projectId);
+        } else {
+          stepPredicate = `name = ${sqlstring.escape(step.name)}`;
+        }
+        firstTimeCtes.push({
+          name: `first_time_step_${i}`,
+          sql: `SELECT profile_id as ft_profile_id FROM ${TABLE_NAMES.events} WHERE project_id = ${escapedProject} AND ${stepPredicate} GROUP BY ft_profile_id HAVING min(created_at) >= toDateTime(${escapedStart}) AND min(created_at) <= toDateTime(${escapedEnd})`,
+        });
+      } else {
+        firstTimeCteAliases.push('');
+      }
+    }
+
+    const funnels = this.getFunnelConditions(eventSeries, projectId, firstTimeCteAliases);
 
     // Collect all real event names for the IN pre-filter.
     const allEventNames = uniq(
@@ -187,13 +238,25 @@ export class FunnelService {
       .where('name', 'IN', allEventNames)
       .groupBy([groupBy, ...additionalGroupBy]);
 
+    // Add first-time LEFT JOINs (CTEs are returned separately for the outer query)
+    for (let i = 0; i < firstTimeCteAliases.length; i++) {
+      const alias = firstTimeCteAliases[i];
+      if (alias) {
+        query.leftJoin(
+          `first_time_step_${i}`,
+          `${alias}.ft_profile_id = events.profile_id`,
+          alias,
+        );
+      }
+    }
+
     // In profile mode, only include identified users to avoid
     // double-counting anonymous device_id-based profiles.
     if (groupBy === 'profile_id') {
       query.rawWhere('profile_id != device_id');
     }
 
-    return query;
+    return { query, firstTimeCtes };
   }
 
   buildSessionsCte({
@@ -393,10 +456,10 @@ export class FunnelService {
 
     const stepConditions = this.getFunnelConditions(eventSeries, projectId);
 
-    const funnelCte = this.buildFunnelCte({
+    const { query: funnelCte, firstTimeCtes } = this.buildFunnelCte({
       projectId,
-      startDate,
-      endDate,
+      startDate: startDate!,
+      endDate: endDate!,
       eventSeries,
       funnelWindowMilliseconds,
       timezone,
@@ -429,6 +492,12 @@ export class FunnelService {
 
     // Base funnel query with CTEs
     const funnelQuery = clix(this.client, timezone);
+
+    // Add first-time CTEs at the top level (NOT nested inside session_funnel)
+    for (const cte of firstTimeCtes) {
+      funnelQuery.with(cte.name, cte.sql);
+    }
+
     funnelQuery.with('session_funnel', funnelCte);
 
     if (group === 'profile_id') {

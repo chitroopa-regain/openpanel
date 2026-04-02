@@ -1214,7 +1214,7 @@ export const chartRouter = createTRPCRouter({
           : [];
 
       // Create funnel CTE using funnel service
-      const funnelCte = funnelService.buildFunnelCte({
+      const { query: funnelCte, firstTimeCtes } = funnelService.buildFunnelCte({
         projectId,
         startDate,
         endDate,
@@ -1251,8 +1251,11 @@ export const chartRouter = createTRPCRouter({
         );
       }
 
-      // Build main query
+      // Build main query — first-time CTEs must be at top level
       const query = clix(ch, timezone);
+      for (const cte of firstTimeCtes) {
+        query.with(cte.name, cte.sql);
+      }
       query.with('session_funnel', funnelCte);
 
       if (group === 'profile_id') {

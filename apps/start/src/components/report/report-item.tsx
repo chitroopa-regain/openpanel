@@ -179,6 +179,9 @@ export function ReportItem({
             endDate: endDate ?? null,
             interval: interval ?? report.interval,
           }}
+          options={{
+            showFunnelPreviewLabels: report.chartType === 'funnel',
+          }}
         />
       </div>
     </div>
@@ -246,6 +249,9 @@ export function ReportItemReadOnly({
             startDate: startDate ?? null,
             endDate: endDate ?? null,
             interval: interval ?? report.interval,
+          }}
+          options={{
+            showFunnelPreviewLabels: report.chartType === 'funnel',
           }}
           shareId={shareId}
         />

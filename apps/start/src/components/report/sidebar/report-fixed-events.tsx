@@ -58,6 +58,19 @@ export function ReportFixedEvents({
             'type' in event ? event : { ...event, type: 'event' as const };
           return dispatch(duplicateEvent(normalized));
         }
+        case 'firstTimeFilter': {
+          const currentFirstTime = 'firstTimeFilter' in event
+            ? !!(event as any).firstTimeFilter
+            : false;
+          const normalized =
+            'type' in event ? event : { ...event, type: 'event' as const };
+          return dispatch(
+            changeEvent({
+              ...normalized,
+              firstTimeFilter: !currentFirstTime,
+            } as any)
+          );
+        }
       }
     };
 
@@ -213,7 +226,7 @@ export function ReportFixedEvents({
                   }}
                 />
               )}
-              <ReportEventMore onClick={handleMore(event)} />
+              <ReportEventMore onClick={handleMore(event)} firstTimeFilter={(event as IChartEventItem & { type: 'event' }).firstTimeFilter} />
             </ReportSeriesItem>
           );
         })}

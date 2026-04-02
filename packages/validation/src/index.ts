@@ -56,6 +56,12 @@ export const zChartEvent = z.object({
     .array(zChartEventFilter)
     .default([])
     .describe('Filters applied specifically to this event'),
+  firstTimeFilter: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, only match this event if it is the users absolute first-ever occurrence'
+    ),
 });
 
 export const zChartFormula = z.object({
@@ -94,6 +100,12 @@ export const zChartCustomEvent = z.object({
     .optional()
     .describe(
       'Optional property for specific segment calculations (e.g., value for property_sum/average)'
+    ),
+  firstTimeFilter: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, only match this custom event if it is the users absolute first-ever occurrence'
     ),
 });
 

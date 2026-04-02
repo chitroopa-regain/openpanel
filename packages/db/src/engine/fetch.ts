@@ -78,6 +78,14 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
       eventProperty = event.property;
     }
 
+    // Extract firstTimeFilter from the series definition
+    const eventFirstTimeFilter =
+      definition.type === 'custom_event'
+        ? (definition as IChartCustomEvent).firstTimeFilter
+        : definition.type === 'event'
+          ? (definition as typeof definition & { type: 'event' }).firstTimeFilter
+          : undefined;
+
     // Build query input
     const queryInput: IGetChartDataInput = {
       event: {
@@ -87,6 +95,7 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
         filters: eventFilters,
         displayName: eventDisplayName,
         property: eventProperty,
+        firstTimeFilter: eventFirstTimeFilter,
       },
       projectId: plan.input.projectId,
       startDate: plan.input.startDate,

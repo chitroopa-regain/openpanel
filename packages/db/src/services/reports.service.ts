@@ -62,6 +62,7 @@ export function transformReportEventItem(
       segment: item.segment ?? 'event',
       filters: (item.filters ?? []).map(transformFilter),
       property: item.property,
+      firstTimeFilter: item.firstTimeFilter,
     };
   }
 
@@ -74,6 +75,7 @@ export function transformReportEventItem(
     name: item.name || 'unknown_event',
     displayName: item.displayName,
     property: item.property,
+    firstTimeFilter: item.firstTimeFilter,
   };
 }
 

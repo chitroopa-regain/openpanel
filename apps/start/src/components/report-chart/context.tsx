@@ -10,6 +10,7 @@ export type ReportChartContextType = {
     hideLegend: boolean;
     hideXAxis: boolean;
     hideYAxis: boolean;
+    showFunnelPreviewLabels: boolean;
     aspectRatio: number;
     maxHeight: number;
     minHeight: number;

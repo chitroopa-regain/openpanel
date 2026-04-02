@@ -157,6 +157,31 @@ export function getCustomEventWhereClause(
   return `(${clauses.join(' OR ')})`;
 }
 
+/**
+ * Builds a first-time-ever IN-subquery. Scans ALL time (no date filter on
+ * the events scan) to find each profile's min(created_at), then checks if
+ * that timestamp falls within [startDate, endDate].
+ *
+ * Used in regular charts (WHERE clause). For funnels, use the CTE + LEFT JOIN
+ * approach instead (windowFunnel doesn't allow aggregate subqueries).
+ */
+export function buildFirstTimeSubquery(
+  projectId: string,
+  stepPredicate: string,
+  startDate: string,
+  endDate: string,
+): string {
+  const escapedProject = sqlstring.escape(projectId);
+  const escapedStart = sqlstring.escape(startDate);
+  const escapedEnd = sqlstring.escape(endDate);
+  return `profile_id IN (
+    SELECT profile_id FROM ${TABLE_NAMES.events}
+    WHERE project_id = ${escapedProject} AND ${stepPredicate}
+    GROUP BY profile_id
+    HAVING min(created_at) >= toDateTime(${escapedStart}) AND min(created_at) <= toDateTime(${escapedEnd})
+  )`;
+}
+
 export function getChartSql({
   event,
   breakdowns,
@@ -198,6 +223,17 @@ export function getChartSql({
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
   } else {
     sb.select.label_0 = `'*' as label_0`;
+  }
+
+  // First-time-ever filter: only include users whose first-ever occurrence
+  // of this event falls within the query date range
+  if (event.firstTimeFilter && startDate && endDate && event.name !== '*') {
+    const stepPredicate = customEventComponents && customEventComponents.length > 0
+      ? getCustomEventWhereClause(customEventComponents, projectId)
+      : `name = ${sqlstring.escape(event.name)}`;
+    sb.where.firstTimeFilter = buildFirstTimeSubquery(
+      projectId, stepPredicate, startDate, endDate
+    );
   }
 
   // Trait filters on profile.properties.X (non-device/geo) are now IN-subqueries
@@ -480,6 +516,16 @@ export function getAggregateChartSql({
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
   } else {
     sb.select.label_0 = `'*' as label_0`;
+  }
+
+  // First-time-ever filter
+  if (event.firstTimeFilter && startDate && endDate && event.name !== '*') {
+    const stepPredicate = customEventComponents && customEventComponents.length > 0
+      ? getCustomEventWhereClause(customEventComponents, projectId)
+      : `name = ${sqlstring.escape(event.name)}`;
+    sb.where.firstTimeFilter = buildFirstTimeSubquery(
+      projectId, stepPredicate, startDate, endDate
+    );
   }
 
   // Trait filters are now IN-subqueries — only device/geo filters need profile CTE
