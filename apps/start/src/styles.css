@@ -13,6 +13,34 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*:hover::-webkit-scrollbar-thumb,
+*:active::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 code {
   font-family:
     source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
@@ -50,6 +78,9 @@ code {
   --border: oklch(92.9% 0.01 256); /* hsl(214.3, 31.8%, 91.4%) -> #E8EBF1 */
   --input: oklch(92.9% 0.01 256); /* hsl(214.3, 31.8%, 91.4%) -> #E8EBF1 */
   --ring: oklch(86.9% 0.02 253); /* hsl(212.73, 26.83%, 83.92%) -> #CDD6E2 */
+  --scrollbar-track: rgba(15, 23, 42, 0.04);
+  --scrollbar-thumb: rgba(15, 23, 42, 0.14);
+  --scrollbar-thumb-hover: rgba(15, 23, 42, 0.22);
   
   /* Chart colors converted to OKLCH for consistency */
   --chart-0: oklch(54.6% 0.22 263); /* #2563EB */
@@ -100,6 +131,9 @@ code {
   --border: oklch(27.1% 0 0); /* hsl(0, 0%, 15.1%) -> #262626 */
   --input: oklch(27.1% 0 0); /* hsl(0, 0%, 15.1%) -> #262626 */
   --ring: oklch(87.6% 0 0); /* hsl(0, 0%, 83.9%) -> #d6d6d6 */
+  --scrollbar-track: rgba(255, 255, 255, 0.04);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 }
 
 @theme {
@@ -283,7 +317,7 @@ button {
   scrollbar-color: transparent transparent;
 }
 .scrollbar-thin:hover {
-  scrollbar-color: var(--color-border) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
@@ -298,7 +332,7 @@ button {
 }
 .scrollbar-thin:hover::-webkit-scrollbar-thumb,
 .scrollbar-thin:active::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--scrollbar-thumb);
 }
 
 /* Hide scrollbar for IE, Edge and Firefox */
@@ -389,14 +423,14 @@ button {
 }
 
 .scrollarea-content::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--scrollbar-thumb);
   border-radius: 9999px;       /* fully rounded */
   transition: background 0.2s;
 }
 
 .scrollarea-content:hover::-webkit-scrollbar-thumb,
 .scrollarea-content:active::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.4);  /* darken on hover/scroll */
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Scroll-driven animation for sticky header */
