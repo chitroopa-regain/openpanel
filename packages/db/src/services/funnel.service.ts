@@ -66,6 +66,7 @@ export async function resolveSeriesForFunnel(
         );
       }
       resolved.push({
+        id: item.id,
         name: ce.name,
         displayName: item.displayName ?? ce.name,
         filters: item.filters ?? [],

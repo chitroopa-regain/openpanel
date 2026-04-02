@@ -155,7 +155,7 @@ export function Tables({
     stepIndex: number,
     breakdownValues?: string[],
   ) => {
-    if (!(projectId && step.event.id)) {
+    if (!projectId) {
       return;
     }
 
@@ -301,15 +301,12 @@ export function Tables({
             },
             {
               name: '',
-              render: (item) => (
+              render: (item, index) => (
                 <Button
                   className="h-8 w-8 p-0"
                   onClick={(e) => {
                     e.stopPropagation();
-                    const stepIndex = steps.findIndex(
-                      (s) => s.event.id === item.event.id
-                    );
-                    handleInspectStep(item, stepIndex);
+                    handleInspectStep(item, index);
                   }}
                   size="sm"
                   title="View users who completed this step"
@@ -342,7 +339,7 @@ export function Tables({
               </div>
             );
           }}
-          keyExtractor={(item) => item.event.id!}
+          keyExtractor={(item) => item.event.id ?? `step-${steps.indexOf(item)}`}
         />
       </div>
     </div>
@@ -350,6 +347,8 @@ export function Tables({
 }
 
 type RechartData = {
+  id: string;
+  stepIndex: number;
   name: string;
   [key: `step:percent:${number}`]: number | null;
   [key: `step:data:${number}`]:
@@ -387,7 +386,8 @@ const useRechartData = ({
   return (
     firstFunnel?.steps.map((step, stepIndex) => {
       return {
-        id: step?.event.id ?? '',
+        id: step?.event.id ?? `step-${stepIndex}`,
+        stepIndex,
         name: step?.event.displayName ?? '',
         ...visibleBreakdowns.reduce((acc, visibleItem, visibleIdx) => {
           // Find the original index for this visible breakdown
@@ -665,9 +665,7 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
     key.startsWith('step:data:')
   ) as `step:data:${number}`[];
 
-  const index = context.data[0].steps.findIndex(
-    (step) => step.event.id === (data as any).id
-  );
+  const index = (data as RechartData).stepIndex;
 
   // In breakdown mode with shared={false}, Recharts sends only the hovered
   // bar's payload item. Extract the breakdown index from its dataKey.
