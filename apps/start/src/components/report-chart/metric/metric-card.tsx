@@ -15,6 +15,7 @@ import { formatDate } from '@/utils/date';
 import { getChartColor } from '@/utils/theme';
 import {
   PreviousDiffIndicator,
+  PreviousDiffIndicatorPure,
   getDiffIndicator,
 } from '../common/previous-diff-indicator';
 import { SerieName } from '../common/serie-name';
@@ -54,8 +55,9 @@ export function MetricCard({
   metric,
   unit,
 }: MetricCardProps) {
-  const { isEditMode } = useReportChartContext();
+  const { isEditMode, options, report } = useReportChartContext();
   const number = useNumber();
+  const isHero = options.metricLayout === 'hero';
 
   const renderValue = (value: number | undefined, unitClassName?: string) => {
     if (value == null) {
@@ -83,6 +85,37 @@ export function MetricCard({
     '#fda4af', // red
     '#93c5fd', // blue
   );
+
+  const label = <SerieName name={serie.names} />;
+  const value = renderValue(
+    serie.metrics[metric],
+    isHero ? 'ml-2 text-4xl font-light' : 'ml-1 font-light text-xl',
+  );
+
+  if (isHero) {
+    return (
+      <div
+        className={cn(
+          'card flex min-h-[360px] h-full w-full flex-1 flex-col items-center justify-center gap-5 rounded-2xl px-10 py-14 text-center',
+          displaySeriesCountClass(report.series.length),
+        )}
+        key={serie.id}
+      >
+        <div className="max-w-full truncate text-sm font-medium text-muted-foreground md:text-base">
+          {label}
+        </div>
+        <div className="max-w-full truncate font-mono text-6xl font-bold tracking-tight md:text-7xl">
+          {value}
+        </div>
+        <PreviousDiffIndicatorPure
+          diff={previous?.diff}
+          state={previous?.state}
+          size="md"
+          showPrevious={report.previous}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -136,8 +169,8 @@ export function MetricCard({
         </AutoSizer>
       </div>
       <MetricCardNumber
-        label={<SerieName name={serie.names} />}
-        value={renderValue(serie.metrics[metric], 'ml-1 font-light text-xl')}
+        label={label}
+        value={value}
         enhancer={
           <PreviousDiffIndicator
             {...previous}
@@ -147,6 +180,16 @@ export function MetricCard({
       />
     </div>
   );
+}
+
+function displaySeriesCountClass(count: number) {
+  if (count <= 1) {
+    return '';
+  }
+  if (count === 2) {
+    return 'max-w-none';
+  }
+  return 'max-w-none';
 }
 
 export function MetricCardNumber({

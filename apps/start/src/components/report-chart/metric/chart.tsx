@@ -14,8 +14,11 @@ interface Props {
 export function Chart({ data }: Props) {
   const {
     isEditMode,
+    options,
     report: { unit },
   } = useReportChartContext();
+  const metricLayout = options.metricLayout ?? 'compact';
+  const isHero = metricLayout === 'hero';
   const { series } = useVisibleSeries(data, isEditMode ? 20 : 4);
 
   // When formulas exist, only show formula series (like Mixpanel does)
@@ -27,11 +30,20 @@ export function Chart({ data }: Props) {
     return series;
   }, [series]);
 
+  if (isHero && displaySeries.length === 1) {
+    return (
+      <div className="flex h-full w-full items-stretch">
+        <MetricCard key={displaySeries[0]!.id} serie={displaySeries[0]!} metric="count" unit={unit} />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
         'grid grid-cols-1 gap-4',
         isEditMode && 'md:grid-cols-2 lg:grid-cols-3',
+        isHero && 'h-full place-content-center',
       )}
     >
       {displaySeries.map((serie) => {

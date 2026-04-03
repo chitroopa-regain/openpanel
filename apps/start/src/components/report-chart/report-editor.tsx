@@ -414,7 +414,13 @@ export default function ReportEditor({
         <div className="flex flex-col gap-4 p-4 lg:flex-row" id="report-editor">
           <div className="min-w-0 flex-1">
             {report.ready && (
-              <ReportChart report={{ ...report, projectId }} isEditMode />
+              <ReportChart
+                report={{ ...report, projectId }}
+                isEditMode
+                options={{
+                  metricLayout: report.chartType === 'metric' ? 'hero' : 'compact',
+                }}
+              />
             )}
           </div>
           {report.ready && <ReportInspector />}

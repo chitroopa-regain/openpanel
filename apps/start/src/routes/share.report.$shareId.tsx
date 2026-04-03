@@ -122,6 +122,10 @@ function RouteComponent() {
                 endDate: endDate ?? share.report.endDate,
                 interval: interval ?? share.report.interval,
               }}
+              options={{
+                metricLayout:
+                  share.report.chartType === 'metric' ? 'hero' : 'compact',
+              }}
               shareId={shareId}
             />
           </div>

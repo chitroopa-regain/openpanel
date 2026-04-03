@@ -8,8 +8,9 @@ import { useReportChartContext } from '../context';
 import { Chart } from './chart';
 
 export function ReportMetricChart() {
-  const { isLazyLoading, report, shareId } = useReportChartContext();
+  const { isLazyLoading, report, shareId, options } = useReportChartContext();
   const trpc = useTRPC();
+  const isHero = options.metricLayout === 'hero';
 
   const res = useQuery(
     trpc.chart.chart.queryOptions(
@@ -39,6 +40,14 @@ export function ReportMetricChart() {
 
   if (!res.data || res.data?.series.length === 0) {
     return <Empty />;
+  }
+
+  if (isHero) {
+    return (
+      <AspectContainer className="min-h-[420px] max-h-[620px]">
+        <Chart data={res.data} />
+      </AspectContainer>
+    );
   }
 
   return <Chart data={res.data} />;
