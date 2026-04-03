@@ -174,6 +174,18 @@ export function ReportSeries() {
     dispatch(changeEvent(formula));
   });
 
+  const addCustomEventSerie = (customEvent: { id: string; name: string }) => {
+    dispatch(
+      addSerie({
+        type: 'custom_event',
+        customEventId: customEvent.id,
+        segment: 'event',
+        displayName: customEvent.name,
+        filters: [],
+      })
+    );
+  };
+
   const showFormula =
     chartType !== 'conversion' &&
     chartType !== 'funnel' &&
@@ -256,6 +268,7 @@ export function ReportSeries() {
                       <ComboboxEvents
                         className="flex-1"
                         searchable
+                        allowCreateCustomEvent
                         multiple={isSelectManyEvents as false}
                         value={
                           (isSelectManyEvents
@@ -271,9 +284,27 @@ export function ReportSeries() {
                               ).name) as any
                         }
                         onChange={(value) => {
+                          const selectedItem =
+                            !Array.isArray(value)
+                              ? eventNames.find((e) => e.name === value)
+                              : null;
+
                           dispatch(
                             changeEvent(
-                              Array.isArray(value)
+                              selectedItem &&
+                                'isCustomEvent' in selectedItem &&
+                                selectedItem.isCustomEvent &&
+                                'customEventId' in selectedItem &&
+                                selectedItem.customEventId
+                                ? {
+                                    id: event.id,
+                                    type: 'custom_event',
+                                    customEventId: selectedItem.customEventId,
+                                    segment: 'event',
+                                    displayName: selectedItem.name,
+                                    filters: [],
+                                  }
+                                : Array.isArray(value)
                                 ? {
                                     id: event.id,
                                     type: 'event',
@@ -294,6 +325,18 @@ export function ReportSeries() {
                                     filters: [],
                                   }
                             )
+                          );
+                        }}
+                        onCreateCustomEvent={(customEvent) => {
+                          dispatch(
+                            changeEvent({
+                              id: event.id,
+                              type: 'custom_event',
+                              customEventId: customEvent.id,
+                              segment: 'event',
+                              displayName: customEvent.name,
+                              filters: [],
+                            })
                           );
                         }}
                         items={eventNames}
@@ -333,6 +376,7 @@ export function ReportSeries() {
                 disabled={isAddEventDisabled || isSankeyEventLimitReached}
                 value={''}
                 searchable
+                allowCreateCustomEvent
                 onChange={(value) => {
                   const selectedItem = eventNames.find((e) => e.name === value);
                   if (
@@ -348,6 +392,7 @@ export function ReportSeries() {
                         customEventId: selectedItem.customEventId,
                         segment: 'event',
                         displayName: selectedItem.name,
+                        filters: [],
                       })
                     );
                   } else if (isSelectManyEvents) {
@@ -376,6 +421,7 @@ export function ReportSeries() {
                     );
                   }
                 }}
+                onCreateCustomEvent={addCustomEventSerie}
                 placeholder="Select event"
                 items={eventNames}
               />

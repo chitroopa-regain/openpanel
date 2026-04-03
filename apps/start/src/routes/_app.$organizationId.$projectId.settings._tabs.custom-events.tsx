@@ -1,5 +1,9 @@
+import {
+  CustomEventEditor,
+  type ComponentEvent,
+  type CustomEventForm,
+} from '@/components/custom-events/custom-event-editor';
 import { Button } from '@/components/ui/button';
-import { ComboboxEvents } from '@/components/ui/combobox-events';
 import {
   Dialog,
   DialogContent,
@@ -7,13 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { useAppParams } from '@/hooks/use-app-params';
-import { useEventNames } from '@/hooks/use-event-names';
 import { useTRPC } from '@/integrations/trpc/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { LayersIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react';
+import { LayersIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -22,21 +24,6 @@ export const Route = createFileRoute(
 )({
   component: CustomEventsSettings,
 });
-
-interface ComponentEvent {
-  eventName: string;
-  filters: Array<{
-    name: string;
-    operator: string;
-    value: (string | number | boolean | null)[];
-  }>;
-}
-
-interface CustomEventForm {
-  id?: string;
-  name: string;
-  components: ComponentEvent[];
-}
 
 function CustomEventsSettings() {
   const { projectId } = useAppParams();
@@ -130,13 +117,13 @@ function CustomEventsSettings() {
         id: editingEvent.id,
         name: editingEvent.name,
         projectId,
-        components: editingEvent.components,
+        components: editingEvent.components as any,
       });
     } else {
       createMutation.mutate({
         name: editingEvent.name,
         projectId,
-        components: editingEvent.components,
+        components: editingEvent.components as any,
       });
     }
   };
@@ -204,7 +191,8 @@ function CustomEventsSettings() {
                 <div>
                   <div className="font-medium">{ce.name}</div>
                   <div className="text-sm text-muted-foreground">
-                    {(ce.components as ComponentEvent[])?.length ?? 0} events
+                    {(ce.components as unknown as ComponentEvent[])?.length ?? 0}{' '}
+                    events
                   </div>
                 </div>
               </div>
@@ -260,76 +248,6 @@ function CustomEventsSettings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function CustomEventEditor({
-  value,
-  onChange,
-  onAddEvent,
-  onRemoveEvent,
-  projectId,
-}: {
-  value: CustomEventForm;
-  onChange: (value: CustomEventForm) => void;
-  onAddEvent: (eventName: string) => void;
-  onRemoveEvent: (index: number) => void;
-  projectId: string;
-}) {
-  const eventNames = useEventNames({ projectId, anyEvents: false });
-
-  // Filter out custom events from the picker (avoid circular references)
-  const realEvents = eventNames.filter(
-    (e) => !('isCustomEvent' in e && e.isCustomEvent)
-  );
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <label className="mb-1 block text-sm font-medium">Name</label>
-        <Input
-          placeholder="e.g., Active User Event"
-          value={value.name}
-          onChange={(e) => onChange({ ...value, name: e.target.value })}
-        />
-      </div>
-
-      <div>
-        <label className="mb-2 block text-sm font-medium">
-          Match when any of these events happen:
-        </label>
-
-        <div className="flex flex-col gap-2">
-          {value.components.map((component, index) => (
-            <div
-              key={index}
-              className="flex items-center gap-2 rounded-md border bg-def-100 px-3 py-2"
-            >
-              <span className="flex-1 truncate text-sm font-medium">
-                {component.eventName}
-              </span>
-              <button
-                type="button"
-                onClick={() => onRemoveEvent(index)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <XIcon className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-2">
-          <ComboboxEvents
-            items={realEvents}
-            value=""
-            searchable
-            onChange={(eventName) => onAddEvent(eventName)}
-            placeholder="+ Add event"
-          />
-        </div>
-      </div>
     </div>
   );
 }

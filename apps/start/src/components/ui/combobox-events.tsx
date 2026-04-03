@@ -1,3 +1,4 @@
+import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
 import type { ButtonProps } from '@/components/ui/button';
 import { Button } from '@/components/ui/button';
 import {
@@ -63,6 +64,8 @@ export interface ComboboxProps<T, TMultiple extends boolean = false> {
   disabled?: boolean;
   multiple?: TMultiple;
   maxDisplayItems?: number;
+  allowCreateCustomEvent?: boolean;
+  onCreateCustomEvent?: (customEvent: { id: string; name: string }) => void;
 }
 
 export function ComboboxEvents<
@@ -82,10 +85,13 @@ export function ComboboxEvents<
   items,
   multiple = false as TMultiple,
   maxDisplayItems = 2,
+  allowCreateCustomEvent = false,
+  onCreateCustomEvent,
 }: ComboboxProps<T, TMultiple>) {
   const number = useNumber();
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
+  const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
 
   const selectedValues = React.useMemo((): T[] => {
     if (multiple) {
@@ -122,6 +128,13 @@ export function ComboboxEvents<
     }
   };
 
+  const handleCreated = (customEvent: { id: string; name: string }) => {
+    onCreateCustomEvent?.(customEvent);
+    setCreateDialogOpen(false);
+    setOpen(false);
+    setSearch('');
+  };
+
   const renderTriggerContent = () => {
     if (selectedValues.length === 0) {
       return placeholder;
@@ -154,10 +167,12 @@ export function ComboboxEvents<
           )}
         >
           <div className="flex min-w-0 items-center">
-            {current?.meta ? (
+            {'isCustomEvent' in (current ?? {}) && current?.isCustomEvent ? (
+              <LayersIcon className="mr-2 h-4 w-4 shrink-0 text-violet-500" />
+            ) : current?.meta ? (
               <EventIcon
                 name={current.name}
-                meta={current.meta}
+                meta={current.meta as any}
                 size="xs"
                 className="mr-2 shrink-0"
               />
@@ -173,7 +188,7 @@ export function ComboboxEvents<
       </PopoverTrigger>
       <PopoverPortal>
         <PopoverContent
-          className="w-full max-w-[33em] max-sm:max-w-[100vw] p-0"
+          className="z-[60] w-full max-w-[33em] max-sm:max-w-[100vw] p-0"
           align={align}
           portal={portal}
         >
@@ -184,6 +199,15 @@ export function ComboboxEvents<
                 value={search}
                 onValueChange={setSearch}
               />
+            )}
+            {allowCreateCustomEvent && (
+              <button
+                type="button"
+                className="flex w-full items-center border-b px-3 py-2 text-sm font-medium text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                Create custom event
+              </button>
             )}
 
             <CommandEmpty>No events found</CommandEmpty>
@@ -233,6 +257,11 @@ export function ComboboxEvents<
           </Command>
         </PopoverContent>
       </PopoverPortal>
+      <CreateCustomEventDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCreated={handleCreated}
+      />
     </Popover>
   );
 }

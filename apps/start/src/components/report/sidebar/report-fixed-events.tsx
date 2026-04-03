@@ -8,6 +8,7 @@ import { useEventNames } from '@/hooks/use-event-names';
 import { useDispatch, useSelector } from '@/redux';
 import { alphabetIds } from '@openpanel/constants';
 import type {
+  IChartCustomEvent,
   IChartEvent,
   IChartEventItem,
   IChartFormula,
@@ -81,6 +82,18 @@ export function ReportFixedEvents({
     dispatch(changeEvent(formula));
   });
 
+  const addCustomEventSerie = (customEvent: { id: string; name: string }) => {
+    dispatch(
+      addSerie({
+        type: 'custom_event',
+        customEventId: customEvent.id,
+        segment: 'event',
+        displayName: customEvent.name,
+        filters: [],
+      })
+    );
+  };
+
   const showFormula =
     chartType !== 'conversion' &&
     chartType !== 'funnel' &&
@@ -108,9 +121,33 @@ export function ReportFixedEvents({
                   <ComboboxEvents
                     className="flex-1"
                     searchable
+                    allowCreateCustomEvent
                     multiple={isSelectManyEvents as false}
                     value={''}
                     onChange={(value) => {
+                      const selectedItem = eventNames.find(
+                        (e) => e.name === value
+                      );
+
+                      if (
+                        selectedItem &&
+                        'isCustomEvent' in selectedItem &&
+                        selectedItem.isCustomEvent &&
+                        'customEventId' in selectedItem &&
+                        selectedItem.customEventId
+                      ) {
+                        dispatch(
+                          addSerie({
+                            type: 'custom_event',
+                            customEventId: selectedItem.customEventId,
+                            segment: 'event',
+                            displayName: selectedItem.name,
+                            filters: [],
+                          })
+                        );
+                        return;
+                      }
+
                       if (isSelectManyEvents) {
                         dispatch(
                           addSerie({
@@ -137,6 +174,7 @@ export function ReportFixedEvents({
                         );
                       }
                     }}
+                    onCreateCustomEvent={addCustomEventSerie}
                     items={eventNames}
                     placeholder="Select event"
                   />
@@ -149,6 +187,8 @@ export function ReportFixedEvents({
           if (isFormula) {
             return null;
           }
+
+          const isCustomEvent = event.type === 'custom_event';
 
           return (
             <ReportSeriesItem
@@ -163,9 +203,12 @@ export function ReportFixedEvents({
               <ComboboxEvents
                 className="flex-1"
                 searchable
+                allowCreateCustomEvent
                 multiple={isSelectManyEvents as false}
                 value={
-                  (isSelectManyEvents
+                  (isCustomEvent
+                    ? ((event as IChartCustomEvent).displayName ?? '')
+                    : isSelectManyEvents
                     ? ((
                         event as IChartEventItem & {
                           type: 'event';
@@ -178,9 +221,27 @@ export function ReportFixedEvents({
                       ).name) as any
                 }
                 onChange={(value) => {
+                  const selectedItem =
+                    !Array.isArray(value)
+                      ? eventNames.find((e) => e.name === value)
+                      : null;
+
                   dispatch(
                     changeEvent(
-                      Array.isArray(value)
+                      selectedItem &&
+                        'isCustomEvent' in selectedItem &&
+                        selectedItem.isCustomEvent &&
+                        'customEventId' in selectedItem &&
+                        selectedItem.customEventId
+                        ? {
+                            id: event.id,
+                            type: 'custom_event',
+                            customEventId: selectedItem.customEventId,
+                            segment: 'event',
+                            displayName: selectedItem.name,
+                            filters: [],
+                          }
+                        : Array.isArray(value)
                         ? {
                             id: event.id,
                             type: 'event',
@@ -203,30 +264,61 @@ export function ReportFixedEvents({
                     )
                   );
                 }}
+                onCreateCustomEvent={(customEvent) => {
+                  dispatch(
+                    changeEvent({
+                      id: event.id,
+                      type: 'custom_event',
+                      customEventId: customEvent.id,
+                      segment: 'event',
+                      displayName: customEvent.name,
+                      filters: [],
+                    })
+                  );
+                }}
                 items={eventNames}
                 placeholder="Select event"
               />
               {showDisplayNameInput && (
                 <Input
                   placeholder={
-                    (event as IChartEventItem & { type: 'event' }).name
-                      ? `${(event as IChartEventItem & { type: 'event' }).name} (${alphabetIds[index]})`
-                      : 'Display name'
+                    isCustomEvent
+                      ? `${(event as IChartCustomEvent).displayName ?? 'Custom Event'} (${alphabetIds[index]})`
+                      : (event as IChartEventItem & { type: 'event' }).name
+                        ? `${(event as IChartEventItem & { type: 'event' }).name} (${alphabetIds[index]})`
+                        : 'Display name'
                   }
                   defaultValue={
-                    (event as IChartEventItem & { type: 'event' }).displayName
+                    isCustomEvent
+                      ? (event as IChartCustomEvent).displayName
+                      : (event as IChartEventItem & { type: 'event' }).displayName
                   }
                   onChange={(e) => {
-                    dispatchChangeEvent({
-                      ...(event as IChartEventItem & {
-                        type: 'event';
-                      }),
-                      displayName: e.target.value,
-                    });
+                    dispatchChangeEvent(
+                      isCustomEvent
+                        ? {
+                            ...(event as IChartCustomEvent),
+                            displayName: e.target.value,
+                          }
+                        : {
+                            ...(event as IChartEventItem & {
+                              type: 'event';
+                            }),
+                            displayName: e.target.value,
+                          }
+                    );
                   }}
                 />
               )}
-              <ReportEventMore onClick={handleMore(event)} firstTimeFilter={(event as IChartEventItem & { type: 'event' }).firstTimeFilter} />
+              <ReportEventMore
+                onClick={handleMore(event)}
+                firstTimeFilter={
+                  isCustomEvent
+                    ? (event as IChartCustomEvent).firstTimeFilter
+                    : (event as IChartEventItem & { type: 'event' })
+                        .firstTimeFilter
+                }
+              />
             </ReportSeriesItem>
           );
         })}
