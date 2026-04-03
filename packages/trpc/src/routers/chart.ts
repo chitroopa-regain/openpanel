@@ -422,11 +422,14 @@ export const chartRouter = createTRPCRouter({
         if (traitKey) {
           if (!DEVICE_GEO_KEYS.has(traitKey)) {
             // Query profile_traits for distinct latest values
+            // Uses a subquery to get each profile's latest value first,
+            // then deduplicates at the SQL level (not JS) to avoid LIMIT
+            // cutting off before reaching all distinct values.
             const traitValues = await chQuery<{ value: string }>(
-              `SELECT argMax(value, updated_at) as value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING value != '' ORDER BY value LIMIT 1000`
+              `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
             );
             return {
-              values: [...new Set(traitValues.map((t) => t.value))].sort((a, b) => a.length - b.length),
+              values: traitValues.map((t) => t.value),
             };
           }
         }
