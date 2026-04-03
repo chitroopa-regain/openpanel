@@ -58,6 +58,7 @@ export function MetricCard({
   const { isEditMode, options, report } = useReportChartContext();
   const number = useNumber();
   const isHero = options.metricLayout === 'hero';
+  const metricSurface = options.metricSurface ?? 'card';
 
   const renderValue = (value: number | undefined, unitClassName?: string) => {
     if (value == null) {
@@ -96,7 +97,10 @@ export function MetricCard({
     return (
       <div
         className={cn(
-          'card flex min-h-[360px] h-full w-full flex-1 flex-col items-center justify-center gap-5 rounded-2xl px-10 py-14 text-center',
+          'flex h-full w-full flex-1 flex-col items-center justify-center gap-5 text-center',
+          metricSurface === 'card' && 'card',
+          metricSurface === 'card' && 'min-h-[360px] rounded-2xl px-10 py-14',
+          metricSurface === 'plain' && 'min-h-0 px-6 py-8',
           displaySeriesCountClass(report.series.length),
         )}
         key={serie.id}
@@ -120,23 +124,22 @@ export function MetricCard({
   return (
     <div
       className={cn(
-        'group relative p-4 hover:z-10',
-        isEditMode && 'card h-auto',
+        'group relative h-full overflow-hidden px-6 pb-6 pt-8 hover:z-10',
+        isEditMode && 'card h-auto p-4',
       )}
       key={serie.id}
     >
       <div
         className={cn(
-          'absolute -left-1 -right-1 bottom-0 top-0 z-0 opacity-100 transition-opacity duration-300 group-hover:opacity-100',
+          'absolute inset-x-0 bottom-0 z-0 h-[50%] opacity-100 transition-opacity duration-300 group-hover:opacity-100',
         )}
       >
         <AutoSizer>
           {({ width, height }) => (
             <AreaChart
               width={width}
-              height={height / 4}
+              height={height}
               data={serie.data}
-              style={{ marginTop: (height / 4) * 3 }}
             >
               <defs>
                 <linearGradient
@@ -146,11 +149,11 @@ export function MetricCard({
                   x2="0"
                   y2="1"
                 >
-                  <stop offset="0%" stopColor={graphColors} stopOpacity={0.2} />
+                  <stop offset="0%" stopColor={graphColors} stopOpacity={0.28} />
                   <stop
                     offset="100%"
                     stopColor={graphColors}
-                    stopOpacity={0.05}
+                    stopOpacity={0.08}
                   />
                 </linearGradient>
               </defs>
@@ -168,16 +171,22 @@ export function MetricCard({
           )}
         </AutoSizer>
       </div>
-      <MetricCardNumber
-        label={label}
-        value={value}
-        enhancer={
+      <div className="relative z-10 flex h-full flex-col">
+        <div className="flex min-w-0 items-start justify-between gap-6">
+          <div className="flex min-w-0 flex-col gap-3">
+            <div className="truncate text-left text-2xl text-muted-foreground">
+              {label}
+            </div>
+            <div className="truncate font-mono text-6xl font-bold tracking-tight">
+              {value}
+            </div>
+          </div>
           <PreviousDiffIndicator
             {...previous}
-            className="text-sm text-muted-foreground"
+            className="mt-1 w-fit text-base text-muted-foreground"
           />
-        }
-      />
+        </div>
+      </div>
     </div>
   );
 }

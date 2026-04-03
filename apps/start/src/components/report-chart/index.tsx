@@ -66,7 +66,7 @@ export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
   };
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className="h-full w-full">
       <ReportChartProvider
         {...mergeDeepRight({ options: {}, isEditMode: false }, props)}
         isLazyLoading={!loaded}

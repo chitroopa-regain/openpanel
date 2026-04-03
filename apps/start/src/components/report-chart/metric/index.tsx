@@ -11,6 +11,7 @@ export function ReportMetricChart() {
   const { isLazyLoading, report, shareId, options } = useReportChartContext();
   const trpc = useTRPC();
   const isHero = options.metricLayout === 'hero';
+  const isPlainHero = isHero && options.metricSurface === 'plain';
 
   const res = useQuery(
     trpc.chart.chart.queryOptions(
@@ -42,7 +43,7 @@ export function ReportMetricChart() {
     return <Empty />;
   }
 
-  if (isHero) {
+  if (isHero && !isPlainHero) {
     return (
       <AspectContainer className="min-h-[420px] max-h-[620px]">
         <Chart data={res.data} />

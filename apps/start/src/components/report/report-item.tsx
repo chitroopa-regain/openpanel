@@ -181,6 +181,10 @@ export function ReportItem({
           }}
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
+            metricLayout:
+              report.chartType === 'metric' ? 'hero' : 'compact',
+            metricSurface:
+              report.chartType === 'metric' ? 'plain' : 'card',
           }}
         />
       </div>
@@ -252,6 +256,10 @@ export function ReportItemReadOnly({
           }}
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
+            metricLayout:
+              report.chartType === 'metric' ? 'hero' : 'compact',
+            metricSurface:
+              report.chartType === 'metric' ? 'plain' : 'card',
           }}
           shareId={shareId}
         />
