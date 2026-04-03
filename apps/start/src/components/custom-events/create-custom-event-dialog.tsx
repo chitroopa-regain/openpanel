@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -13,17 +14,28 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   CustomEventEditor,
+  type ComponentEvent,
   type CustomEventForm,
 } from './custom-event-editor';
 
 export function CreateCustomEventDialog({
   open,
   onOpenChange,
+  initialValue,
   onCreated,
+  onSaved,
+  modal = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialValue?: CustomEventForm | null;
   onCreated?: (customEvent: { id: string; name: string }) => void;
+  onSaved?: (customEvent: {
+    id: string;
+    name: string;
+    components: ComponentEvent[];
+  }) => void;
+  modal?: boolean;
 }) {
   const { projectId } = useAppParams();
   const trpc = useTRPC();
@@ -35,12 +47,14 @@ export function CreateCustomEventDialog({
 
   useEffect(() => {
     if (open) {
-      setForm({
-        name: '',
-        components: [],
-      });
+      setForm(
+        initialValue ?? {
+          name: '',
+          components: [],
+        }
+      );
     }
-  }, [open]);
+  }, [initialValue, open]);
 
   const createMutation = useMutation(
     trpc.customEvent.create.mutationOptions({
@@ -55,6 +69,31 @@ export function CreateCustomEventDialog({
         onCreated?.({
           id: result.id,
           name: result.name,
+        });
+        onSaved?.({
+          id: result.id,
+          name: result.name,
+          components: result.components as unknown as ComponentEvent[],
+        });
+        onOpenChange(false);
+      },
+    })
+  );
+
+  const updateMutation = useMutation(
+    trpc.customEvent.update.mutationOptions({
+      onSuccess(result) {
+        toast('Custom event updated');
+        queryClient.invalidateQueries({
+          queryKey: trpc.customEvent.list.queryKey({ projectId }),
+        });
+        queryClient.invalidateQueries({
+          queryKey: trpc.chart.events.queryKey({ projectId }),
+        });
+        onSaved?.({
+          id: result.id,
+          name: result.name,
+          components: result.components as unknown as ComponentEvent[],
         });
         onOpenChange(false);
       },
@@ -81,18 +120,34 @@ export function CreateCustomEventDialog({
       return;
     }
 
-    createMutation.mutate({
-      name: form.name,
-      projectId,
-      components: form.components as any,
-    });
+    if (form.id) {
+      updateMutation.mutate({
+        id: form.id,
+        name: form.name,
+        projectId,
+        components: form.components as any,
+      });
+    } else {
+      createMutation.mutate({
+        name: form.name,
+        projectId,
+        components: form.components as any,
+      });
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} modal={false}>
+    <Dialog open={open} onOpenChange={onOpenChange} modal={modal}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Custom Event</DialogTitle>
+          <DialogTitle>
+            {form.id ? 'Edit Custom Event' : 'Create Custom Event'}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            {form.id
+              ? 'Edit the custom event name and component events.'
+              : 'Create a custom event by naming it and selecting one or more component events.'}
+          </DialogDescription>
         </DialogHeader>
 
         <CustomEventEditor
@@ -107,7 +162,10 @@ export function CreateCustomEventDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={createMutation.isPending}>
+          <Button
+            onClick={handleSave}
+            disabled={createMutation.isPending || updateMutation.isPending}
+          >
             Save
           </Button>
         </DialogFooter>

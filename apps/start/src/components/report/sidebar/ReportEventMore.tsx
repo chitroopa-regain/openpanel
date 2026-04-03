@@ -8,16 +8,31 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { CheckIcon, ClockIcon, CopyIcon, MoreHorizontal, TrashIcon } from 'lucide-react';
+import {
+  CheckIcon,
+  ClockIcon,
+  CopyIcon,
+  MoreHorizontal,
+  PencilIcon,
+  TrashIcon,
+} from 'lucide-react';
 import * as React from 'react';
 
 export interface ReportEventMoreProps {
-  onClick: (action: 'remove' | 'duplicate' | 'firstTimeFilter') => void;
+  onClick: (
+    action: 'remove' | 'duplicate' | 'firstTimeFilter' | 'editCustomEvent'
+  ) => void;
   firstTimeFilter?: boolean;
   hideFirstTimeFilter?: boolean;
+  showEditCustomEvent?: boolean;
 }
 
-export function ReportEventMore({ onClick, firstTimeFilter, hideFirstTimeFilter }: ReportEventMoreProps) {
+export function ReportEventMore({
+  onClick,
+  firstTimeFilter,
+  hideFirstTimeFilter,
+  showEditCustomEvent,
+}: ReportEventMoreProps) {
   const [open, setOpen] = React.useState(false);
 
   return (
@@ -48,6 +63,20 @@ export function ReportEventMore({ onClick, firstTimeFilter, hideFirstTimeFilter 
             Duplicate
             <DropdownMenuShortcut>⌘⌫</DropdownMenuShortcut>
           </DropdownMenuItem>
+          {showEditCustomEvent && (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                setOpen(false);
+                requestAnimationFrame(() => {
+                  onClick('editCustomEvent');
+                });
+              }}
+            >
+              <PencilIcon className="mr-2 h-4 w-4" />
+              Edit custom event
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             className="text-red-600"
             onClick={() => onClick('remove')}

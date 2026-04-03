@@ -1,3 +1,4 @@
+import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
 import { ColorSquare } from '@/components/color-square';
 import { ComboboxEvents } from '@/components/ui/combobox-events';
 import { Input } from '@/components/ui/input';
@@ -5,7 +6,9 @@ import { InputEnter } from '@/components/ui/input-enter';
 import { useAppParams } from '@/hooks/use-app-params';
 import { useDebounceFn } from '@/hooks/use-debounce-fn';
 import { useEventNames } from '@/hooks/use-event-names';
+import { useTRPC } from '@/integrations/trpc/react';
 import { useDispatch, useSelector } from '@/redux';
+import { useQuery } from '@tanstack/react-query';
 import { alphabetIds } from '@openpanel/constants';
 import type {
   IChartCustomEvent,
@@ -13,6 +16,7 @@ import type {
   IChartEventItem,
   IChartFormula,
 } from '@openpanel/validation';
+import * as React from 'react';
 import {
   addSerie,
   changeEvent,
@@ -32,9 +36,15 @@ export function ReportFixedEvents({
   const chartType = useSelector((state) => state.report.chartType);
   const dispatch = useDispatch();
   const { projectId } = useAppParams();
+  const trpc = useTRPC();
   const eventNames = useEventNames({
     projectId,
   });
+  const customEvents = useQuery(
+    trpc.customEvent.list.queryOptions({ projectId })
+  ).data ?? [];
+  const [editingCustomEvent, setEditingCustomEvent] =
+    React.useState<IChartCustomEvent | null>(null);
 
   const showSegment = !['retention', 'funnel', 'sankey'].includes(chartType);
   const showAddFilter = !['sankey'].includes(chartType);
@@ -71,6 +81,12 @@ export function ReportFixedEvents({
               firstTimeFilter: !currentFirstTime,
             } as any)
           );
+        }
+        case 'editCustomEvent': {
+          if ('type' in event && event.type === 'custom_event') {
+            setEditingCustomEvent(event as IChartCustomEvent);
+          }
+          return;
         }
       }
     };
@@ -318,11 +334,45 @@ export function ReportFixedEvents({
                     : (event as IChartEventItem & { type: 'event' })
                         .firstTimeFilter
                 }
+                showEditCustomEvent={isCustomEvent}
               />
             </ReportSeriesItem>
           );
         })}
       </div>
+      <CreateCustomEventDialog
+        open={!!editingCustomEvent}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingCustomEvent(null);
+          }
+        }}
+        initialValue={
+          editingCustomEvent
+            ? {
+                id: editingCustomEvent.customEventId,
+                name:
+                  customEvents.find(
+                    (item) => item.id === editingCustomEvent.customEventId
+                  )?.name ?? editingCustomEvent.displayName ?? 'Custom Event',
+                components:
+                  (customEvents.find(
+                    (item) => item.id === editingCustomEvent.customEventId
+                  )?.components as any) ?? [],
+              }
+            : null
+        }
+        onSaved={(customEvent) => {
+          if (!editingCustomEvent) return;
+          dispatch(
+            changeEvent({
+              ...editingCustomEvent,
+              displayName: customEvent.name,
+            })
+          );
+          setEditingCustomEvent(null);
+        }}
+      />
     </div>
   );
 }
