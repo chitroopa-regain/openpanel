@@ -961,12 +961,12 @@ export const chartRouter = createTRPCRouter({
           SELECT
             profile_id AS userID,
             project_id,
-            ${sqlToStartOf}(created_at) AS cohort_interval
+            ${sqlToStartOf}(created_at, '${timezone}') AS cohort_interval
           FROM ${firstEventTable}
           ${firstEventJoin}
           WHERE ${firstWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
-            AND created_at BETWEEN toDate('${utc(dates.startDate)}') AND toDate('${utc(dates.endDate)}')
+            AND created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
             ${firstIdentifiedFilter}
             ${firstFilterClause}
         ),
@@ -975,12 +975,12 @@ export const chartRouter = createTRPCRouter({
             SELECT
                 profile_id,
                 project_id,
-                toDate(created_at) AS event_date
+                toDate(created_at, '${timezone}') AS event_date
             FROM ${secondEventTable}
             ${secondEventJoin}
             WHERE ${secondWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
-            AND created_at BETWEEN toDate('${utc(dates.startDate)}') AND toDate('${utc(dates.endDate)}') + INTERVAL ${diffInterval} ${sqlInterval}
+            AND created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${diffInterval} ${sqlInterval}
             ${secondIdentifiedFilter}
             ${secondFilterClause}
         ),
@@ -989,10 +989,10 @@ export const chartRouter = createTRPCRouter({
           SELECT
               f.cohort_interval,
               l.profile_id,
-              dateDiff('${sqlInterval}', f.cohort_interval, ${sqlToStartOf}(l.event_date)) AS x_after_cohort
+              dateDiff('${sqlInterval}', f.cohort_interval, ${sqlToStartOf}(l.event_date, '${timezone}')) AS x_after_cohort
           FROM cohort_users AS f
           INNER JOIN last_event AS l ON f.userID = l.profile_id
-          WHERE (l.event_date >= f.cohort_interval) 
+          WHERE (l.event_date >= f.cohort_interval)
           AND (l.event_date <= (f.cohort_interval + INTERVAL ${diffInterval} ${sqlInterval}))
         ),
         interval_users AS (
@@ -1350,7 +1350,7 @@ function processCohortData(
       cohort_interval: row.cohort_interval,
       sum,
       values: values,
-      percentages: values.map((value) => (sum > 0 ? round(value / sum, 2) : 0)),
+      percentages: values.map((value) => (sum > 0 ? round(value / sum, 4) : 0)),
     };
   });
 
@@ -1389,7 +1389,7 @@ function processCohortData(
     cohort_interval: 'Weighted Average',
     sum: round(averageData.totalSum / processed.length, 0),
     percentages: averageData.percentages.map(({ sum, weightedSum }) =>
-      sum > 0 ? round(weightedSum / sum, 2) : 0
+      sum > 0 ? round(weightedSum / sum, 4) : 0
     ),
     values: averageData.values.map(({ sum, weightedSum }) =>
       sum > 0 ? round(weightedSum / sum, 0) : 0

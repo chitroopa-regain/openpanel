@@ -101,7 +101,8 @@ export function useNumber() {
         return fancyMinutes(value);
       }
       if (unit === '%') {
-        return `${format(round(value * 100, 1))}${unit ? ` ${unit}` : ''}`;
+        const pct = round(value * 100, 2);
+        return `${new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(pct)} ${unit}`;
       }
       return `${format(value)}${unit ? ` ${unit}` : ''}`;
     },
