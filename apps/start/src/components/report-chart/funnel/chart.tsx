@@ -1,7 +1,7 @@
 import { getPreviousMetric } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import { ChevronRightIcon, InfoIcon, UsersIcon } from 'lucide-react';
-import { useCallback } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -766,6 +766,46 @@ function FunnelXAxisTick({
   );
 }
 
+function getFunnelChartWidth({
+  containerWidth,
+  stepCount,
+  breakdownCount,
+  stepLabels,
+}: {
+  containerWidth: number;
+  stepCount: number;
+  breakdownCount: number;
+  stepLabels: string[];
+}) {
+  if (stepCount <= 0) {
+    return containerWidth;
+  }
+
+  const widestLabelChars = stepLabels.reduce(
+    (max, label) => Math.max(max, label.length),
+    0,
+  );
+  const estimatedLabelWidth = Math.min(
+    240,
+    Math.max(120, widestLabelChars * 7 + 28),
+  );
+  const singleStepWidth = estimatedLabelWidth;
+  const breakdownBarWidth = 44;
+  const breakdownGapWidth = 8;
+  const groupedStepWidth =
+    Math.max(
+      estimatedLabelWidth,
+      breakdownCount * breakdownBarWidth +
+        Math.max(0, breakdownCount - 1) * breakdownGapWidth +
+        36,
+    );
+  const stepWidth = breakdownCount > 1 ? groupedStepWidth : singleStepWidth;
+  const horizontalPadding = 24;
+  const desiredWidth = stepCount * stepWidth + horizontalPadding;
+
+  return Math.max(containerWidth, desiredWidth);
+}
+
 export function Chart({
   data,
   visibleBreakdowns,
@@ -789,6 +829,39 @@ export function Chart({
     hasBreakdowns && options.showFunnelPreviewLabels === true;
   const overallPercent = data.current[0]?.lastStep.percent;
   const steps = data.current[0]?.steps ?? [];
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const node = containerRef.current;
+    if (!node) {
+      return;
+    }
+
+    const update = () => {
+      setContainerWidth(node.clientWidth);
+    };
+
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  const chartWidth = useMemo(
+    () =>
+      getFunnelChartWidth({
+        containerWidth,
+        stepCount: steps.length,
+        breakdownCount: visibleBreakdowns.length,
+        stepLabels: steps.map((step) => step?.event.displayName ?? ''),
+      }),
+    [containerWidth, steps, visibleBreakdowns.length],
+  );
 
   const CustomLegend = useCallback(() => {
     if (!hasVisibleBreakdowns) {
@@ -875,100 +948,110 @@ export function Chart({
       hasPrevious={hasPrevious}
       visibleBreakdownIds={new Set(visibleBreakdowns.map((b) => b.id))}
     >
-      <div className="card relative aspect-video max-h-[250px] w-full p-4 pb-1">
+      <div className="card w-full">
         {showSingleFunnelLabels && typeof overallPercent === 'number' && (
-          <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2">
+          <div className="border-b border-border px-4 pt-3">
             <FunnelOverallLegend percent={overallPercent} />
           </div>
         )}
-        <ResponsiveContainer>
-          <BarChart
-            data={rechartData}
-            margin={{ top: 48, right: 8, left: 0, bottom: 18 }}
+        <div
+          ref={containerRef}
+          className="relative aspect-video max-h-[250px] w-full overflow-x-auto overflow-y-hidden p-4 pb-1"
+        >
+          <div
+            className="relative h-full min-w-full"
+            style={{ width: chartWidth > 0 ? `${chartWidth}px` : '100%' }}
           >
-            <CartesianGrid
-              className="stroke-border"
-              horizontal={true}
-              strokeDasharray="3 3"
-              vertical={true}
-            />
-            <XAxis
-              {...xAxisProps}
-              allowDuplicatedCategory={false}
-              dataKey="id"
-              domain={undefined}
-              interval="preserveStartEnd"
-              scale="auto"
-              tick={
-                <FunnelXAxisTick
-                  compact={hasBreakdowns}
-                  steps={steps}
-                  totalSteps={steps.length}
+            <ResponsiveContainer>
+              <BarChart
+                data={rechartData}
+                margin={{ top: 24, right: 8, left: 0, bottom: 18 }}
+              >
+                <CartesianGrid
+                  className="stroke-border"
+                  horizontal={true}
+                  strokeDasharray="3 3"
+                  vertical={true}
                 />
-              }
-              tickFormatter={undefined}
-              tickMargin={4}
-              tickSize={0}
-              type={'category'}
-            />
-            <YAxis {...yAxisProps} />
-            {hasBreakdowns &&
-              visibleBreakdowns.map((item, breakdownIndex) => {
-                const stableIndex = data.current.findIndex(
-                  (b) => b.id === item.id,
-                );
-                const colorIndex =
-                  stableIndex >= 0 ? stableIndex : breakdownIndex;
-                return (
+                <XAxis
+                  {...xAxisProps}
+                  allowDuplicatedCategory={false}
+                  dataKey="id"
+                  domain={undefined}
+                  interval="preserveStartEnd"
+                  scale="auto"
+                  tick={
+                    <FunnelXAxisTick
+                      compact={hasBreakdowns}
+                      steps={steps}
+                      totalSteps={steps.length}
+                    />
+                  }
+                  tickFormatter={undefined}
+                  tickMargin={4}
+                  tickSize={0}
+                  type={'category'}
+                />
+                <YAxis {...yAxisProps} />
+                {hasBreakdowns &&
+                  visibleBreakdowns.map((item, breakdownIndex) => {
+                    const stableIndex = data.current.findIndex(
+                      (b) => b.id === item.id,
+                    );
+                    const colorIndex =
+                      stableIndex >= 0 ? stableIndex : breakdownIndex;
+                    return (
+                      <Bar
+                        dataKey={`step:percent:${breakdownIndex}`}
+                        key={`step:percent:${item.id}`}
+                        shape={
+                          <FunnelBreakdownBarShape
+                            showLabel={showBreakdownPreviewLabels}
+                          />
+                        }
+                      >
+                        {rechartData.map((row, stepIndex) => (
+                          <Cell
+                            fill={getChartColor(colorIndex)}
+                            key={`${row.name}-${breakdownIndex}`}
+                            stroke={getChartColor(colorIndex)}
+                          />
+                        ))}
+                      </Bar>
+                    );
+                  })}
+                {!hasBreakdowns && (
                   <Bar
-                    dataKey={`step:percent:${breakdownIndex}`}
-                    key={`step:percent:${item.id}`}
-                    shape={
-                      <FunnelBreakdownBarShape
-                        showLabel={showBreakdownPreviewLabels}
-                      />
-                    }
+                    dataKey="step:percent:0"
+                    shape={<FunnelBarShape />}
                   >
-                    {rechartData.map((row, stepIndex) => (
+                    {rechartData.map((item, index) => (
                       <Cell
-                        fill={getChartColor(colorIndex)}
-                        key={`${row.name}-${breakdownIndex}`}
-                        stroke={getChartColor(colorIndex)}
+                        fill={getChartColor(0)}
+                        key={item.name}
+                        stroke={getChartColor(0)}
                       />
                     ))}
                   </Bar>
-                );
-              })}
-            {!hasBreakdowns && (
-              <Bar
-                dataKey="step:percent:0"
-                shape={<FunnelBarShape />}
-              >
-                {rechartData.map((item, index) => (
-                  <Cell
-                    fill={getChartColor(0)}
-                    key={item.name}
-                    stroke={getChartColor(0)}
-                  />
-                ))}
-              </Bar>
-            )}
-            {showPreviousBars && (
-              <Bar dataKey="prev_step:percent:0" shape={<StripedBarShape />}>
-                {rechartData.map((item, index) => (
-                  <Cell
-                    fill={getChartTranslucentColor(index)}
-                    key={`prev-${item.name}`}
-                    stroke={getChartColor(index)}
-                  />
-                ))}
-              </Bar>
-            )}
-            {hasVisibleBreakdowns && <Legend content={<CustomLegend />} />}
-            {showPreviousBars && <Legend content={<PreviousLegend />} />}
-            <Tooltip shared={!hasBreakdowns} />
-          </BarChart>
-        </ResponsiveContainer>
+                )}
+                {showPreviousBars && (
+                  <Bar dataKey="prev_step:percent:0" shape={<StripedBarShape />}>
+                    {rechartData.map((item, index) => (
+                      <Cell
+                        fill={getChartTranslucentColor(index)}
+                        key={`prev-${item.name}`}
+                        stroke={getChartColor(index)}
+                      />
+                    ))}
+                  </Bar>
+                )}
+                {hasVisibleBreakdowns && <Legend content={<CustomLegend />} />}
+                {showPreviousBars && <Legend content={<PreviousLegend />} />}
+                <Tooltip shared={!hasBreakdowns} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
     </TooltipProvider>
   );
