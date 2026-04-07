@@ -153,11 +153,12 @@ function Component() {
                         map: Globe2Icon,
                         histogram: BarChart3Icon,
                         funnel: ConeIcon,
+                        funnel_metric: HashIcon,
                         area: AreaChartIcon,
                         retention: ChartScatterIcon,
                         conversion: TrendingUpIcon,
                         sankey: GitBranchIcon,
-                      }[report.chartType];
+                      }[report.chartType] ?? HashIcon;
 
                       return (
                         <div
