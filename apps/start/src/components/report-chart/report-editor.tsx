@@ -1,4 +1,10 @@
 import { ReportChart } from '@/components/report-chart';
+import {
+  clearReportDraft,
+  createReportDraftToken,
+  loadReportDraft,
+  saveReportDraft,
+} from '@/components/report-chart/report-draft';
 import { ReportChartType } from '@/components/report/ReportChartType';
 import { ReportInterval } from '@/components/report/ReportInterval';
 import { ReportLineType } from '@/components/report/ReportLineType';
@@ -10,6 +16,7 @@ import {
   changeEndDate,
   changeInterval,
   changeStartDate,
+  hydrateDraftReport,
   ready,
   reset,
   setReport,
@@ -24,7 +31,7 @@ import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { pushModal } from '@/modals';
 import { useDispatch, useSelector } from '@/redux';
 import { CodeIcon, GanttChartSquareIcon, Settings2Icon, ShareIcon } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { IServiceReport } from '@openpanel/db';
 import {
@@ -37,6 +44,7 @@ import {
 } from '@/components/ui/dialog';
 import { useTRPC } from '@/integrations/trpc/react';
 import { useQuery } from '@tanstack/react-query';
+import { useParams, useRouter, useSearch } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import EditReportName from '../report/edit-report-name';
 
@@ -315,14 +323,47 @@ export default function ReportEditor({
   report: initialReport,
 }: ReportEditorProps) {
   const { projectId } = useAppParams();
+  const { organizationId, reportId } = useParams({ strict: false });
+  const router = useRouter();
+  const search = useSearch({
+    from: '/_app/$organizationId/$projectId/reports_/$reportId',
+    shouldThrow: false,
+  });
   const { isAboveLg } = useBreakpoint('lg');
   const dispatch = useDispatch();
   const report = useSelector((state) => state.report);
+  const draftTokenRef = useRef<string | null>(search?.draft ?? null);
 
   // Set report if reportId exists
   useEffect(() => {
     if (initialReport) {
-      dispatch(setReport(initialReport));
+      const draftToken = search?.draft;
+      const draft =
+        draftToken && initialReport.id
+          ? loadReportDraft(draftToken)
+          : null;
+
+      if (draft && draft.reportId === initialReport.id) {
+        dispatch(hydrateDraftReport(draft.report));
+      } else {
+        if (draftToken && organizationId && projectId) {
+          clearReportDraft(draftToken);
+          void router.navigate({
+            to: '/$organizationId/$projectId/reports/$reportId',
+            params: {
+              organizationId,
+              projectId,
+              reportId: initialReport.id,
+            },
+            search: {
+              ...(search ?? {}),
+              draft: undefined,
+            },
+            replace: true,
+          });
+        }
+        dispatch(setReport(initialReport));
+      }
     } else {
       dispatch(ready());
     }
@@ -330,7 +371,70 @@ export default function ReportEditor({
     return () => {
       dispatch(reset());
     };
-  }, [initialReport, dispatch]);
+  }, [dispatch, initialReport, organizationId, projectId, router]);
+
+  useEffect(() => {
+    draftTokenRef.current = search?.draft ?? null;
+  }, [search?.draft]);
+
+  useEffect(() => {
+    if (!reportId || !organizationId || !projectId || !report.ready || !report.dirty) {
+      return;
+    }
+
+    let token = draftTokenRef.current;
+    if (!token) {
+      token = createReportDraftToken();
+      draftTokenRef.current = token;
+
+      void router.navigate({
+        to: '/$organizationId/$projectId/reports/$reportId',
+        params: {
+          organizationId,
+          projectId,
+          reportId,
+        },
+        search: {
+          ...(search ?? {}),
+          draft: token,
+        },
+        replace: true,
+      });
+    }
+
+    saveReportDraft(token, {
+      reportId,
+      report: {
+        projectId: report.projectId,
+        name: report.name,
+        chartType: report.chartType,
+        lineType: report.lineType,
+        interval: report.interval,
+        breakdowns: report.breakdowns,
+        series: report.series,
+        range: report.range,
+        startDate: report.startDate,
+        endDate: report.endDate,
+        previous: report.previous,
+        formula: report.formula,
+        unit: report.unit,
+        metric: report.metric,
+        limit: report.limit,
+        options: report.options,
+        dateConfig: report.dateConfig,
+      },
+      updatedAt: new Date().toISOString(),
+    });
+  }, [
+    organizationId,
+    projectId,
+    report,
+    report.ready,
+    report.dirty,
+    reportId,
+    router,
+    search,
+  ]);
 
   return (
     <Sheet>

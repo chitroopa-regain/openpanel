@@ -88,6 +88,20 @@ export const reportSlice = createSlice({
         ready: true,
       };
     },
+    hydrateDraftReport(state, action: PayloadAction<IReport>) {
+      const hasFreqDist = action.payload.series.some(
+        (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
+      );
+      return {
+        ...state,
+        ...action.payload,
+        breakdowns: hasFreqDist ? [] : action.payload.breakdowns,
+        startDate: action.payload.startDate ?? null,
+        endDate: action.payload.endDate ?? null,
+        dirty: true,
+        ready: true,
+      };
+    },
     setName(state, action: PayloadAction<string>) {
       state.dirty = true;
       state.name = action.payload;
@@ -495,6 +509,7 @@ export const {
   reset,
   ready,
   setReport,
+  hydrateDraftReport,
   setName,
   addSerie,
   removeEvent,
