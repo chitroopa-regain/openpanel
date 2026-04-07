@@ -254,7 +254,7 @@ export class OverviewService {
     }
   ): ReturnType<typeof clix> {
     if (!this.isPageFilter(params.filters)) {
-      query.rawWhere(this.getRawWhereClause('sessions', params.filters, projectId));
+      query.rawWhere(this.getRawWhereClause('sessions', params.filters, params.projectId));
       return query;
     }
 
