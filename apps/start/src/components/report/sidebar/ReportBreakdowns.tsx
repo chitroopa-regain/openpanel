@@ -1,11 +1,13 @@
 import { ColorSquare } from '@/components/color-square';
-import { Combobox } from '@/components/ui/combobox';
-import { useAppParams } from '@/hooks/use-app-params';
-import { useEventProperties } from '@/hooks/use-event-properties';
 import { useDispatch, useSelector } from '@/redux';
 import { ChevronsUpDownIcon, SplitIcon } from 'lucide-react';
 
-import type { IChartBreakdown } from '@openpanel/validation';
+import type {
+  IChartBreakdown,
+  IChartCustomEvent,
+  IChartEvent,
+  IChartEventItem,
+} from '@openpanel/validation';
 
 import { Button } from '@/components/ui/button';
 import { addBreakdown, changeBreakdown, removeBreakdown } from '../reportSlice';
@@ -15,7 +17,21 @@ import type { ReportEventMoreProps } from './ReportEventMore';
 
 export function ReportBreakdowns() {
   const selectedBreakdowns = useSelector((state) => state.report.breakdowns);
+  const chartType = useSelector((state) => state.report.chartType);
+  const options = useSelector((state) => state.report.options);
+  const series = useSelector((state) => state.report.series);
   const dispatch = useDispatch();
+
+  const scopedBreakdownSource =
+    (chartType === 'funnel' || chartType === 'funnel_metric') &&
+    options?.type === 'funnel' &&
+    options.breakdownStep !== undefined &&
+    options.breakdownStep >= 0 &&
+    options.breakdownStep < series.length
+      ? series[options.breakdownStep]
+      : undefined;
+
+  const scopedBreakdownProps = getScopedBreakdownProps(scopedBreakdownSource);
 
   const handleMore = (breakdown: IChartBreakdown) => {
     const callback: ReportEventMoreProps['onClick'] = (action) => {
@@ -39,6 +55,7 @@ export function ReportBreakdowns() {
               <div className="flex items-center gap-2 p-2 px-4">
                 <ColorSquare>{index}</ColorSquare>
                 <PropertiesCombobox
+                  {...scopedBreakdownProps}
                   onSelect={(action) => {
                     dispatch(
                       changeBreakdown({
@@ -71,6 +88,7 @@ export function ReportBreakdowns() {
         })}
 
         <PropertiesCombobox
+          {...scopedBreakdownProps}
           onSelect={(action) => {
             dispatch(
               addBreakdown({
@@ -98,4 +116,25 @@ export function ReportBreakdowns() {
       </div>
     </div>
   );
+}
+
+function getScopedBreakdownProps(
+  source?: IChartEventItem,
+): {
+  event?: IChartEvent;
+  customEventId?: string;
+} {
+  if (!source || source.type === 'formula') {
+    return {};
+  }
+
+  if (source.type === 'custom_event') {
+    return {
+      customEventId: (source as IChartCustomEvent).customEventId,
+    };
+  }
+
+  return {
+    event: source as IChartEvent,
+  };
 }
