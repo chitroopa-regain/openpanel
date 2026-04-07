@@ -9,6 +9,7 @@ import type { ReportChartProps } from './context';
 import { ReportChartProvider } from './context';
 import { ReportConversionChart } from './conversion';
 import { ReportFunnelChart } from './funnel';
+import { ReportFunnelMetricChart } from './funnel-metric';
 import { ReportHistogramChart } from './histogram';
 import { ReportLineChart } from './line';
 import { ReportMapChart } from './map';
@@ -54,6 +55,8 @@ export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
         return <ReportMetricChart />;
       case 'funnel':
         return <ReportFunnelChart />;
+      case 'funnel_metric':
+        return <ReportFunnelMetricChart />;
       case 'retention':
         return <ReportRetentionChart />;
       case 'conversion':

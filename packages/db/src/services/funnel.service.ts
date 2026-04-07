@@ -877,6 +877,182 @@ export class FunnelService {
 
     return result;
   }
+
+  /**
+   * Compute the SUM of a numeric property for entities that completed the
+   * entire funnel. Uses chained CTEs (same pattern as getFunnelTimingStats)
+   * to pin the exact last-step timestamp per entity, then extracts the
+   * property value at that timestamp.
+   *
+   * Returns a Map keyed by breakdown identity (or 'none' if no breakdowns).
+   */
+  async getFunnelPropertySums({
+    projectId,
+    startDate,
+    endDate,
+    stepConditions,
+    funnelWindowSeconds,
+    groupBy,
+    allEventNames,
+    propertyKey,
+    breakdowns = [],
+    breakdownStep,
+  }: {
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    stepConditions: string[];
+    funnelWindowSeconds: number;
+    groupBy: 'session_id' | 'profile_id';
+    allEventNames: string[];
+    propertyKey: string;
+    breakdowns?: { name: string }[];
+    breakdownStep?: number;
+  }): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (stepConditions.length < 1) {
+      return result;
+    }
+
+    const entityKey = groupBy;
+    const nameList = allEventNames
+      .map((n) => sqlstring.escape(n))
+      .join(', ');
+    const identifiedFilter =
+      groupBy === 'profile_id' ? 'AND profile_id != device_id' : '';
+
+    const ctes: string[] = [];
+    const lastStepIdx = stepConditions.length; // 1-based
+    const hasBreakdowns = breakdowns.length > 0;
+
+    // Step 1 CTE
+    ctes.push(`step_1 AS (
+      SELECT ${entityKey},
+        min(created_at) as step_1_ts
+      FROM ${TABLE_NAMES.events}
+      WHERE project_id = ${sqlstring.escape(projectId)}
+        AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+        AND name IN (${nameList})
+        ${identifiedFilter}
+        AND (${stepConditions[0]})
+      GROUP BY ${entityKey}
+    )`);
+
+    // Steps 2..N
+    for (let i = 1; i < stepConditions.length; i++) {
+      const prevCte = `step_${i}`;
+      const currCte = `step_${i + 1}`;
+      ctes.push(`${currCte} AS (
+        SELECT prev.${entityKey} as ${entityKey},
+          min(e.created_at) as ${currCte}_ts
+        FROM ${prevCte} prev
+        JOIN ${TABLE_NAMES.events} e ON e.${entityKey} = prev.${entityKey}
+        JOIN step_1 s1 ON s1.${entityKey} = prev.${entityKey}
+        WHERE e.project_id = ${sqlstring.escape(projectId)}
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.name IN (${nameList})
+          ${groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : ''}
+          AND (${stepConditions[i]})
+          AND e.created_at > prev.${prevCte}_ts
+          AND dateDiff('second', s1.step_1_ts, e.created_at) <= ${funnelWindowSeconds}
+        GROUP BY prev.${entityKey}
+      )`);
+    }
+
+    // Breakdown CTE (same pattern as timing)
+    if (hasBreakdowns) {
+      const bdStepIdx = breakdownStep ?? 0;
+      const bdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+
+      let bdExprs: string[];
+      let bdGroup: string[];
+      if (breakdownStep !== undefined) {
+        bdExprs = breakdowns.map(
+          (b, i) =>
+            `argMaxIf(${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)}, created_at, ${bdStepCondition}) as b_${i}`,
+        );
+        bdGroup = [];
+      } else {
+        bdExprs = breakdowns.map(
+          (b, i) =>
+            `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${i}`,
+        );
+        bdGroup = breakdowns.map((_, i) => `b_${i}`);
+      }
+
+      ctes.push(`prop_bd AS (
+        SELECT ${entityKey}
+          ${bdExprs.length > 0 ? `, ${bdExprs.join(', ')}` : ''}
+        FROM ${TABLE_NAMES.events}
+        WHERE project_id = ${sqlstring.escape(projectId)}
+          AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND name IN (${nameList})
+          ${identifiedFilter}
+        GROUP BY ${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
+      )`);
+    }
+
+    // Property extraction CTE: get the property value at the last step timestamp
+    const lastStepCte = `step_${lastStepIdx}`;
+    const lastStepCondition = stepConditions[stepConditions.length - 1]!;
+    const propExpr = getSelectPropertyKey(propertyKey);
+
+    ctes.push(`prop_vals AS (
+      SELECT ls.${entityKey} as ${entityKey},
+        anyIf(
+          toFloat64OrNull(toString(e.${propExpr})),
+          e.created_at = ls.${lastStepCte}_ts AND (${lastStepCondition})
+        ) as prop_value
+      FROM ${lastStepCte} ls
+      JOIN ${TABLE_NAMES.events} e ON e.${entityKey} = ls.${entityKey}
+      WHERE e.project_id = ${sqlstring.escape(projectId)}
+        AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+        AND e.name IN (${nameList})
+        ${groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : ''}
+      GROUP BY ls.${entityKey}
+    )`);
+
+    // Final aggregation
+    const joins: string[] = [];
+    let bdSelectsInFinal = '';
+    let bdGroupByInFinal = '';
+
+    if (hasBreakdowns) {
+      joins.push(
+        `LEFT JOIN prop_bd bd ON pv.${entityKey} = bd.${entityKey}`,
+      );
+      bdSelectsInFinal =
+        breakdowns.map((_, i) => `bd.b_${i}`).join(', ') + ',';
+      bdGroupByInFinal =
+        `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`;
+    }
+
+    const sql = `
+      WITH ${ctes.join(',\n')}
+      SELECT
+        ${bdSelectsInFinal}
+        sum(pv.prop_value) as total_sum
+      FROM prop_vals pv
+      ${joins.join('\n')}
+      ${bdGroupByInFinal}
+    `;
+
+    const rows = await chQuery<Record<string, any>>(sql);
+
+    if (breakdowns.length === 0) {
+      const val = rows[0]?.total_sum;
+      result.set('none', typeof val === 'number' ? val : 0);
+    } else {
+      for (const row of rows) {
+        const key = breakdowns
+          .map((_, i) => normalizeBreakdownValue(row[`b_${i}`]))
+          .join('|');
+        result.set(key, typeof row.total_sum === 'number' ? row.total_sum : 0);
+      }
+    }
+
+    return result;
+  }
 }
 
 export const funnelService = new FunnelService(ch);

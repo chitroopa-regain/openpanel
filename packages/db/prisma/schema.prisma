@@ -285,6 +285,7 @@ enum ChartType {
   area
   map
   funnel
+  funnel_metric
   retention
   conversion
   sankey

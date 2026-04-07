@@ -8,10 +8,12 @@ import { Switch } from '@/components/ui/switch';
 import { useAppParams } from '@/hooks/use-app-params';
 import { useEventNames } from '@/hooks/use-event-names';
 import { useMemo } from 'react';
+import { useEventProperties } from '@/hooks/use-event-properties';
 import {
   changeCriteria,
   changeFunnelBreakdownStep,
   changeFunnelGroup,
+  changeFunnelProperty,
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changePrevious,
@@ -37,6 +39,7 @@ export function ReportSettings() {
   const funnelWindow = funnelOptions?.funnelWindow;
   const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
   const breakdownStep = funnelOptions?.breakdownStep;
+  const funnelProperty = funnelOptions?.funnelProperty;
   const seriesCount = useSelector((state) => state.report.series.length);
 
   const histogramOptions = options?.type === 'histogram' ? options : undefined;
@@ -45,6 +48,23 @@ export function ReportSettings() {
   const dispatch = useDispatch();
   const { projectId } = useAppParams();
   const eventNames = useEventNames({ projectId });
+  // For funnel_metric, scope properties to the last funnel step event
+  const series = useSelector((state) => state.report.series);
+  const lastSeriesEvent = series.length > 0 ? series[series.length - 1] : null;
+  const lastEventName = lastSeriesEvent && 'name' in lastSeriesEvent ? lastSeriesEvent.name : undefined;
+  const lastCustomEventId = lastSeriesEvent && 'customEventId' in lastSeriesEvent ? lastSeriesEvent.customEventId : undefined;
+  const hasLastStep = !!(lastEventName || lastCustomEventId);
+  const eventProperties = useEventProperties(
+    { projectId, event: lastEventName, customEventId: lastCustomEventId },
+    { enabled: chartType === 'funnel_metric' && hasLastStep },
+  );
+  const propertyItems = useMemo(
+    () =>
+      eventProperties
+        .filter((p) => p.startsWith('properties.'))
+        .map((p) => ({ label: p.replace('properties.', ''), value: p })),
+    [eventProperties],
+  );
 
   const fields = useMemo(() => {
     const fields = [];
@@ -58,13 +78,17 @@ export function ReportSettings() {
       fields.push('unit');
     }
 
-    if (chartType === 'funnel' || chartType === 'conversion') {
+    if (chartType === 'funnel' || chartType === 'funnel_metric' || chartType === 'conversion') {
       fields.push('funnelGroup');
       fields.push('funnelWindow');
     }
 
-    if (chartType === 'funnel') {
+    if (chartType === 'funnel' || chartType === 'funnel_metric') {
       fields.push('breakdownStep');
+    }
+
+    if (chartType === 'funnel_metric') {
+      fields.push('funnelProperty');
     }
 
     if (chartType === 'sankey') {
@@ -250,6 +274,23 @@ export function ReportSettings() {
                   value: String(i),
                 })),
               ]}
+            />
+          </div>
+        )}
+        {fields.includes('funnelProperty') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="whitespace-nowrap font-medium mb-0">
+              Sum Property
+            </Label>
+            <Combobox
+              align="end"
+              searchable
+              placeholder="Select property"
+              value={funnelProperty || ''}
+              onChange={(val) => {
+                dispatch(changeFunnelProperty(val || undefined));
+              }}
+              items={propertyItems}
             />
           </div>
         )}

@@ -10,6 +10,7 @@ import {
   LineChartIcon,
   type LucideIcon,
   PieChartIcon,
+  SigmaIcon,
   TrendingUpIcon,
   UsersIcon,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ export function ReportChartType({
     funnel: ((props) => (
       <ConeIcon className={cn('rotate-180', props.className)} />
     )) as LucideIcon,
+    funnel_metric: SigmaIcon,
     histogram: ChartColumnIncreasingIcon,
     linear: LineChartIcon,
     metric: GaugeIcon,

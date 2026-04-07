@@ -361,6 +361,21 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeFunnelProperty(
+      state,
+      action: PayloadAction<string | undefined>,
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'funnel') {
+        state.options = {
+          type: 'funnel',
+          funnelProperty: action.payload,
+        };
+      } else {
+        state.options.funnelProperty = action.payload;
+      }
+    },
+
     changeDateConfig(
       state,
       action: PayloadAction<IDateConfig | undefined>,
@@ -503,6 +518,7 @@ export const {
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changeFunnelTopN,
+  changeFunnelProperty,
   changeDateConfig,
   changeFunnelBreakdownStep,
   changeOptions,

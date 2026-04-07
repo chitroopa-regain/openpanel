@@ -178,6 +178,8 @@ export const zFunnelOptions = z.object({
   breakdownStep: z.number().int().nonnegative().optional(),
   /** Number of top breakdown rows to show in chart. undefined = 10. */
   topN: z.number().int().positive().optional(),
+  /** Property to sum for funnel_metric chart type (e.g. 'properties.value_inr') */
+  funnelProperty: z.string().optional(),
 });
 
 export const zRetentionOptions = z.object({

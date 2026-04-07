@@ -541,6 +541,97 @@ export const chartRouter = createTRPCRouter({
           : Promise.resolve(null),
       ]);
 
+      // Funnel Metric: compute property sums for the last step
+      const funnelOptions =
+        chartInput.options?.type === 'funnel' ? chartInput.options : undefined;
+      if (
+        chartInput.chartType === 'funnel_metric' &&
+        funnelOptions?.funnelProperty
+      ) {
+        const eventSeries = await resolveSeriesForFunnel(
+          chartInput.series,
+          chartInput.projectId,
+        );
+        const allEventNames = uniq(
+          eventSeries.flatMap((e: any) =>
+            e.customEventComponents
+              ? e.customEventComponents.map((c: any) => c.eventName)
+              : [e.name],
+          ),
+        );
+        const stepConditions = funnelService.getFunnelConditions(
+          eventSeries,
+          chartInput.projectId,
+        );
+
+        const funnelWindowUnit = funnelOptions.funnelWindowUnit ?? 'hour';
+        const unitMultipliers: Record<string, number> = {
+          second: 1,
+          minute: 60,
+          hour: 3600,
+          day: 86400,
+          week: 604800,
+          month: 2592000,
+        };
+        const defaultWindowByUnit: Record<string, number> = {
+          second: 86400,
+          minute: 1440,
+          hour: 24,
+          day: 1,
+          week: 1,
+          month: 1,
+        };
+        const funnelWindow =
+          funnelOptions.funnelWindow ??
+          (defaultWindowByUnit[funnelWindowUnit] ?? 24);
+        const funnelWindowSeconds =
+          funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
+        const group = funnelService.getFunnelGroup(funnelOptions.funnelGroup);
+
+        const [currentSums, previousSums] = await Promise.all([
+          funnelService.getFunnelPropertySums({
+            projectId: chartInput.projectId,
+            startDate: currentPeriod.startDate!,
+            endDate: currentPeriod.endDate!,
+            stepConditions,
+            funnelWindowSeconds,
+            groupBy: group,
+            allEventNames,
+            propertyKey: funnelOptions.funnelProperty,
+            breakdowns: chartInput.breakdowns,
+            breakdownStep: funnelOptions.breakdownStep,
+          }),
+          previous
+            ? funnelService.getFunnelPropertySums({
+                projectId: chartInput.projectId,
+                startDate: previousPeriod.startDate!,
+                endDate: previousPeriod.endDate!,
+                stepConditions,
+                funnelWindowSeconds,
+                groupBy: group,
+                allEventNames,
+                propertyKey: funnelOptions.funnelProperty,
+                breakdowns: chartInput.breakdowns,
+                breakdownStep: funnelOptions.breakdownStep,
+              })
+            : Promise.resolve(null),
+        ]);
+
+        // Attach propertySum to the last step of each series
+        for (const series of current.data) {
+          const key = series.id === 'none' ? 'none' : series.id;
+          const sum = currentSums.get(key) ?? 0;
+          (series.lastStep as any).propertySum = sum;
+        }
+        if (previous) {
+          for (const series of previous.data) {
+            const key = series.id === 'none' ? 'none' : series.id;
+            const sum = previousSums?.get(key) ?? 0;
+            (series.lastStep as any).propertySum = sum;
+          }
+        }
+      }
+
       return {
         current: current.data,
         previous: previous?.data ?? null,

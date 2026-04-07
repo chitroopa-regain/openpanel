@@ -106,7 +106,7 @@ export function ReportSeries() {
   const [editingCustomEvent, setEditingCustomEvent] =
     React.useState<IChartCustomEvent | null>(null);
 
-  const showSegment = !['retention', 'funnel', 'sankey'].includes(chartType);
+  const showSegment = !['retention', 'funnel', 'funnel_metric', 'sankey'].includes(chartType);
   const showAddFilter = !['sankey'].includes(chartType);
   const showDisplayNameInput = !['retention', 'sankey'].includes(chartType);
   const options = useSelector((state) => state.report.options);
@@ -205,6 +205,7 @@ export function ReportSeries() {
   const showFormula =
     chartType !== 'conversion' &&
     chartType !== 'funnel' &&
+    chartType !== 'funnel_metric' &&
     chartType !== 'retention' &&
     chartType !== 'sankey';
 

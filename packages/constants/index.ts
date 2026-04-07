@@ -104,6 +104,7 @@ export const chartTypes = {
   area: 'Area',
   map: 'Map',
   funnel: 'Funnel',
+  funnel_metric: 'Funnel Metric',
   retention: 'Retention',
   conversion: 'Conversion',
   sankey: 'Sankey',
