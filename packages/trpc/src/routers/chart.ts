@@ -51,6 +51,10 @@ import {
   differenceInWeeks,
   formatISO,
 } from 'date-fns';
+import {
+  getConcreteEventNameWhereClause,
+  getRetentionReturnEventWhereClause,
+} from './chart-retention.utils';
 import { getProjectAccess } from '../access';
 import { TRPCAccessError } from '../errors';
 import {
@@ -877,13 +881,6 @@ export const chartRouter = createTRPCRouter({
         )
         .join(',\n');
 
-      const whereEventNameIs = (event: string[]) => {
-        if (event.length === 1) {
-          return `name = ${sqlstring.escape(event[0])}`;
-        }
-        return `name IN (${event.map((e) => sqlstring.escape(e)).join(',')})`;
-      };
-
       // Determine which table to use: events table when any non-profile
       // filter is present (cohort_events_mv only has project_id, name,
       // created_at, profile_id, event_count — no properties/path/country/etc).
@@ -947,12 +944,12 @@ export const chartRouter = createTRPCRouter({
       // Outer series-level filters (firstEventWhere) are always applied on top.
       const firstWhereClause = firstEventCustomWhere
         ? `${firstEventCustomWhere}`
-        : `${whereEventNameIs(firstEvent)}`;
+        : `${getConcreteEventNameWhereClause(firstEvent)}`;
       const firstFilterClause = firstEventWhere;
 
       const secondWhereClause = secondEventCustomWhere
         ? `${secondEventCustomWhere}`
-        : `${whereEventNameIs(secondEvent)}`;
+        : `${getRetentionReturnEventWhereClause(secondEvent)}`;
       const secondFilterClause = secondEventWhere;
 
       const cohortQuery = `
