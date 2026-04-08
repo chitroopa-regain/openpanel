@@ -266,7 +266,7 @@ function Component() {
             items={[
               {
                 label: project?.name ?? projectId,
-                to: '/$organizationId/$projectId',
+                to: '/$organizationId/$projectId/dashboards',
                 params: {
                   organizationId,
                   projectId,

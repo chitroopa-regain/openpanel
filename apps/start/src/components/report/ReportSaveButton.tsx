@@ -29,12 +29,45 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
     useIsFetching(trpc.chart.cohort.pathFilter()),
   ];
   const { reportId } = useParams({ strict: false });
-  const search = useSearch({
+  const savedReportSearch = useSearch({
     from: '/_app/$organizationId/$projectId/reports_/$reportId',
     shouldThrow: false,
   });
+  const newReportSearch = useSearch({
+    from: '/_app/$organizationId/$projectId/reports',
+    shouldThrow: false,
+  });
+  const search = savedReportSearch ?? newReportSearch;
   const dispatch = useDispatch();
   const queryClient = useQueryClient();
+  const create = useMutation(
+    trpc.report.create.mutationOptions({
+      onSuccess(res) {
+        toast('Success', {
+          description: 'Report created.',
+        });
+        queryClient.invalidateQueries(
+          trpc.report.list.queryFilter({
+            dashboardId: res.dashboardId,
+            projectId: res.projectId,
+          }),
+        );
+        queryClient.invalidateQueries(trpc.dashboard.list.pathFilter());
+        void router.navigate({
+          to: '/$organizationId/$projectId/reports/$reportId',
+          params: {
+            organizationId,
+            projectId,
+            reportId: res.id,
+          },
+          search: search?.dashboardId
+            ? { dashboardId: search.dashboardId }
+            : undefined,
+        });
+      },
+      onError: handleError,
+    }),
+  );
   const update = useMutation(
     trpc.report.update.mutationOptions({
       onSuccess(res) {
@@ -74,7 +107,8 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
     }),
   );
   const report = useSelector((state) => state.report);
-  const isLoading = update.isPending || fetching.some((f) => f !== 0);
+  const isLoading =
+    create.isPending || update.isPending || fetching.some((f) => f !== 0);
 
   if (reportId && organizationId && projectId) {
     return (
@@ -95,16 +129,27 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
     );
   }
   return (
-    <Button
-      className={className}
-      disabled={!report.dirty}
-      onClick={() => {
-        pushModal('SaveReport', {
-          report,
-        });
-      }}
-      icon={SaveIcon}
-      loading={isLoading}
+      <Button
+        className={className}
+        disabled={!report.dirty}
+        onClick={() => {
+          if (search?.dashboardId) {
+            create.mutate({
+              dashboardId: search.dashboardId,
+              report: {
+                ...report,
+                name: report.name || 'Untitled report',
+              },
+            });
+            return;
+          }
+
+          pushModal('SaveReport', {
+            report,
+          });
+        }}
+        icon={SaveIcon}
+        loading={isLoading}
     >
       Save
     </Button>

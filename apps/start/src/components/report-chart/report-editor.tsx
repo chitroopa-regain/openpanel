@@ -326,10 +326,15 @@ export default function ReportEditor({
   const { organizationId, projectId } = useAppParams();
   const { reportId } = useParams({ strict: false });
   const router = useRouter();
-  const search = useSearch({
+  const savedReportSearch = useSearch({
     from: '/_app/$organizationId/$projectId/reports_/$reportId',
     shouldThrow: false,
   });
+  const newReportSearch = useSearch({
+    from: '/_app/$organizationId/$projectId/reports',
+    shouldThrow: false,
+  });
+  const search = savedReportSearch ?? newReportSearch;
   const { isAboveLg } = useBreakpoint('lg');
   const dispatch = useDispatch();
   const report = useSelector((state) => state.report);
@@ -462,7 +467,7 @@ export default function ReportEditor({
   const breadcrumbItems: BreadcrumbItem[] = [
     {
       label: projectQuery.data?.name ?? projectId,
-      to: '/$organizationId/$projectId',
+      to: '/$organizationId/$projectId/dashboards',
       params: {
         organizationId,
         projectId,
