@@ -46,6 +46,26 @@ export function Chart({ data }: Props) {
     sum: averageRow?.sum,
   }));
 
+  // Compute nice Y-axis ticks: pick a step size, generate explicit ticks
+  const dataMax = Math.max(...(rechartData?.map((d) => d.percentage) ?? [0]));
+  const niceTicks = (max: number): number[] => {
+    if (max <= 0) return isPercentage ? [0, 0.5, 1] : [0, 5, 10];
+    const steps = isPercentage
+      ? [0.25, 0.5, 1, 2, 5, 10, 20, 25, 50]
+      : [1, 2, 5, 10, 20, 50, 100, 200, 500];
+    for (const step of steps) {
+      const top = Math.ceil(max / step) * step;
+      if (top >= max * 1.05) {
+        const ticks: number[] = [];
+        for (let v = 0; v <= top; v += step) ticks.push(v);
+        if (ticks.length >= 3 && ticks.length <= 8) return ticks;
+      }
+    }
+    return [0, Math.ceil(max)];
+  };
+  const yTicks = niceTicks(dataMax);
+  const yMax = yTicks[yTicks.length - 1] ?? 100;
+
   return (
     <>
       <div className={cn('h-full w-full', isEditMode && 'card p-4')}>
@@ -57,7 +77,7 @@ export function Chart({ data }: Props) {
               vertical={true}
               className="stroke-border"
             />
-            <YAxis {...yAxisProps} domain={[0, 'auto']} allowDataOverflow={false} />
+            <YAxis {...yAxisProps} domain={[0, yMax]} ticks={yTicks} />
             <XAxis
               {...xAxisProps}
               dataKey="days"
