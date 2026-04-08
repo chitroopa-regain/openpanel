@@ -1450,7 +1450,13 @@ function processCohortData(
   if (startDate && endDate) {
     const existingDates = new Set(processed.map((r) => r.cohort_interval));
     let start = new Date(startDate.slice(0, 10));
-    const end = new Date(endDate.slice(0, 10));
+    // Handle endDate that spills into next day due to +1ms rounding
+    // e.g. "2026-04-09 00:00:00" should be treated as Apr 8, not Apr 9
+    let end = new Date(endDate.slice(0, 10));
+    const timeStr = endDate.length > 10 ? endDate.slice(11, 19) : '';
+    if (timeStr === '00:00:00') {
+      end.setUTCDate(end.getUTCDate() - 1);
+    }
 
     // Snap start to interval boundary (week = Sunday, month = 1st)
     if (interval === 'week') {
