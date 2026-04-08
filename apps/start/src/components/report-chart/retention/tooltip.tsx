@@ -10,9 +10,11 @@ type Props = {
 };
 export function RetentionTooltip({ active, payload }: Props) {
   const {
-    report: { interval },
+    report: { interval, unit },
   } = useReportChartContext();
   const number = useNumber();
+  const isPercentage = unit === '%';
+
   if (!active) {
     return null;
   }
@@ -29,15 +31,21 @@ export function RetentionTooltip({ active, payload }: Props) {
         {interval} {days}
       </h3>
       <div className="flex justify-between">
-        <span className="text-muted-foreground">Retention Rate:</span>
+        <span className="text-muted-foreground">
+          {isPercentage ? 'Retention Rate:' : 'Retained Users:'}
+        </span>
         <span className="font-medium">
-          {number.formatWithUnit(percentage / 100, '%')}
+          {isPercentage
+            ? number.formatWithUnit(percentage / 100, '%')
+            : number.format(percentage)}
         </span>
       </div>
-      <div className="flex justify-between">
-        <span className="text-muted-foreground">Retained Users:</span>
-        <span className="font-medium">{number.format(value)}</span>
-      </div>
+      {isPercentage && (
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Retained Users:</span>
+          <span className="font-medium">{number.format(value)}</span>
+        </div>
+      )}
       <div className="flex justify-between">
         <span className="text-muted-foreground">Total Users:</span>
         <span className="font-medium">{number.format(sum)}</span>

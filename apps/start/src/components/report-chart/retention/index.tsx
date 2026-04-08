@@ -63,6 +63,7 @@ export function ReportRetentionChart() {
         range: report.range,
         startDate: report.startDate,
         endDate: report.endDate,
+        dateConfig: report.dateConfig,
         criteria,
         interval: report.interval,
         shareId,

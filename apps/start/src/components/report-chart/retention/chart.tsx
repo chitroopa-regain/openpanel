@@ -23,24 +23,27 @@ interface Props {
 
 export function Chart({ data }: Props) {
   const {
-    report: { interval },
+    report: { interval, unit },
     isEditMode,
     options: { hideXAxis, hideYAxis },
   } = useReportChartContext();
+  const isPercentage = unit === '%';
 
   const xAxisProps = useXAxisProps({ interval, hide: hideXAxis });
   const yAxisProps = useYAxisProps({
     hide: hideYAxis,
-    tickFormatter: (value) => `${value}%`,
+    tickFormatter: isPercentage ? (value) => `${value}%` : undefined,
   });
   const averageRow = data[0];
-  const averageRetentionRate =
-    average(averageRow?.percentages || [], true) * 100;
-  const rechartData = averageRow?.percentages.map((item, index) => ({
+  const averageRetentionRate = isPercentage
+    ? average(averageRow?.percentages || [], true) * 100
+    : average(averageRow?.values || [], true);
+  const dataSource = isPercentage ? averageRow?.percentages : averageRow?.values;
+  const rechartData = dataSource?.map((item, index) => ({
     days: index,
-    percentage: item * 100,
-    value: averageRow.values?.[index],
-    sum: averageRow.sum,
+    percentage: isPercentage ? item * 100 : item,
+    value: averageRow?.values?.[index],
+    sum: averageRow?.sum,
   }));
 
   return (
@@ -54,7 +57,7 @@ export function Chart({ data }: Props) {
               vertical={true}
               className="stroke-border"
             />
-            <YAxis {...yAxisProps} dataKey="retentionRate" domain={[0, 100]} />
+            <YAxis {...yAxisProps} domain={isPercentage ? [0, 100] : [0, 'dataMax + 2']} allowDataOverflow={false} />
             <XAxis
               {...xAxisProps}
               dataKey="days"
@@ -87,7 +90,9 @@ export function Chart({ data }: Props) {
               strokeOpacity={0.5}
               strokeLinecap="round"
               label={{
-                value: `Average (${round(averageRetentionRate, 2)} %)`,
+                value: isPercentage
+                  ? `Average (${round(averageRetentionRate, 2)} %)`
+                  : `Average (${round(averageRetentionRate, 0)})`,
                 fill: getChartColor(1),
                 position: 'insideBottomRight',
                 fontSize: 12,

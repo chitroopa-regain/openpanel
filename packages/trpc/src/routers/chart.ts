@@ -948,13 +948,18 @@ export const chartRouter = createTRPCRouter({
         month: 'MONTH',
       }[interval];
 
-      const sqlToStartOf = {
-        minute: 'toDate',
-        hour: 'toDate',
-        day: 'toDate',
-        week: 'toStartOfWeek',
-        month: 'toStartOfMonth',
-      }[interval];
+      // toStartOfWeek/toStartOfMonth need DateTime input for timezone arg.
+      // When col is already a Date (e.g. event_date), cast to DateTime first.
+      const toStartOfInterval = (col: string) => {
+        switch (interval) {
+          case 'week':
+            return `toStartOfWeek(toDateTime(${col}), 0, '${timezone}')`;
+          case 'month':
+            return `toStartOfMonth(toDateTime(${col}), '${timezone}')`;
+          default:
+            return `toDate(${col}, '${timezone}')`;
+        }
+      };
 
       const countCriteria = criteria === 'on_or_after' ? '>=' : '=';
 
@@ -1049,7 +1054,7 @@ export const chartRouter = createTRPCRouter({
           SELECT
             profile_id AS userID,
             project_id,
-            ${sqlToStartOf}(created_at, '${timezone}') AS cohort_interval
+            ${toStartOfInterval('created_at')} AS cohort_interval
           FROM ${firstEventTable}
           ${firstEventJoin}
           WHERE ${firstWhereClause}
@@ -1077,7 +1082,7 @@ export const chartRouter = createTRPCRouter({
           SELECT
               f.cohort_interval,
               l.profile_id,
-              dateDiff('${sqlInterval}', f.cohort_interval, ${sqlToStartOf}(l.event_date, '${timezone}')) AS x_after_cohort
+              dateDiff('${sqlInterval}', f.cohort_interval, ${toStartOfInterval('l.event_date')}) AS x_after_cohort
           FROM cohort_users AS f
           INNER JOIN last_event AS l ON f.userID = l.profile_id
           WHERE (l.event_date >= f.cohort_interval)
@@ -1113,7 +1118,7 @@ export const chartRouter = createTRPCRouter({
       }>(cohortQuery);
 
       return {
-        data: processCohortData(cohortData, diffInterval),
+        data: processCohortData(cohortData, diffInterval, dates.startDate, dates.endDate, interval),
         queries: [cohortQuery],
         timezone,
       };
@@ -1422,12 +1427,11 @@ function processCohortData(
     total_first_event_count: number;
     [key: string]: any;
   }>,
-  diffInterval: number
+  diffInterval: number,
+  startDate?: string,
+  endDate?: string,
+  interval?: string,
 ) {
-  if (data.length === 0) {
-    return [];
-  }
-
   const processed = data.map((row) => {
     const sum = row.total_first_event_count;
     const values = range(0, diffInterval + 1).map(
@@ -1442,6 +1446,47 @@ function processCohortData(
     };
   });
 
+  // Fill in missing dates with zero rows
+  if (startDate && endDate) {
+    const existingDates = new Set(processed.map((r) => r.cohort_interval));
+    let start = new Date(startDate.slice(0, 10));
+    const end = new Date(endDate.slice(0, 10));
+
+    // Snap start to interval boundary (week = Sunday, month = 1st)
+    if (interval === 'week') {
+      const day = start.getUTCDay(); // 0=Sun, 6=Sat
+      start.setUTCDate(start.getUTCDate() - day); // snap to Sunday
+    } else if (interval === 'month') {
+      start.setUTCDate(1);
+    }
+    const zeroValues = Array(diffInterval + 1).fill(0) as number[];
+
+    for (let d = new Date(start); d <= end; ) {
+      const dateStr = d.toISOString().slice(0, 10);
+      if (!existingDates.has(dateStr)) {
+        processed.push({
+          cohort_interval: dateStr,
+          sum: 0,
+          values: [...zeroValues],
+          percentages: [...zeroValues],
+        });
+      }
+      // Increment by interval (use UTC setters consistently)
+      if (interval === 'week') {
+        d.setUTCDate(d.getUTCDate() + 7);
+      } else if (interval === 'month') {
+        d.setUTCMonth(d.getUTCMonth() + 1);
+      } else {
+        d.setUTCDate(d.getUTCDate() + 1);
+      }
+    }
+    processed.sort((a, b) => a.cohort_interval.localeCompare(b.cohort_interval));
+  }
+
+  if (processed.length === 0) {
+    return [];
+  }
+
   const averageData: {
     totalSum: number;
     values: Array<{ sum: number; weightedSum: number }>;
@@ -1455,8 +1500,11 @@ function processCohortData(
     })),
   };
 
-  // Aggregate data for weighted averages, excluding zeros
+  // Aggregate data for weighted averages, excluding zero-sum rows (synthetic gap-fill rows)
+  let nonZeroRowCount = 0;
   processed.forEach((row) => {
+    if (row.sum === 0) return; // skip synthetic zero rows
+    nonZeroRowCount++;
     averageData.totalSum += row.sum;
     row.values.forEach((value, index) => {
       if (value !== 0) {
@@ -1475,7 +1523,7 @@ function processCohortData(
   // Calculate weighted average values, excluding zeros
   const averageRow = {
     cohort_interval: 'Weighted Average',
-    sum: round(averageData.totalSum / processed.length, 0),
+    sum: nonZeroRowCount > 0 ? round(averageData.totalSum / nonZeroRowCount, 0) : 0,
     percentages: averageData.percentages.map(({ sum, weightedSum }) =>
       sum > 0 ? round(weightedSum / sum, 4) : 0
     ),

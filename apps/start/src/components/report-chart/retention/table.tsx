@@ -29,10 +29,11 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
         opacity: 0,
       };
 
+    const range = highestValue - lowestValue;
     const percentage = isPercentage
-      ? value / 100
-      : (value - lowestValue) / (highestValue - lowestValue);
-    const opacity = Math.max(0.05, percentage);
+      ? value
+      : range > 0 ? (value - lowestValue) / range : 0.5;
+    const opacity = Math.max(0.05, isNaN(percentage) ? 0 : percentage);
 
     return {
       backgroundClassName: 'bg-highlight dark:bg-emerald-700',
