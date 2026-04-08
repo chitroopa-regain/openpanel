@@ -57,7 +57,7 @@ export function Chart({ data }: Props) {
               vertical={true}
               className="stroke-border"
             />
-            <YAxis {...yAxisProps} domain={isPercentage ? [0, 100] : [0, 'dataMax + 2']} allowDataOverflow={false} />
+            <YAxis {...yAxisProps} domain={[0, 'auto']} allowDataOverflow={false} />
             <XAxis
               {...xAxisProps}
               dataKey="days"
