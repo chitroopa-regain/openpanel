@@ -35,6 +35,7 @@ export function ReportItem({
   report,
   organizationId,
   projectId,
+  dashboardId,
   range,
   startDate,
   endDate,
@@ -45,6 +46,7 @@ export function ReportItem({
   report: any;
   organizationId: string;
   projectId: string;
+  dashboardId?: string;
   range: any;
   startDate: any;
   endDate: any;
@@ -62,8 +64,11 @@ export function ReportItem({
           className="flex-1 cursor-pointer -m-4 p-4"
           onClick={(event) => {
             if (event.metaKey) {
+              const search = dashboardId
+                ? `?dashboardId=${encodeURIComponent(dashboardId)}`
+                : '';
               window.open(
-                `/${organizationId}/${projectId}/reports/${report.id}`,
+                `/${organizationId}/${projectId}/reports/${report.id}${search}`,
                 '_blank',
               );
               return;
@@ -75,6 +80,7 @@ export function ReportItem({
                 projectId,
                 reportId: report.id,
               },
+              search: dashboardId ? { dashboardId } : undefined,
             });
           }}
           onKeyUp={(e) => {
@@ -86,6 +92,7 @@ export function ReportItem({
                   projectId,
                   reportId: report.id,
                 },
+                search: dashboardId ? { dashboardId } : undefined,
               });
             }
           }}

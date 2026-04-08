@@ -25,6 +25,7 @@ import {
   useReportLayouts,
 } from '@/components/grafana-grid';
 import { PageContainer } from '@/components/page-container';
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 import { PageHeader } from '@/components/page-header';
 import {
   ReportItem,
@@ -96,6 +97,11 @@ function Component() {
       projectId,
     }),
   );
+  const projectQuery = useQuery(
+    trpc.project.getProjectWithClients.queryOptions({
+      projectId,
+    }),
+  );
 
   const dashboardDeletion = useMutation(
     trpc.dashboard.delete.mutationOptions({
@@ -116,6 +122,7 @@ function Component() {
 
   const reports = reportsQuery.data ?? [];
   const dashboard = dashboardQuery.data;
+  const project = projectQuery.data;
   const [isGridReady, setIsGridReady] = useState(false);
   const [enableTransitions, setEnableTransitions] = useState(false);
 
@@ -254,7 +261,23 @@ function Component() {
   return (
     <PageContainer>
       <PageHeader
-        title={dashboard.name}
+        title={
+          <PageBreadcrumbs
+            items={[
+              {
+                label: project?.name ?? projectId,
+                to: '/$organizationId/$projectId',
+                params: {
+                  organizationId,
+                  projectId,
+                },
+              },
+              {
+                label: dashboard.name,
+              },
+            ]}
+          />
+        }
         description="View and manage your reports"
         className="mb-4"
         actions={
@@ -263,6 +286,7 @@ function Component() {
             <LinkButton
               from={Route.fullPath}
               to={'/$organizationId/$projectId/reports'}
+              search={{ dashboardId }}
               icon={PlusIcon}
             >
               <span className="max-sm:hidden">Create report</span>
@@ -324,6 +348,7 @@ function Component() {
           <LinkButton
             from={Route.fullPath}
             to={'/$organizationId/$projectId/reports'}
+            search={{ dashboardId }}
             className="mt-14"
             icon={PlusIcon}
           >
@@ -355,6 +380,7 @@ function Component() {
                 report={report}
                 organizationId={organizationId}
                 projectId={projectId}
+                dashboardId={dashboardId}
                 range={null}
                 startDate={null}
                 endDate={null}

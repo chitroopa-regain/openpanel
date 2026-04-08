@@ -44,6 +44,7 @@ export default function SaveReport({
     shouldThrow: false,
   });
   const dashboardId = searchParams?.dashboardId;
+  const dashboardLocked = Boolean(dashboardId);
 
   const trpc = useTRPC();
   const save = useMutation(
@@ -117,19 +118,26 @@ export default function SaveReport({
           {...register('name')}
           defaultValue={report.name}
         />
-        <Controller
-          control={control}
-          name="dashboardId"
-          render={({ field }) => {
-            return (
-              <SelectDashboard
-                value={field.value}
-                onChange={field.onChange}
-                projectId={projectId!}
-              />
-            );
-          }}
-        />
+        {dashboardLocked ? (
+          <LockedDashboardContext
+            dashboardId={dashboardId!}
+            projectId={projectId!}
+          />
+        ) : (
+          <Controller
+            control={control}
+            name="dashboardId"
+            render={({ field }) => {
+              return (
+                <SelectDashboard
+                  value={field.value}
+                  onChange={field.onChange}
+                  projectId={projectId!}
+                />
+              );
+            }}
+          />
+        )}
         <ButtonContainer>
           <Button
             type="button"
@@ -145,6 +153,36 @@ export default function SaveReport({
         </ButtonContainer>
       </form>
     </ModalContent>
+  );
+}
+
+function LockedDashboardContext({
+  dashboardId,
+  projectId,
+}: {
+  dashboardId: string;
+  projectId: string;
+}) {
+  const trpc = useTRPC();
+  const dashboardQuery = useQuery(
+    trpc.dashboard.byId.queryOptions(
+      {
+        id: dashboardId,
+        projectId,
+      },
+      {
+        enabled: !!dashboardId && !!projectId,
+      },
+    ),
+  );
+
+  return (
+    <div className="space-y-2">
+      <Label>Dashboard</Label>
+      <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+        {dashboardQuery.data?.name ?? dashboardId}
+      </div>
+    </div>
   );
 }
 

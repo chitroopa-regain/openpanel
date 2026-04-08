@@ -22,6 +22,7 @@ import {
   setReport,
 } from '@/components/report/reportSlice';
 import { ReportSidebar } from '@/components/report/sidebar/ReportSidebar';
+import { PageBreadcrumbs, type BreadcrumbItem } from '@/components/page-breadcrumbs';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TimeWindowPicker } from '@/components/time-window-picker';
 import { Button } from '@/components/ui/button';
@@ -322,8 +323,8 @@ interface ReportEditorProps {
 export default function ReportEditor({
   report: initialReport,
 }: ReportEditorProps) {
-  const { projectId } = useAppParams();
-  const { organizationId, reportId } = useParams({ strict: false });
+  const { organizationId, projectId } = useAppParams();
+  const { reportId } = useParams({ strict: false });
   const router = useRouter();
   const search = useSearch({
     from: '/_app/$organizationId/$projectId/reports_/$reportId',
@@ -333,6 +334,28 @@ export default function ReportEditor({
   const dispatch = useDispatch();
   const report = useSelector((state) => state.report);
   const draftTokenRef = useRef<string | null>(search?.draft ?? null);
+  const trpc = useTRPC();
+  const projectQuery = useQuery(
+    trpc.project.getProjectWithClients.queryOptions(
+      { projectId },
+      {
+        enabled: !!projectId,
+        staleTime: 1000 * 60,
+      },
+    ),
+  );
+  const dashboardQuery = useQuery(
+    trpc.dashboard.byId.queryOptions(
+      {
+        id: search?.dashboardId ?? '',
+        projectId,
+      },
+      {
+        enabled: !!search?.dashboardId && !!projectId,
+        staleTime: 1000 * 60,
+      },
+    ),
+  );
 
   // Set report if reportId exists
   useEffect(() => {
@@ -436,11 +459,45 @@ export default function ReportEditor({
     search,
   ]);
 
+  const breadcrumbItems: BreadcrumbItem[] = [
+    {
+      label: projectQuery.data?.name ?? projectId,
+      to: '/$organizationId/$projectId',
+      params: {
+        organizationId,
+        projectId,
+      },
+    },
+  ];
+
+  if (search?.dashboardId && dashboardQuery.data) {
+    breadcrumbItems.push({
+      label: dashboardQuery.data.name,
+      to: '/$organizationId/$projectId/dashboards/$dashboardId',
+      params: {
+        organizationId,
+        projectId,
+        dashboardId: search.dashboardId,
+      },
+    });
+  }
+
+  breadcrumbItems.push({
+    label: report.name || 'New report',
+  });
+
   return (
     <Sheet>
       <div>
         <div className="p-4 flex items-center justify-between">
-          <EditReportName />
+          <div className="min-w-0">
+            <PageBreadcrumbs
+              items={breadcrumbItems}
+            />
+            <div className="mt-2">
+              <EditReportName />
+            </div>
+          </div>
           {initialReport?.id && (
             <Button
               variant="outline"
