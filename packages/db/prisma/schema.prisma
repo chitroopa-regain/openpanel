@@ -440,6 +440,8 @@ model EventMeta {
   icon       String?
   projectId  String
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  droppedAt  DateTime?
+  clearedAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt

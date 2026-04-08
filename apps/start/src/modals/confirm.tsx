@@ -9,6 +9,7 @@ export type ConfirmProps = {
   text: string;
   onConfirm: () => void;
   onCancel?: () => void;
+  confirmVariant?: 'default' | 'destructive' | 'outline' | 'secondary';
 };
 
 export default function Confirm({
@@ -16,11 +17,12 @@ export default function Confirm({
   text,
   onConfirm,
   onCancel,
+  confirmVariant,
 }: ConfirmProps) {
   return (
     <ModalContent>
       <ModalHeader title={title} />
-      <p className="text-lg -mt-2 leading-normal">{text}</p>
+      <p className="text-sm -mt-2 leading-normal text-muted-foreground">{text}</p>
       <ButtonContainer>
         <Button
           variant="outline"
@@ -32,6 +34,7 @@ export default function Confirm({
           Cancel
         </Button>
         <Button
+          variant={confirmVariant}
           onClick={() => {
             popModal('Confirm');
             onConfirm();

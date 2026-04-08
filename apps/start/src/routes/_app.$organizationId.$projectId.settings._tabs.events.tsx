@@ -1,8 +1,5 @@
-import FullPageLoadingState from '@/components/full-page-loading-state';
-import EditProjectFilters from '@/components/settings/edit-project-filters';
+import EventDropManager from '@/components/settings/event-drop-manager';
 import { useAppParams } from '@/hooks/use-app-params';
-import { useTRPC } from '@/integrations/trpc/react';
-import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 
 export const Route = createFileRoute(
@@ -13,18 +10,5 @@ export const Route = createFileRoute(
 
 function Component() {
   const { projectId } = useAppParams();
-  const trpc = useTRPC();
-  const query = useQuery(
-    trpc.project.getProjectWithClients.queryOptions({ projectId }),
-  );
-
-  if (query.isLoading) {
-    return <FullPageLoadingState />;
-  }
-
-  if (!query.data) {
-    return <div>Project not found</div>;
-  }
-
-  return <EditProjectFilters project={query.data} />;
+  return <EventDropManager projectId={projectId} />;
 }

@@ -6,9 +6,11 @@ import {
   type IServiceProfile,
   type IServiceSession,
   TABLE_NAMES,
+  addDroppedEvent,
   chQuery,
   convertClickhouseDateToJs,
   db,
+  deleteEventByName,
   eventService,
   getChartStartEndDate,
   getConversionEventNames,
@@ -16,6 +18,7 @@ import {
   getEventMetasCached,
   getSettingsForProject,
   pagesService,
+  removeDroppedEvent,
   sessionService,
 } from '@openpanel/db';
 import {
@@ -28,6 +31,8 @@ import { clone } from 'ramda';
 import { getProjectAccess } from '../access';
 import { TRPCAccessError } from '../errors';
 import { createTRPCRouter, protectedProcedure, publicProcedure } from '../trpc';
+
+const PROTECTED_EVENTS = ['session_start', 'session_end', 'screen_view'];
 
 export const eventRouter = createTRPCRouter({
   updateEventMeta: protectedProcedure
@@ -352,5 +357,107 @@ export const eventRouter = createTRPCRouter({
       );
 
       return res.filter((item) => item.origin && !item.origin.includes('localhost:'));
+    }),
+
+  dropEvent: protectedProcedure
+    .input(z.object({ projectId: z.string(), name: z.string() }))
+    .mutation(async ({ input: { projectId, name } }) => {
+      if (PROTECTED_EVENTS.includes(name)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Cannot drop protected system event: ${name}`,
+        });
+      }
+      // Redis first — enforcement takes effect immediately
+      try {
+        await addDroppedEvent(projectId, name);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `Failed to drop event: Redis is unavailable. Please try again.`,
+        });
+      }
+      let meta;
+      try {
+        meta = await db.eventMeta.upsert({
+          where: { name_projectId: { name, projectId } },
+          create: { projectId, name, droppedAt: new Date() },
+          update: { droppedAt: new Date() },
+        });
+      } catch (err) {
+        // Rollback Redis on DB failure
+        await removeDroppedEvent(projectId, name).catch(() => {});
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `Failed to drop event: database error. Please try again.`,
+        });
+      }
+      await getEventMetasCached.clear(projectId);
+      // Best-effort cleanup — fire and forget
+      deleteEventByName(projectId, name).catch((err) =>
+        console.error('ClickHouse cleanup failed for dropped event:', name, err)
+      );
+      return meta;
+    }),
+
+  undropEvent: protectedProcedure
+    .input(z.object({ projectId: z.string(), name: z.string() }))
+    .mutation(async ({ input: { projectId, name } }) => {
+      const existing = await db.eventMeta.findUnique({
+        where: { name_projectId: { name, projectId } },
+      });
+      if (!existing || !existing.droppedAt) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `Event '${name}' is not currently dropped`,
+        });
+      }
+      // Redis first — enforcement lifts immediately
+      try {
+        await removeDroppedEvent(projectId, name);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `Failed to undrop event: Redis is unavailable. Please try again.`,
+        });
+      }
+      let meta;
+      try {
+        meta = await db.eventMeta.update({
+          where: { name_projectId: { name, projectId } },
+          data: { droppedAt: null, clearedAt: null },
+        });
+      } catch (err) {
+        // Rollback Redis on DB failure
+        await addDroppedEvent(projectId, name).catch(() => {});
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `Failed to undrop event: database error. Please try again.`,
+        });
+      }
+      await getEventMetasCached.clear(projectId);
+      return meta;
+    }),
+
+  clearDroppedEvent: protectedProcedure
+    .input(z.object({ projectId: z.string(), name: z.string() }))
+    .mutation(async ({ input: { projectId, name } }) => {
+      const existing = await db.eventMeta.findUnique({
+        where: { name_projectId: { name, projectId } },
+      });
+      if (!existing || !existing.droppedAt) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Event '${name}' is not currently dropped`,
+        });
+      }
+      // Only stamp clearedAt after successful cleanup submission
+      await deleteEventByName(projectId, name);
+      await db.eventMeta.update({
+        where: { name_projectId: { name, projectId } },
+        data: { clearedAt: new Date() },
+      });
+      await getEventMetasCached.clear(projectId);
+      return { ok: true };
     }),
 });

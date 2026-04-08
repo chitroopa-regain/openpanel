@@ -222,9 +222,12 @@ export const chartRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
+        includeDropped: z.boolean().default(false),
       })
     )
-    .query(async ({ input: { projectId } }) => {
+    .query(async ({ input: { projectId, includeDropped } }) => {
+      const PROTECTED_EVENTS = ['session_start', 'session_end', 'screen_view'];
+
       const [events, meta, customEvents] = await Promise.all([
         chQuery<{ name: string; count: number }>(
           `SELECT name, count(name) as count FROM ${TABLE_NAMES.event_names_mv} WHERE project_id = ${sqlstring.escape(projectId)} GROUP BY name ORDER BY count DESC, name ASC`
@@ -239,6 +242,74 @@ export const chartRouter = createTRPCRouter({
         }),
       ]);
 
+      // Build ClickHouse-present events with metadata
+      const activeEvents = events.map((event) => {
+        const eventMeta = meta.find((m) => m.name === event.name);
+        return {
+          name: event.name,
+          count: event.count,
+          meta: eventMeta,
+          isCustomEvent: false as const,
+          customEventId: undefined as string | undefined,
+          isProtected: PROTECTED_EVENTS.includes(event.name),
+          droppedAt: eventMeta?.droppedAt ?? null,
+          clearedAt: eventMeta?.clearedAt ?? null,
+        };
+      });
+
+      if (!includeDropped) {
+        // Default: return only active (non-dropped) events for normal consumers
+        const activeOnly = activeEvents.filter((e) => !e.droppedAt);
+        return [
+          {
+            name: '*',
+            count: events.reduce((acc, event) => acc + event.count, 0),
+            meta: undefined,
+            isCustomEvent: false as const,
+            customEventId: undefined as string | undefined,
+            isProtected: false,
+            droppedAt: null as Date | null,
+            clearedAt: null as Date | null,
+          },
+          ...customEvents.map((ce) => ({
+            name: ce.name,
+            count: 0,
+            meta: {
+              name: ce.name,
+              color: ce.color,
+              icon: ce.icon,
+              conversion: false,
+            },
+            isCustomEvent: true as const,
+            customEventId: ce.id,
+            isProtected: false,
+            droppedAt: null as Date | null,
+            clearedAt: null as Date | null,
+          })),
+          ...activeOnly,
+        ];
+      }
+
+      // includeDropped=true: for EventDropManager settings UI
+      const chEventNames = new Set(events.map((e) => e.name));
+      const droppedNotInCh = meta
+        .filter((m) => m.droppedAt && !chEventNames.has(m.name))
+        .map((m) => ({
+          name: m.name,
+          count: 0,
+          meta: m,
+          isCustomEvent: false as const,
+          customEventId: undefined as string | undefined,
+          isProtected: PROTECTED_EVENTS.includes(m.name),
+          droppedAt: m.droppedAt,
+          clearedAt: m.clearedAt,
+        }));
+
+      const notDropped = activeEvents.filter((e) => !e.droppedAt);
+      const dropped = activeEvents.filter((e) => e.droppedAt);
+      notDropped.sort((a, b) => b.count - a.count);
+      dropped.sort((a, b) => b.count - a.count);
+
       return [
         {
           name: '*',
@@ -246,6 +317,9 @@ export const chartRouter = createTRPCRouter({
           meta: undefined,
           isCustomEvent: false as const,
           customEventId: undefined as string | undefined,
+          isProtected: false,
+          droppedAt: null as Date | null,
+          clearedAt: null as Date | null,
         },
         ...customEvents.map((ce) => ({
           name: ce.name,
@@ -258,14 +332,13 @@ export const chartRouter = createTRPCRouter({
           },
           isCustomEvent: true as const,
           customEventId: ce.id,
+          isProtected: false,
+          droppedAt: null as Date | null,
+          clearedAt: null as Date | null,
         })),
-        ...events.map((event) => ({
-          name: event.name,
-          count: event.count,
-          meta: meta.find((m) => m.name === event.name),
-          isCustomEvent: false as const,
-          customEventId: undefined as string | undefined,
-        })),
+        ...notDropped,
+        ...dropped,
+        ...droppedNotInCh,
       ];
     }),
 

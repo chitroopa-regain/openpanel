@@ -13,9 +13,11 @@ import {
 import { generateId } from '@openpanel/common';
 import {
   type IServiceClientWithProject,
+  db,
   runWithAlsSession,
+  syncDroppedEventsToRedis,
 } from '@openpanel/db';
-import { getRedisPub } from '@openpanel/redis';
+import { getRedisCache, getRedisPub } from '@openpanel/redis';
 import type { AppRouter } from '@openpanel/trpc';
 import { appRouter, createContext } from '@openpanel/trpc';
 import type { FastifyTRPCPluginOptions } from '@trpc/server/adapters/fastify';
@@ -278,6 +280,24 @@ const startServer = async () => {
     }
 
     await fastify.listen({ host, port });
+
+    // Rehydrate dropped-events Redis sets from Postgres.
+    // Runs on startup AND on every Redis reconnect (survives Redis restart/flush).
+    const rehydrateDroppedEvents = () => {
+      db.project
+        .findMany({ select: { id: true } })
+        .then((projects) =>
+          Promise.all(projects.map((p) => syncDroppedEventsToRedis(p.id)))
+        )
+        .then((results) =>
+          logger.info(`Rehydrated dropped-events Redis sets for ${results.length} projects`)
+        )
+        .catch((err) =>
+          logger.warn('Failed to rehydrate dropped-events Redis sets', err)
+        );
+    };
+    rehydrateDroppedEvents();
+    getRedisCache().on('ready', rehydrateDroppedEvents);
 
     try {
       // Notify when keys expires

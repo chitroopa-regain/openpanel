@@ -64,3 +64,40 @@ export async function deleteFromClickhouse(projectIds: string[]) {
     });
   }
 }
+
+export async function deleteEventByName(
+  projectId: string,
+  eventName: string,
+) {
+  const where = `project_id = ${sqlstring.escape(projectId)} AND name = ${sqlstring.escape(eventName)}`;
+
+  const regularTables = [TABLE_NAMES.events];
+  const mvTables = [
+    TABLE_NAMES.event_names_mv,
+    TABLE_NAMES.event_property_values_mv,
+    TABLE_NAMES.cohort_events_mv,
+  ];
+
+  for (const table of regularTables) {
+    logger.info('Deleting event by name from ClickHouse table:', {
+      table,
+      projectId,
+      eventName,
+    });
+    await ch.command({
+      query: `DELETE FROM ${getReplicatedTableName(table)} WHERE ${where};`,
+      clickhouse_settings: { lightweight_deletes_sync: '0' },
+    });
+  }
+  for (const table of mvTables) {
+    logger.info('Deleting event by name from ClickHouse MV:', {
+      table,
+      projectId,
+      eventName,
+    });
+    await ch.command({
+      query: `ALTER TABLE ${getReplicatedTableName(table)} DELETE WHERE ${where};`,
+      clickhouse_settings: { lightweight_deletes_sync: '0' },
+    });
+  }
+}
