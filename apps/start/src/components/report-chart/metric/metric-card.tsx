@@ -11,6 +11,7 @@ import {
   ChartTooltipHeader,
   ChartTooltipItem,
 } from '@/components/charts/chart-tooltip';
+import { Tooltiper } from '@/components/ui/tooltip';
 import { formatDate } from '@/utils/date';
 import { getChartColor } from '@/utils/theme';
 import {
@@ -26,6 +27,22 @@ interface MetricCardProps {
   color?: string;
   metric: IChartMetric;
   unit?: string;
+}
+
+function renderExactMetricValue(
+  number: ReturnType<typeof useNumber>,
+  value: number | undefined,
+  unit?: string,
+) {
+  if (value == null) {
+    return 'N/A';
+  }
+
+  if (unit === 'min') {
+    return fancyMinutes(value);
+  }
+
+  return number.formatWithUnit(value, unit);
 }
 
 const TooltipContent = (props: { payload?: any[] }) => {
@@ -92,6 +109,19 @@ export function MetricCard({
     serie.metrics[metric],
     isHero ? 'ml-2 text-4xl font-light' : 'ml-1 font-light text-xl',
   );
+  const exactValue = renderExactMetricValue(number, serie.metrics[metric], unit);
+  const hoverTooltip = (
+    <div className="flex max-w-sm gap-2">
+      <div
+        className="w-[3px] shrink-0 rounded-full"
+        style={{ backgroundColor: graphColors }}
+      />
+      <div className="flex flex-col gap-1">
+        <span className="font-medium">{label}</span>
+        <span className="font-mono font-semibold">{exactValue}</span>
+      </div>
+    </div>
+  );
 
   if (isHero) {
     return (
@@ -108,9 +138,11 @@ export function MetricCard({
         <div className="max-w-full truncate text-sm font-medium text-muted-foreground md:text-base">
           {label}
         </div>
-        <div className="max-w-full truncate font-mono text-6xl font-bold tracking-tight md:text-7xl">
-          {value}
-        </div>
+        <Tooltiper content={hoverTooltip}>
+          <div className="max-w-full cursor-default truncate font-mono text-6xl font-bold tracking-tight md:text-7xl">
+            {value}
+          </div>
+        </Tooltiper>
         <PreviousDiffIndicatorPure
           diff={previous?.diff}
           state={previous?.state}
@@ -177,9 +209,11 @@ export function MetricCard({
             <div className="truncate text-left text-2xl text-muted-foreground">
               {label}
             </div>
-            <div className="truncate font-mono text-6xl font-bold tracking-tight">
-              {value}
-            </div>
+            <Tooltiper content={hoverTooltip}>
+              <div className="cursor-default truncate font-mono text-6xl font-bold tracking-tight">
+                {value}
+              </div>
+            </Tooltiper>
           </div>
           <PreviousDiffIndicator
             {...previous}
