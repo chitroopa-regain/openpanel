@@ -95,6 +95,7 @@ export function MetricCard({
   };
 
   const previous = serie.metrics.previous?.[metric];
+  const showBackgroundChart = serie.data.length > 1;
 
   const graphColors = getDiffIndicator(
     false,
@@ -107,7 +108,7 @@ export function MetricCard({
   const label = <SerieName name={serie.names} />;
   const value = renderValue(
     serie.metrics[metric],
-    isHero ? 'ml-2 text-4xl font-light' : 'ml-1 font-light text-xl',
+    isHero ? 'ml-2 text-4xl font-light' : 'ml-1 text-[clamp(1rem,1.8vw,1.25rem)] font-light',
   );
   const exactValue = renderExactMetricValue(number, serie.metrics[metric], unit);
   const hoverTooltip = (
@@ -154,63 +155,65 @@ export function MetricCard({
   }
 
   return (
-    <div
-      className={cn(
-        'group relative h-full overflow-hidden px-6 pb-6 pt-8 hover:z-10',
-        isEditMode && 'card h-auto p-4',
-      )}
-      key={serie.id}
-    >
       <div
         className={cn(
-          'absolute inset-x-0 bottom-0 z-0 h-[50%] opacity-100 transition-opacity duration-300 group-hover:opacity-100',
+          'group relative h-full min-h-[140px] overflow-hidden rounded-xl border border-border/80 px-4 pb-4 pt-5 hover:z-10',
+          isEditMode && 'card h-auto min-h-[120px] p-4',
         )}
+        key={serie.id}
       >
-        <AutoSizer>
-          {({ width, height }) => (
-            <AreaChart
-              width={width}
-              height={height}
-              data={serie.data}
-            >
-              <defs>
-                <linearGradient
-                  id={`colorUv${serie.id}`}
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop offset="0%" stopColor={graphColors} stopOpacity={0.28} />
-                  <stop
-                    offset="100%"
-                    stopColor={graphColors}
-                    stopOpacity={0.08}
-                  />
-                </linearGradient>
-              </defs>
-              <Tooltip content={TooltipContent} />
-              <Area
-                dataKey="count"
-                type="step"
-                fill={`url(#colorUv${serie.id})`}
-                fillOpacity={1}
-                stroke={graphColors}
-                strokeWidth={1}
-                isAnimationActive={false}
-              />
-            </AreaChart>
+      {showBackgroundChart && (
+        <div
+          className={cn(
+            'absolute inset-x-0 bottom-0 z-0 h-[50%] opacity-100 transition-opacity duration-300 group-hover:opacity-100',
           )}
-        </AutoSizer>
-      </div>
-      <div className="relative z-10 flex h-full flex-col">
-        <div className="flex min-w-0 items-start justify-between gap-6">
-          <div className="flex min-w-0 flex-col gap-3">
-            <div className="truncate text-left text-2xl text-muted-foreground">
+        >
+          <AutoSizer>
+            {({ width, height }) => (
+              <AreaChart
+                width={width}
+                height={height}
+                data={serie.data}
+              >
+                <defs>
+                  <linearGradient
+                    id={`colorUv${serie.id}`}
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop offset="0%" stopColor={graphColors} stopOpacity={0.28} />
+                    <stop
+                      offset="100%"
+                      stopColor={graphColors}
+                      stopOpacity={0.08}
+                    />
+                  </linearGradient>
+                </defs>
+                <Tooltip content={TooltipContent} />
+                <Area
+                  dataKey="count"
+                  type="step"
+                  fill={`url(#colorUv${serie.id})`}
+                  fillOpacity={1}
+                  stroke={graphColors}
+                  strokeWidth={1}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            )}
+          </AutoSizer>
+        </div>
+      )}
+      <div className="relative z-10 flex h-full flex-col justify-between">
+        <div className="flex min-w-0 items-start justify-between gap-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="truncate text-left text-[clamp(0.95rem,1.25vw,1.5rem)] leading-tight text-muted-foreground">
               {label}
             </div>
             <Tooltiper content={hoverTooltip}>
-              <div className="cursor-default truncate font-mono text-6xl font-bold tracking-tight">
+              <div className="cursor-default truncate font-mono text-[clamp(2.75rem,4.8vw,4rem)] font-bold leading-none tracking-tight">
                 {value}
               </div>
             </Tooltiper>

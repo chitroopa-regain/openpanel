@@ -124,7 +124,10 @@ function RouteComponent() {
               }}
               options={{
                 metricLayout:
-                  share.report.chartType === 'metric' ? 'hero' : 'compact',
+                  share.report.chartType === 'metric' &&
+                    share.report.breakdowns.length === 0
+                    ? 'hero'
+                    : 'compact',
               }}
               shareId={shareId}
             />

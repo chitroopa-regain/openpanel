@@ -57,7 +57,9 @@ export function format(
       average: round(average(counts), 2),
       min: min(counts),
       max: max(counts),
-      count: cs.data.find((item) => item.total_count != null)?.total_count,
+      // Metric cards use `count` as the primary displayed value, so it needs
+      // to reflect this series' aggregate rather than the shared total_count.
+      count: sum(counts),
     };
 
     // Build event object for compatibility
@@ -106,8 +108,7 @@ export function format(
                 ),
                 count: getPreviousMetric(
                   metrics.count ?? 0,
-                  previousSerie.data.find((item) => !!item.total_count)
-                    ?.total_count ?? null,
+                  sum(previousSerie.data.map((d) => d.count)),
                 ),
               },
             }

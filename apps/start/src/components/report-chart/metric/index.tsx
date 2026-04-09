@@ -14,7 +14,7 @@ export function ReportMetricChart() {
   const isPlainHero = isHero && options.metricSurface === 'plain';
 
   const res = useQuery(
-    trpc.chart.chart.queryOptions(
+    trpc.chart.aggregate.queryOptions(
       {
         ...report,
         shareId,

@@ -635,24 +635,38 @@ export function getAggregateChartSql({
   // Use startDate as the date value since we're aggregating across the entire range
   sb.select.date = `${sqlstring.escape(startDate)} as date`;
 
+  // Build aggregate expression based on segment type
+  const segmentAggregate = buildAggregateExpression(
+    event.segment ?? 'event',
+    event.property,
+    true
+  );
+  if (segmentAggregate.whereClause) {
+    sb.where.property = segmentAggregate.whereClause;
+  }
+
   // Use CTE to define top breakdown values once, then reference in WHERE clause
   if (breakdowns.length > 0 && limit) {
-    const breakdownSelects = breakdowns
-      .map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name))
-      .join(', ');
+    const breakdownExpressions = breakdowns.map(
+      (b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)
+    );
+    const breakdownSelects = breakdownExpressions.join(', ');
 
     addCte(
       'top_breakdowns',
       `SELECT ${breakdownSelects}
-      FROM ${TABLE_NAMES.events} e
-      ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${getWhereWithoutBar()}
-      GROUP BY ${breakdownSelects}
-      ORDER BY count(*) DESC
-      LIMIT ${limit}`
+      FROM (
+        SELECT ${breakdownSelects}, ${segmentAggregate.expression} as breakdown_metric
+        FROM ${TABLE_NAMES.events} e
+        ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${getWhereWithoutBar()}
+        GROUP BY ${breakdownSelects}
+        ORDER BY breakdown_metric DESC
+        LIMIT ${limit}
+      )`
     );
 
     // Filter main query to only include top breakdown values
-    sb.where.bar = `(${breakdowns.map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
+    sb.where.bar = `(${breakdownExpressions.join(',')}) IN (SELECT * FROM top_breakdowns)`;
   }
 
   // Add breakdowns to SELECT and GROUP BY
@@ -667,16 +681,7 @@ export function getAggregateChartSql({
   // Always group by label_0 (event name) for aggregate charts
   sb.groupBy.label_0 = 'label_0';
 
-  // Build aggregate expression based on segment type
-  const segmentAggregate = buildAggregateExpression(
-    event.segment ?? 'event',
-    event.property,
-    true
-  );
   sb.select.count = `${segmentAggregate.expression} as count`;
-  if (segmentAggregate.whereClause) {
-    sb.where.property = segmentAggregate.whereClause;
-  }
 
   if (event.segment === 'one_event_per_user') {
     sb.from = `(

@@ -584,7 +584,10 @@ export default function ReportEditor({
                 report={{ ...report, projectId }}
                 isEditMode
                 options={{
-                  metricLayout: report.chartType === 'metric' ? 'hero' : 'compact',
+                  metricLayout:
+                    report.chartType === 'metric' && report.breakdowns.length === 0
+                      ? 'hero'
+                      : 'compact',
                 }}
               />
             )}

@@ -189,7 +189,9 @@ export function ReportItem({
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
             metricLayout:
-              report.chartType === 'metric' ? 'hero' : 'compact',
+              report.chartType === 'metric' && report.breakdowns.length === 0
+                ? 'hero'
+                : 'compact',
             metricSurface:
               report.chartType === 'metric' ? 'plain' : 'card',
           }}
@@ -264,7 +266,9 @@ export function ReportItemReadOnly({
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
             metricLayout:
-              report.chartType === 'metric' ? 'hero' : 'compact',
+              report.chartType === 'metric' && report.breakdowns.length === 0
+                ? 'hero'
+                : 'compact',
             metricSurface:
               report.chartType === 'metric' ? 'plain' : 'card',
           }}
