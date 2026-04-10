@@ -404,6 +404,16 @@ export function getChartSql({
     breakdowns, projectId, addCte, sb.joins
   );
 
+  // When trait CTEs are joined, qualify bare profile_id in WHERE clauses to avoid ambiguity.
+  // Only replace the OUTER profile_id (before IN/NOT IN), not inner subquery references.
+  if (traitDescriptors.size > 0) {
+    for (const key of Object.keys(sb.where)) {
+      sb.where[key] = sb.where[key]!
+        .replace(/^profile_id (IN|NOT IN) /i, 'e.profile_id $1 ')
+        .replace(/^profile_id (!= |= )/i, 'e.profile_id $1');
+    }
+  }
+
   sb.select.count = 'count(*) as count';
   switch (interval) {
     case 'minute': {
@@ -698,6 +708,15 @@ export function getAggregateChartSql({
   const { traitJoinsRef: aggTraitJoinsRef, descriptors: aggTraitDescriptors } = registerTraitBreakdowns(
     breakdowns, projectId, addCte, sb.joins
   );
+
+  // Qualify bare profile_id in WHERE clauses when trait CTEs introduce ambiguity.
+  if (aggTraitDescriptors.size > 0) {
+    for (const key of Object.keys(sb.where)) {
+      sb.where[key] = sb.where[key]!
+        .replace(/^profile_id (IN|NOT IN) /i, 'e.profile_id $1 ')
+        .replace(/^profile_id (!= |= )/i, 'e.profile_id $1');
+    }
+  }
 
   // Date range filters
   if (startDate) {
