@@ -111,13 +111,74 @@ export function transformPropertyKey(property: string) {
   return `${match}['${property.replace(new RegExp(`^${match}.`), '')}']`;
 }
 
-// Generate a correlated subquery for a trait breakdown value.
-// Used when a breakdown is on profile.properties.X where X is a user trait.
-export function getTraitBreakdownExpression(property: string, projectId: string): string | null {
+// Descriptor for a trait-based breakdown: CTE name + column reference.
+// Replaces the old correlated subquery which ClickHouse silently mis-evaluated
+// (unqualified profile_id resolved to the inner table → always-true predicate
+//  → global scalar → every event bucketed into a single value).
+export type TraitBreakdown = { key: string; cteName: string; column: string };
+
+export function getTraitBreakdownDescriptor(property: string): TraitBreakdown | null {
   if (!property.startsWith('profile.properties.')) return null;
   const key = property.replace('profile.properties.', '').split('.')[0];
   if (!key || DEVICE_GEO_KEYS.has(key)) return null;
-  return `(SELECT argMax(t.value, t.updated_at) FROM ${TABLE_NAMES.profile_traits} t WHERE t.project_id = ${sqlstring.escape(projectId)} AND t.key = ${sqlstring.escape(key)} AND t.profile_id = profile_id)`;
+  const safe = key.replace(/[^a-zA-Z0-9_]/g, '_');
+  const cteName = `trait_${safe}`;
+  return { key, cteName, column: `${cteName}.value` };
+}
+
+// Register trait CTEs and joins for all trait-based breakdowns.
+function registerTraitBreakdowns(
+  breakdowns: { name: string }[],
+  projectId: string,
+  addCte: (name: string, query: string) => void,
+  sbJoins: Record<string, string>,
+): { traitJoinsRef: string; descriptors: Map<string, TraitBreakdown> } {
+  const descriptors = new Map<string, TraitBreakdown>();
+  for (const b of breakdowns) {
+    const desc = getTraitBreakdownDescriptor(b.name);
+    if (desc && !descriptors.has(desc.key)) {
+      descriptors.set(desc.key, desc);
+      addCte(
+        desc.cteName,
+        `SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id`
+      );
+      sbJoins[desc.cteName] = `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`;
+    }
+  }
+  const traitJoinsRef = Array.from(descriptors.values())
+    .map((d) => `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = e.profile_id`)
+    .join(' ');
+  return { traitJoinsRef, descriptors };
+}
+
+// Build trait join string for a given events alias (e.g., 'e2' for subqueries).
+function buildTraitJoinsFor(descriptors: Map<string, TraitBreakdown>, eventsAlias: string): string {
+  return Array.from(descriptors.values())
+    .map((d) => `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = ${eventsAlias}.profile_id`)
+    .join(' ');
+}
+
+// Get the SQL expression for a breakdown column.
+function getBreakdownExpr(breakdownName: string, descriptors: Map<string, TraitBreakdown>): string {
+  const desc = getTraitBreakdownDescriptor(breakdownName);
+  if (desc && descriptors.has(desc.key)) {
+    return desc.column;
+  }
+  return getSelectPropertyKey(breakdownName);
+}
+
+// Qualify profile_id as e.profile_id when trait CTEs are joined (prevents AMBIGUOUS_IDENTIFIER).
+function qualifyProfileId(expr: string, descriptors: Map<string, TraitBreakdown>, alias = 'e'): string {
+  if (descriptors.size === 0) return expr;
+  return expr.replace(/\bprofile_id\b/g, `${alias}.profile_id`);
+}
+
+// Compat shim: old correlated subquery form used by funnel.service.ts, conversion.service.ts,
+// and chart.ts TRPC router. Those callers will be migrated to CTE-based approach separately.
+export function getTraitBreakdownExpression(property: string, projectId: string): string | null {
+  const desc = getTraitBreakdownDescriptor(property);
+  if (!desc) return null;
+  return `(SELECT argMax(t.value, t.updated_at) FROM ${TABLE_NAMES.profile_traits} t WHERE t.project_id = ${sqlstring.escape(projectId)} AND t.key = ${sqlstring.escape(desc.key)} AND t.profile_id = profile_id)`;
 }
 
 export function getSelectPropertyKey(property: string) {
@@ -301,7 +362,7 @@ export function getChartSql({
   // Only select the fields that are actually used
   const profilesJoinRef =
     anyFilterOnProfile || anyBreakdownOnProfile
-      ? 'LEFT ANY JOIN profile ON profile.id = profile_id'
+      ? 'LEFT ANY JOIN profile ON profile.id = e.profile_id'
       : '';
 
   if (anyFilterOnProfile || anyBreakdownOnProfile) {
@@ -336,6 +397,12 @@ export function getChartSql({
     // Use the CTE reference in the main query
     sb.joins.profiles = profilesJoinRef;
   }
+
+  // Register trait CTEs for trait-based breakdowns (e.g., profile.properties.show_monthly_back_press_offer).
+  // Each trait gets a pre-aggregated CTE joined to events, replacing the old broken correlated subquery.
+  const { traitJoinsRef, descriptors: traitDescriptors } = registerTraitBreakdowns(
+    breakdowns, projectId, addCte, sb.joins
+  );
 
   sb.select.count = 'count(*) as count';
   switch (interval) {
@@ -380,13 +447,19 @@ export function getChartSql({
   const effectiveBreakdowns =
     event.segment === 'frequency_distribution' ? [] : breakdowns;
 
-  // Use CTE to define top breakdown values once, then reference in WHERE clause
-  if (effectiveBreakdowns.length > 0 && limit) {
+  // Use CTE to define top breakdown values once, then filter main query to top N.
+  // Skip when trait breakdowns are present — ClickHouse CTEs aren't materialized,
+  // so referencing a JOINed CTE column in IN/JOIN triggers "correlated subquery" errors.
+  // Trait breakdowns are typically low-cardinality (boolean/category), so the GROUP BY
+  // naturally produces few values and the outer LIMIT handles the rest.
+  const hasTraitBreakdown = effectiveBreakdowns.some(
+    (b) => getTraitBreakdownDescriptor(b.name) !== null
+  );
+  if (effectiveBreakdowns.length > 0 && limit && !hasTraitBreakdown) {
     const breakdownSelects = effectiveBreakdowns
-      .map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name))
+      .map((b) => getBreakdownExpr(b.name, traitDescriptors))
       .join(', ');
 
-    // Add top_breakdowns CTE using the builder
     addCte(
       'top_breakdowns',
       `SELECT ${breakdownSelects}
@@ -397,15 +470,13 @@ export function getChartSql({
       LIMIT ${limit}`
     );
 
-    // Filter main query to only include top breakdown values
-    sb.where.bar = `(${effectiveBreakdowns.map((b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
+    sb.where.bar = `(${effectiveBreakdowns.map((b) => getBreakdownExpr(b.name, traitDescriptors)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
   }
 
   effectiveBreakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
-    const traitExpr = getTraitBreakdownExpression(breakdown.name, projectId);
-    sb.select[key] = `${traitExpr ?? getSelectPropertyKey(breakdown.name)} as ${key}`;
+    sb.select[key] = `${getBreakdownExpr(breakdown.name, traitDescriptors)} as ${key}`;
     sb.groupBy[key] = `${key}`;
   });
 
@@ -415,18 +486,18 @@ export function getChartSql({
     event.property,
     true
   );
-  sb.select.count = `${segmentAggregate.expression} as count`;
+  sb.select.count = `${qualifyProfileId(segmentAggregate.expression, traitDescriptors)} as count`;
   if (segmentAggregate.whereClause) {
-    sb.where.property = segmentAggregate.whereClause;
+    sb.where.property = qualifyProfileId(segmentAggregate.whereClause, traitDescriptors);
   }
 
   if (event.segment === 'one_event_per_user') {
     sb.from = `(
-      SELECT DISTINCT ON (profile_id) * from ${TABLE_NAMES.events} ${getJoins()} WHERE ${join(
+      SELECT DISTINCT ON (e.profile_id) * from ${TABLE_NAMES.events} e ${getJoins()} WHERE ${join(
         sb.where,
         ' AND '
       )}
-        ORDER BY profile_id, created_at DESC
+        ORDER BY e.profile_id, created_at DESC
       ) as subQuery`;
     sb.joins = {};
 
@@ -447,13 +518,9 @@ export function getChartSql({
   // Note: The profile CTE (if it exists) is available in subqueries, so we can reference it directly
   if (effectiveBreakdowns.length > 0) {
     // Match breakdown properties in subquery with outer query's grouped values
-    // Since outer query groups by label_X, we reference those in the correlation
     const breakdownMatches = effectiveBreakdowns
       .map((b, index) => {
-        const traitExpr = getTraitBreakdownExpression(b.name, projectId);
-        const propertyKey = traitExpr ?? getSelectPropertyKey(b.name);
-        // Correlate: match the property expression with outer query's label_X value
-        // ClickHouse allows referencing outer query columns in correlated subqueries
+        const propertyKey = getBreakdownExpr(b.name, traitDescriptors);
         return `${propertyKey} = label_${index + 1}`;
       })
       .join(' AND ');
@@ -463,23 +530,28 @@ export function getChartSql({
       .replace(/\be\./g, 'e2.')
       .replace(/\bprofile\./g, 'profile.');
 
+    const subqueryTraitJoins = buildTraitJoinsFor(traitDescriptors, 'e2');
+    // Rewrite profilesJoinRef for e2 alias (it references e.profile_id)
+    const subqueryProfilesJoin = profilesJoinRef.replace(/\be\.profile_id\b/g, 'e2.profile_id');
+    // Qualify profile_id in aggregate expression for the subquery scope
+    const subqueryAggregate = qualifyProfileId(globalAggregate.expression, traitDescriptors, 'e2');
     sb.select.total_unique_count = `(
-        SELECT ${globalAggregate.expression}
+        SELECT ${subqueryAggregate}
         FROM ${TABLE_NAMES.events} e2
-        ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${subqueryWhere}
+        ${subqueryProfilesJoin ? `${subqueryProfilesJoin} ` : ''}${subqueryTraitJoins ? `${subqueryTraitJoins} ` : ''}${subqueryWhere}
         AND ${breakdownMatches}
       ) as total_count`;
   } else {
     // No breakdowns: calculate aggregate across all data
-    // Build WHERE clause for subquery - replace table alias and keep profile CTE reference
     const subqueryWhere = getWhereWithoutBar()
       .replace(/\be\./g, 'e2.')
       .replace(/\bprofile\./g, 'profile.');
 
+    const subqueryProfilesJoin = profilesJoinRef.replace(/\be\.profile_id\b/g, 'e2.profile_id');
     sb.select.total_unique_count = `(
         SELECT ${globalAggregate.expression}
         FROM ${TABLE_NAMES.events} e2
-        ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${subqueryWhere}
+        ${subqueryProfilesJoin ? `${subqueryProfilesJoin} ` : ''}${subqueryWhere}
       ) as total_count`;
   }
 
@@ -588,7 +660,7 @@ export function getAggregateChartSql({
   // Create profiles CTE if profiles are needed
   const profilesJoinRef =
     anyFilterOnProfile || anyBreakdownOnProfile
-      ? 'LEFT ANY JOIN profile ON profile.id = profile_id'
+      ? 'LEFT ANY JOIN profile ON profile.id = e.profile_id'
       : '';
 
   if (anyFilterOnProfile || anyBreakdownOnProfile) {
@@ -622,6 +694,11 @@ export function getAggregateChartSql({
     sb.joins.profiles = profilesJoinRef;
   }
 
+  // Register trait CTEs for trait-based breakdowns (aggregate chart path).
+  const { traitJoinsRef: aggTraitJoinsRef, descriptors: aggTraitDescriptors } = registerTraitBreakdowns(
+    breakdowns, projectId, addCte, sb.joins
+  );
+
   // Date range filters
   if (startDate) {
     sb.where.startDate = `created_at >= toDateTime('${formatClickhouseDate(startDate)}')`;
@@ -642,13 +719,16 @@ export function getAggregateChartSql({
     true
   );
   if (segmentAggregate.whereClause) {
-    sb.where.property = segmentAggregate.whereClause;
+    sb.where.property = qualifyProfileId(segmentAggregate.whereClause, aggTraitDescriptors);
   }
 
-  // Use CTE to define top breakdown values once, then reference in WHERE clause
-  if (breakdowns.length > 0 && limit) {
+  // Skip top_breakdowns CTE when trait breakdowns are present (same reason as time-series).
+  const hasAggTraitBreakdown = breakdowns.some(
+    (b) => getTraitBreakdownDescriptor(b.name) !== null
+  );
+  if (breakdowns.length > 0 && limit && !hasAggTraitBreakdown) {
     const breakdownExpressions = breakdowns.map(
-      (b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)
+      (b) => getBreakdownExpr(b.name, aggTraitDescriptors)
     );
     const breakdownSelects = breakdownExpressions.join(', ');
 
@@ -665,7 +745,6 @@ export function getAggregateChartSql({
       )`
     );
 
-    // Filter main query to only include top breakdown values
     sb.where.bar = `(${breakdownExpressions.join(',')}) IN (SELECT * FROM top_breakdowns)`;
   }
 
@@ -673,23 +752,22 @@ export function getAggregateChartSql({
   breakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
-    const traitExpr = getTraitBreakdownExpression(breakdown.name, projectId);
-    sb.select[key] = `${traitExpr ?? getSelectPropertyKey(breakdown.name)} as ${key}`;
+    sb.select[key] = `${getBreakdownExpr(breakdown.name, aggTraitDescriptors)} as ${key}`;
     sb.groupBy[key] = `${key}`;
   });
 
   // Always group by label_0 (event name) for aggregate charts
   sb.groupBy.label_0 = 'label_0';
 
-  sb.select.count = `${segmentAggregate.expression} as count`;
+  sb.select.count = `${qualifyProfileId(segmentAggregate.expression, aggTraitDescriptors)} as count`;
 
   if (event.segment === 'one_event_per_user') {
     sb.from = `(
-      SELECT DISTINCT ON (profile_id) * from ${TABLE_NAMES.events} ${getJoins()} WHERE ${join(
+      SELECT DISTINCT ON (e.profile_id) * from ${TABLE_NAMES.events} e ${getJoins()} WHERE ${join(
         sb.where,
         ' AND '
       )}
-        ORDER BY profile_id, created_at DESC
+        ORDER BY e.profile_id, created_at DESC
       ) as subQuery`;
     sb.joins = {};
 

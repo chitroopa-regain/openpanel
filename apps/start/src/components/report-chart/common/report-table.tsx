@@ -48,6 +48,7 @@ interface ReportTableProps {
   data: IChartData;
   visibleSeries: IChartData['series'] | string[];
   setVisibleSeries: React.Dispatch<React.SetStateAction<string[]>>;
+  chartType?: string;
 }
 
 const DEFAULT_COLUMN_WIDTH = 150;
@@ -217,6 +218,7 @@ export function ReportTable({
   data,
   visibleSeries,
   setVisibleSeries,
+  chartType,
 }: ReportTableProps) {
   const [grouped, setGrouped] = useState(false);
   const [expanded, setExpanded] = useState<ExpandedState>({});
@@ -770,7 +772,11 @@ export function ReportTable({
     });
 
     // Breakdown columns (pinned left, collapsible)
-    breakdownPropertyNames.forEach((propertyName, index) => {
+    breakdownPropertyNames.forEach((rawPropertyName, index) => {
+      // Strip verbose prefixes for cleaner display (e.g., "profile.properties.X" → "X")
+      const propertyName = rawPropertyName
+        .replace(/^profile\.properties\./, '')
+        .replace(/^properties\./, '');
       const isLastBreakdown = index === breakdownPropertyNames.length - 1;
       const isCollapsible = grouped && !isLastBreakdown;
 
@@ -778,8 +784,8 @@ export function ReportTable({
         id: `breakdown-${index}`,
         enableSorting: true,
         enableResizing: true,
-        size: columnSizing[`breakdown-${index}`] ?? DEFAULT_COLUMN_WIDTH,
-        minSize: 100,
+        size: columnSizing[`breakdown-${index}`] ?? 200,
+        minSize: 120,
         maxSize: 500,
         accessorFn: (row) => {
           if ('breakdownDisplay' in row && grouped) {
@@ -789,7 +795,11 @@ export function ReportTable({
         },
         header: ({ column }) => {
           if (!isCollapsible) {
-            return propertyName;
+            return (
+              <span className="block truncate" title={rawPropertyName}>
+                {propertyName}
+              </span>
+            );
           }
 
           // Find all rows at this breakdown level that can be expanded
@@ -927,14 +937,17 @@ export function ReportTable({
       });
     });
 
-    // Metric columns
-    const metrics = [
+    // Metric columns — pie/metric charts show only "Value", others show all
+    const allMetrics = [
       { key: 'count', label: 'Unique' },
       { key: 'sum', label: 'Sum' },
       { key: 'average', label: 'Average' },
       { key: 'min', label: 'Min' },
       { key: 'max', label: 'Max' },
     ] as const;
+    const metrics = chartType === 'pie' || chartType === 'metric'
+      ? [{ key: 'sum' as const, label: 'Value' }]
+      : allMetrics;
 
     metrics.forEach((metric) => {
       cols.push({
@@ -982,8 +995,9 @@ export function ReportTable({
       });
     });
 
-    // Date columns
-    dates.forEach((date) => {
+    // Date columns — skip for pie/metric charts (aggregate, no time axis)
+    const showDates = chartType !== 'pie' && chartType !== 'metric';
+    (showDates ? dates : []).forEach((date) => {
       cols.push({
         id: `date-${date}`,
         header: formatDate(date),
@@ -1387,14 +1401,16 @@ export function ReportTable({
                   role={canSort ? 'button' : undefined}
                   tabIndex={canSort ? 0 : undefined}
                 >
-                  <div className="flex items-center gap-1.5 flex-1">
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
+                    <span className="truncate">
                     {header.isPlaceholder
                       ? null
                       : typeof headerContent === 'function'
                         ? flexRender(headerContent, header.getContext())
                         : headerContent}
+                    </span>
                     {canSort && (
-                      <span className="text-muted-foreground">
+                      <span className="text-muted-foreground shrink-0">
                         {isSorted === 'asc'
                           ? '↑'
                           : isSorted === 'desc'
@@ -1587,14 +1603,16 @@ export function ReportTable({
                   role={canSort ? 'button' : undefined}
                   tabIndex={canSort ? 0 : undefined}
                 >
-                  <div className="flex items-center gap-1.5 flex-1">
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
+                    <span className="truncate">
                     {header.isPlaceholder
                       ? null
                       : typeof headerContent === 'function'
                         ? flexRender(headerContent, header.getContext())
                         : headerContent}
+                    </span>
                     {canSort && (
-                      <span className="text-muted-foreground">
+                      <span className="text-muted-foreground shrink-0">
                         {isSorted === 'asc'
                           ? '↑'
                           : isSorted === 'desc'

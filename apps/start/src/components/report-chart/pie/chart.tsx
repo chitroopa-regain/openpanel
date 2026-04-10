@@ -115,7 +115,7 @@ export function Chart({ data }: Props) {
                 );
               })}
             </Pie>
-            {isFrequencyDistribution && (
+            {(
               <text
                 x="50%"
                 y="50%"
@@ -137,6 +137,7 @@ export function Chart({ data }: Props) {
           data={data}
           visibleSeries={series}
           setVisibleSeries={setVisibleSeries}
+          chartType="pie"
         />
       )}
     </>
