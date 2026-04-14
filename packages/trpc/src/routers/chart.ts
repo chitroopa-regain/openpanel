@@ -5,7 +5,6 @@ import { z } from 'zod';
 import {
   type IClickhouseProfile,
   type IServiceProfile,
-  DEVICE_GEO_KEYS,
   TABLE_NAMES,
   ch,
   chQuery,
@@ -493,22 +492,21 @@ export const chartRouter = createTRPCRouter({
 
       const values: string[] = [];
 
-      // Check if this is a user trait (profile.properties.X where X is not device/geo)
+      // profile.properties.* — query profile_traits for distinct latest values.
+      // Both user traits and device/geo keys (country, os, brand, ...) are dual-written
+      // to profile_traits by profile_manager.go, so a single fast path serves both.
+      // The inner subquery picks each profile's latest value first, then deduplicates
+      // at the SQL level — flat SELECT DISTINCT with LIMIT can cut off before reaching
+      // all distinct values.
       if (property.startsWith('profile.properties.')) {
         const traitKey = property.replace('profile.properties.', '').split('.')[0];
         if (traitKey) {
-          if (!DEVICE_GEO_KEYS.has(traitKey)) {
-            // Query profile_traits for distinct latest values
-            // Uses a subquery to get each profile's latest value first,
-            // then deduplicates at the SQL level (not JS) to avoid LIMIT
-            // cutting off before reaching all distinct values.
-            const traitValues = await chQuery<{ value: string }>(
-              `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
-            );
-            return {
-              values: traitValues.map((t) => t.value),
-            };
-          }
+          const traitValues = await chQuery<{ value: string }>(
+            `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
+          );
+          return {
+            values: traitValues.map((t) => t.value),
+          };
         }
       }
 
@@ -540,7 +538,7 @@ export const chartRouter = createTRPCRouter({
           ])
           .from(TABLE_NAMES.events)
           .where('project_id', '=', projectId)
-          .where('created_at', '>', clix.exp('now() - INTERVAL 6 MONTH'))
+          .where('created_at', '>', clix.exp('now() - INTERVAL 30 DAY'))
           .orderBy('created_at', 'DESC')
           .limit(100_000);
 
