@@ -12,22 +12,21 @@ import type {
 import { TABLE_NAMES, formatClickhouseDate } from '../clickhouse/client';
 import { createSqlBuilder } from '../sql-builder';
 
-// Device/geo keys stay in profiles.properties Map.
-// Everything else from profile.properties.* is a user trait → profile_traits table.
-// IMPORTANT: Keep in sync with deviceGeoKeys in jitsu-fork profile_manager.go
-export const DEVICE_GEO_KEYS = new Set([
-  'os', 'os_version', 'device', 'brand', 'model',
-  'country', 'region', 'city', 'longitude', 'latitude',
-  'browser', 'browser_version',
-  'display_height', 'display_width', 'display_inches',
-  'total_ram', 'total_disk_space',
-]);
+// As of 2026-04-15, ALL profile.properties.* keys are stored in profile_traits.
+// Device/geo keys (country, os, brand, region, city, ...) are dual-written there
+// by jitsu-fork profile_manager.go — see the companion fix. Filters and breakdowns
+// on any profile property should route through the profile_traits fast path
+// (avoids the expensive `profiles FINAL` merge).
+// DEVICE_GEO_KEYS is kept as an empty set for backward-compat re-export — any
+// remaining callers will get `false` from `.has(key)` and behave as if the key
+// is a trait, which is now correct.
+export const DEVICE_GEO_KEYS = new Set<string>([]);
 
-// Check if a profile.properties.X filter is on a user trait (not device/geo).
+// Check if a profile.properties.X filter is on a trait (now: all of them).
 function isProfileTrait(filterName: string): boolean {
   if (!filterName.startsWith('profile.properties.')) return false;
   const key = filterName.replace('profile.properties.', '').split('.')[0];
-  return key ? !DEVICE_GEO_KEYS.has(key) : false;
+  return Boolean(key);
 }
 
 // Generate a profile_traits IN-subquery for a trait filter.
@@ -120,7 +119,7 @@ export type TraitBreakdown = { key: string; cteName: string; column: string };
 export function getTraitBreakdownDescriptor(property: string): TraitBreakdown | null {
   if (!property.startsWith('profile.properties.')) return null;
   const key = property.replace('profile.properties.', '').split('.')[0];
-  if (!key || DEVICE_GEO_KEYS.has(key)) return null;
+  if (!key) return null;
   const safe = key.replace(/[^a-zA-Z0-9_]/g, '_');
   const cteName = `trait_${safe}`;
   return { key, cteName, column: `${cteName}.value` };
