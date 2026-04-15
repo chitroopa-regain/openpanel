@@ -16,7 +16,8 @@ import {
   getCustomEventWhereClause,
   getEventFiltersWhereClause,
   getSelectPropertyKey,
-  getTraitBreakdownExpression,
+  getTraitBreakdownDescriptor,
+  type TraitBreakdown,
 } from './chart.service';
 
 /** Display label for null/empty breakdown values (e.g. property not set). */
@@ -28,6 +29,108 @@ function normalizeBreakdownValue(value: unknown): string {
   }
   const s = String(value).trim();
   return s === '' ? EMPTY_BREAKDOWN_LABEL : s;
+}
+
+/**
+ * Qualify bare event-table column references with an alias when a trait CTE
+ * (or other sibling alias) is joined into a funnel CTE. Required to prevent
+ * AMBIGUOUS_IDENTIFIER errors and silently wrong resolution once the main
+ * events source has multiple sibling tables that expose `profile_id`.
+ *
+ * Conservative: walks the string and only qualifies identifiers at the outer
+ * scope. It explicitly:
+ *   - skips the contents of `'...'` string literals (so event names with
+ *     spaces, reserved words, etc. pass through unchanged)
+ *   - skips the contents of `IN (...)` / `NOT IN (...)` subqueries (the
+ *     inner `profile_id FROM profile_traits` stays bare, bound to the
+ *     subquery's own FROM)
+ *   - leaves already-qualified references alone (anything preceded by `.`)
+ *
+ * Covers the event columns that funnel condition builders actually emit:
+ * profile_id, device_id, created_at, name, properties. Other columns pass
+ * through untouched.
+ */
+function qualifyFunnelCondition(expr: string, alias = 'events'): string {
+  const columnPattern = /^\b(profile_id|device_id|created_at|name|properties)\b/;
+  let result = '';
+  let i = 0;
+  while (i < expr.length) {
+    const ch = expr[i]!;
+
+    // String literal — emit verbatim up to the closing quote
+    if (ch === "'") {
+      result += ch;
+      i++;
+      while (i < expr.length && expr[i] !== "'") {
+        if (expr[i] === '\\' && i + 1 < expr.length) {
+          result += expr[i]! + expr[i + 1]!;
+          i += 2;
+        } else {
+          result += expr[i]!;
+          i++;
+        }
+      }
+      if (i < expr.length) {
+        result += expr[i]!;
+        i++;
+      }
+      continue;
+    }
+
+    // `IN (...)` / `NOT IN (...)` subquery — skip its contents so inner
+    // profile_id references stay bound to the subquery's own FROM.
+    const inMatch = expr.slice(i).match(/^(\s+(?:NOT\s+)?IN\s*)\(/i);
+    if (inMatch) {
+      result += inMatch[0];
+      i += inMatch[0].length;
+      let depth = 1;
+      while (i < expr.length && depth > 0) {
+        const cc = expr[i]!;
+        if (cc === "'") {
+          // Pass through inner string literals untouched
+          result += cc;
+          i++;
+          while (i < expr.length && expr[i] !== "'") {
+            if (expr[i] === '\\' && i + 1 < expr.length) {
+              result += expr[i]! + expr[i + 1]!;
+              i += 2;
+            } else {
+              result += expr[i]!;
+              i++;
+            }
+          }
+          if (i < expr.length) {
+            result += expr[i]!;
+            i++;
+          }
+          continue;
+        }
+        if (cc === '(') depth++;
+        else if (cc === ')') depth--;
+        result += cc;
+        i++;
+      }
+      continue;
+    }
+
+    // Bare column identifier at a word boundary — qualify unless already prefixed
+    const colMatch = expr.slice(i).match(columnPattern);
+    if (colMatch) {
+      const prevChar = i > 0 ? expr[i - 1]! : '';
+      if (prevChar === '.') {
+        // Already qualified — pass through unchanged
+        result += colMatch[1]!;
+      } else {
+        result += `${alias}.${colMatch[1]!}`;
+      }
+      i += colMatch[1]!.length;
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+  return result;
 }
 
 /**
@@ -163,6 +266,7 @@ export class FunnelService {
     groupBy = 'session_id',
     additionalSelects = [],
     additionalGroupBy = [],
+    traitDescriptors = new Map(),
   }: {
     projectId: string;
     startDate: string;
@@ -173,6 +277,7 @@ export class FunnelService {
     groupBy?: 'session_id' | 'profile_id';
     additionalSelects?: string[];
     additionalGroupBy?: string[];
+    traitDescriptors?: Map<string, TraitBreakdown>;
   }) {
     // Build first-time-ever CTEs and JOIN aliases for steps that have firstTimeFilter
     const firstTimeCteAliases: string[] = [];
@@ -202,7 +307,19 @@ export class FunnelService {
       }
     }
 
-    const funnels = this.getFunnelConditions(eventSeries, projectId, firstTimeCteAliases);
+    const rawFunnels = this.getFunnelConditions(eventSeries, projectId, firstTimeCteAliases);
+
+    // Once a trait CTE is joined, every bare event-column reference in this
+    // query becomes ambiguous. Qualify step conditions and static column refs
+    // with the `events.` alias (the bare table name, since clix's .from() does
+    // not apply an explicit alias). Subqueries inside `profile_id IN (...)`
+    // are preserved by qualifyFunnelCondition's subquery skip logic.
+    const needsQualify = traitDescriptors.size > 0;
+    const qualify = (expr: string) =>
+      needsQualify ? qualifyFunnelCondition(expr, 'events') : expr;
+    const col = (c: string) => (needsQualify ? `events.${c}` : c);
+
+    const funnels = needsQualify ? rawFunnels.map((c) => qualify(c)) : rawFunnels;
 
     // Collect all real event names for the IN pre-filter.
     const allEventNames = uniq(
@@ -216,14 +333,14 @@ export class FunnelService {
     const selects =
       groupBy === 'profile_id'
         ? [
-            'profile_id',
-            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(created_at)), ${funnels.join(', ')}) AS level`,
+            `${col('profile_id')} AS profile_id`,
+            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`,
             ...additionalSelects,
           ]
         : [
-            'session_id',
-            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(created_at)), ${funnels.join(', ')}) AS level`,
-            'argMax(profile_id, created_at) AS profile_id',
+            `${col('session_id')} AS session_id`,
+            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`,
+            `argMax(${col('profile_id')}, ${col('created_at')}) AS profile_id`,
             ...additionalSelects,
           ];
 
@@ -236,7 +353,14 @@ export class FunnelService {
         clix.datetime(endDate, 'toDateTime'),
       ])
       .where('name', 'IN', allEventNames)
-      .groupBy([groupBy, ...additionalGroupBy]);
+      // When trait CTEs are joined, group by the qualified column (the select
+      // aliases it back to the bare name, so downstream refs still work).
+      .groupBy([
+        needsQualify && (groupBy === 'profile_id' || groupBy === 'session_id')
+          ? `events.${groupBy}`
+          : groupBy,
+        ...additionalGroupBy,
+      ]);
 
     // Add first-time LEFT JOINs (CTEs are returned separately for the outer query)
     for (let i = 0; i < firstTimeCteAliases.length; i++) {
@@ -250,10 +374,25 @@ export class FunnelService {
       }
     }
 
+    // Add trait LEFT ANY JOINs for profile trait breakdowns.
+    // Each trait CTE is registered at the outer query level; the JOIN here
+    // is inside the session_funnel CTE so trait_<key>.profile_id joins
+    // unambiguously against events.profile_id.
+    for (const desc of traitDescriptors.values()) {
+      query.leftAnyJoin(
+        desc.cteName,
+        `${desc.cteName}.profile_id = events.profile_id`,
+      );
+    }
+
     // In profile mode, only include identified users to avoid
     // double-counting anonymous device_id-based profiles.
     if (groupBy === 'profile_id') {
-      query.rawWhere('profile_id != device_id');
+      query.rawWhere(
+        needsQualify
+          ? 'events.profile_id != events.device_id'
+          : 'profile_id != device_id',
+      );
     }
 
     return { query, firstTimeCtes };
@@ -421,14 +560,43 @@ export class FunnelService {
     const group = this.getFunnelGroup(funnelGroup);
     const profileFilters = this.getProfileFilters(eventSeries);
     const anyFilterOnProfile = profileFilters.length > 0;
-    const anyBreakdownOnProfile = breakdowns.some((b) =>
-      b.name.startsWith('profile.'),
+    // profile.properties.* breakdowns use profile_traits CTE (traitDescriptors);
+    // only profile.<scalar> breakdowns like profile.email still need the profiles CTE.
+    const anyBreakdownOnProfile = breakdowns.some(
+      (b) =>
+        b.name.startsWith('profile.') &&
+        getTraitBreakdownDescriptor(b.name) === null,
     );
 
     // Breakdown step: which step's event to extract breakdown values from.
     // undefined = use GROUP BY (all steps, current behavior).
     // 0-based index = use argMaxIf to extract from that step's event only.
     const breakdownStep = funnelOptions?.breakdownStep;
+
+    // Build trait CTE descriptors for all profile.properties.* breakdowns.
+    // The old path used getTraitBreakdownExpression() which emitted a correlated
+    // subquery where the unqualified profile_id resolved to the inner table alias,
+    // producing a global scalar (same value for every row) instead of per-profile
+    // values. Replace with a CTE + LEFT ANY JOIN approach (same fix as d4f4e544
+    // for chart.service.ts).
+    const traitDescriptors = new Map<string, TraitBreakdown>();
+    for (const b of breakdowns) {
+      const desc = getTraitBreakdownDescriptor(b.name);
+      if (desc && !traitDescriptors.has(desc.key)) {
+        traitDescriptors.set(desc.key, desc);
+      }
+    }
+
+    // Helper: return the correct SQL expression for a breakdown column.
+    // Trait breakdowns use the CTE column reference; event-property breakdowns
+    // fall back to getSelectPropertyKey (unchanged behaviour).
+    const breakdownExpr = (name: string): string => {
+      const desc = getTraitBreakdownDescriptor(name);
+      if (desc && traitDescriptors.has(desc.key)) {
+        return desc.column; // fully-qualified: trait_<key>.value
+      }
+      return getSelectPropertyKey(name);
+    };
 
     // Build breakdown selects.
     // When a specific step is selected, use argMaxIf to extract the breakdown
@@ -442,14 +610,13 @@ export class FunnelService {
       const stepCondition = stepConditions[breakdownStep]!;
       breakdownSelects = breakdowns.map(
         (b, index) =>
-          `argMaxIf(${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)}, created_at, ${stepCondition}) as b_${index}`,
+          `argMaxIf(${breakdownExpr(b.name)}, created_at, ${stepCondition}) as b_${index}`,
       );
       // No GROUP BY for breakdown columns — argMaxIf aggregates them
       breakdownGroupBy = [];
     } else {
       breakdownSelects = breakdowns.map(
-        (b, index) =>
-          `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${index}`,
+        (b, index) => `${breakdownExpr(b.name)} as b_${index}`,
       );
       breakdownGroupBy = breakdowns.map((_, index) => `b_${index}`);
     }
@@ -466,6 +633,7 @@ export class FunnelService {
       groupBy: group,
       additionalSelects: breakdownSelects,
       additionalGroupBy: breakdownGroupBy,
+      traitDescriptors,
     });
 
     if (anyFilterOnProfile || anyBreakdownOnProfile) {
@@ -474,7 +642,13 @@ export class FunnelService {
       for (const f of profileFilters) {
         profileFields.add(f.split('.')[0]!);
       }
-      for (const b of breakdowns.filter((x) => x.name.startsWith('profile.'))) {
+      // Only scalar profile.<field> breakdowns need columns from profiles FINAL.
+      // Trait breakdowns (profile.properties.*) resolve via the trait CTE.
+      for (const b of breakdowns.filter(
+        (x) =>
+          x.name.startsWith('profile.') &&
+          getTraitBreakdownDescriptor(x.name) === null,
+      )) {
         const fieldName = b.name.replace('profile.', '').split('.')[0];
         if (fieldName === 'properties') {
           profileFields.add('properties');
@@ -496,6 +670,17 @@ export class FunnelService {
     // Add first-time CTEs at the top level (NOT nested inside session_funnel)
     for (const cte of firstTimeCtes) {
       funnelQuery.with(cte.name, cte.sql);
+    }
+
+    // Register trait CTEs at the top level so they are visible inside
+    // session_funnel. The LEFT ANY JOIN on events.profile_id is added inside
+    // buildFunnelCte (via traitDescriptors) — these CTEs must precede
+    // session_funnel in the WITH clause.
+    for (const desc of traitDescriptors.values()) {
+      funnelQuery.with(
+        desc.cteName,
+        `SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id`,
+      );
     }
 
     funnelQuery.with('session_funnel', funnelCte);
@@ -781,16 +966,60 @@ export class FunnelService {
     // the step_1 CTE which only has step 1 events.
     //
     // Known limitations:
-    // - profile.* breakdowns are not supported in timing queries (no profiles
-    //   JOIN here). If used, the timing query will fail silently and medians
-    //   will show as "—". The main funnel counts still work correctly.
     // - When breakdownStep is unset, timing_bd scans all events per entity,
     //   so if a user's breakdown value changes between steps, the same
     //   conversion time may appear in multiple groups. Use breakdownStep
     //   for precise segmented timing.
+    // - In session_id groupBy mode, the trait CTE joins on raw events.profile_id
+    //   (per-event), so sessions that transition from anonymous to identified
+    //   may pick the trait from either profile.
     if (hasBreakdowns) {
       const bdStepIdx = breakdownStep ?? 0;
-      const bdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+      const rawBdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+
+      // Build trait CTE descriptors + LEFT ANY JOINs for profile trait
+      // breakdowns (same fix as d4f4e544 for chart.service.ts). Trait values
+      // come from the pre-aggregated CTE via a qualified join on
+      // trait_<key>.profile_id = e.profile_id, replacing the buggy correlated
+      // subquery path that resolved to a global scalar.
+      const traitDescriptors = new Map<string, TraitBreakdown>();
+      for (const b of breakdowns) {
+        const desc = getTraitBreakdownDescriptor(b.name);
+        if (desc && !traitDescriptors.has(desc.key)) {
+          traitDescriptors.set(desc.key, desc);
+        }
+      }
+      // Register trait CTEs BEFORE timing_bd (CTEs must precede their refs)
+      for (const desc of traitDescriptors.values()) {
+        ctes.push(
+          `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`,
+        );
+      }
+      const traitJoins = Array.from(traitDescriptors.values())
+        .map(
+          (desc) =>
+            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`,
+        )
+        .join('\n          ');
+
+      // Once a trait CTE is joined, bare column references in bdStepCondition
+      // (profile_id, device_id, etc.) become ambiguous. Qualify with the `e`
+      // alias; subqueries and string literals are preserved.
+      const needsQualify = traitDescriptors.size > 0;
+      const bdStepCondition = needsQualify
+        ? qualifyFunnelCondition(rawBdStepCondition, 'e')
+        : rawBdStepCondition;
+
+      // Helper: return the correct SQL expression for each breakdown column.
+      // Trait breakdowns use the fully-qualified CTE column; other breakdowns
+      // fall back to getSelectPropertyKey (event property expression).
+      const breakdownExpr = (name: string): string => {
+        const desc = getTraitBreakdownDescriptor(name);
+        if (desc && traitDescriptors.has(desc.key)) {
+          return desc.column;
+        }
+        return getSelectPropertyKey(name);
+      };
 
       // Build breakdown expressions for the breakdown CTE.
       // For GROUP BY mode (breakdownStep undefined): use raw property + GROUP BY
@@ -800,26 +1029,29 @@ export class FunnelService {
       if (breakdownStep !== undefined) {
         bdExprs = breakdowns.map(
           (b, i) =>
-            `argMaxIf(${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)}, created_at, ${bdStepCondition}) as b_${i}`,
+            `argMaxIf(${breakdownExpr(b.name)}, e.created_at, ${bdStepCondition}) as b_${i}`,
         );
         bdGroup = [];
       } else {
         bdExprs = breakdowns.map(
-          (b, i) =>
-            `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${i}`,
+          (b, i) => `${breakdownExpr(b.name)} as b_${i}`,
         );
         bdGroup = breakdowns.map((_, i) => `b_${i}`);
       }
 
+      const timingIdentifiedFilter =
+        groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : '';
+
       ctes.push(`timing_bd AS (
-        SELECT ${entityKey}
+        SELECT e.${entityKey} AS ${entityKey}
           ${bdExprs.length > 0 ? `, ${bdExprs.join(', ')}` : ''}
-        FROM ${TABLE_NAMES.events}
-        WHERE project_id = ${sqlstring.escape(projectId)}
-          AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
-          AND name IN (${nameList})
-          ${identifiedFilter}
-        GROUP BY ${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
+        FROM ${TABLE_NAMES.events} AS e
+          ${traitJoins}
+        WHERE e.project_id = ${sqlstring.escape(projectId)}
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.name IN (${nameList})
+          ${timingIdentifiedFilter}
+        GROUP BY e.${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
       )`);
     }
 
@@ -959,36 +1191,76 @@ export class FunnelService {
       )`);
     }
 
-    // Breakdown CTE (same pattern as timing)
+    // Breakdown CTE (same pattern as timing). Uses trait CTE + LEFT ANY JOIN
+    // instead of the buggy correlated subquery path (see d4f4e544).
     if (hasBreakdowns) {
       const bdStepIdx = breakdownStep ?? 0;
-      const bdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+      const rawBdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+
+      // Build trait CTE descriptors for profile trait breakdowns
+      const traitDescriptors = new Map<string, TraitBreakdown>();
+      for (const b of breakdowns) {
+        const desc = getTraitBreakdownDescriptor(b.name);
+        if (desc && !traitDescriptors.has(desc.key)) {
+          traitDescriptors.set(desc.key, desc);
+        }
+      }
+      // Register trait CTEs BEFORE prop_bd (CTEs must precede their refs)
+      for (const desc of traitDescriptors.values()) {
+        ctes.push(
+          `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`,
+        );
+      }
+      const traitJoins = Array.from(traitDescriptors.values())
+        .map(
+          (desc) =>
+            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`,
+        )
+        .join('\n          ');
+
+      // Qualify bdStepCondition when trait CTEs are joined — bare profile_id
+      // / device_id / name / properties references become ambiguous otherwise.
+      const needsQualify = traitDescriptors.size > 0;
+      const bdStepCondition = needsQualify
+        ? qualifyFunnelCondition(rawBdStepCondition, 'e')
+        : rawBdStepCondition;
+
+      const breakdownExpr = (name: string): string => {
+        const desc = getTraitBreakdownDescriptor(name);
+        if (desc && traitDescriptors.has(desc.key)) {
+          return desc.column;
+        }
+        return getSelectPropertyKey(name);
+      };
 
       let bdExprs: string[];
       let bdGroup: string[];
       if (breakdownStep !== undefined) {
         bdExprs = breakdowns.map(
           (b, i) =>
-            `argMaxIf(${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)}, created_at, ${bdStepCondition}) as b_${i}`,
+            `argMaxIf(${breakdownExpr(b.name)}, e.created_at, ${bdStepCondition}) as b_${i}`,
         );
         bdGroup = [];
       } else {
         bdExprs = breakdowns.map(
-          (b, i) =>
-            `${getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name)} as b_${i}`,
+          (b, i) => `${breakdownExpr(b.name)} as b_${i}`,
         );
         bdGroup = breakdowns.map((_, i) => `b_${i}`);
       }
 
+      const propIdentifiedFilter =
+        groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : '';
+
       ctes.push(`prop_bd AS (
-        SELECT ${entityKey}
+        SELECT e.${entityKey} AS ${entityKey}
           ${bdExprs.length > 0 ? `, ${bdExprs.join(', ')}` : ''}
-        FROM ${TABLE_NAMES.events}
-        WHERE project_id = ${sqlstring.escape(projectId)}
-          AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
-          AND name IN (${nameList})
-          ${identifiedFilter}
-        GROUP BY ${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
+        FROM ${TABLE_NAMES.events} AS e
+          ${traitJoins}
+        WHERE e.project_id = ${sqlstring.escape(projectId)}
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.name IN (${nameList})
+          ${propIdentifiedFilter}
+        GROUP BY e.${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
       )`);
     }
 
