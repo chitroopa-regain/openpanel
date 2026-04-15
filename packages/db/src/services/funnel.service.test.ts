@@ -518,6 +518,21 @@ describe('FunnelService.getFunnelPropertySums', () => {
       "events.name = 'Subscription: Paywall Viewed'",
     );
     expect(sql).toContain("events.name = 'Server: Purchase'");
+    // And the step-1 anchor `toDateTime('...')` literals must land in
+    // the windowFunnel predicate with SINGLE quotes, not double-escaped
+    // `''YYYY-MM-DD HH:MM:SS''` (which would happen if clix's SELECT
+    // serializer runs escapeDate over the raw string — see
+    // query-builder.ts escapeDate comment). Pin the happy shape here
+    // and explicitly reject the mangled form so a future regression in
+    // how the select is wrapped breaks this test instantly.
+    expect(sql).toContain(
+      "toDateTime('2026-04-15 00:00:00')",
+    );
+    expect(sql).toContain(
+      "toDateTime('2026-04-15 23:59:59')",
+    );
+    expect(sql).not.toContain("toDateTime(''");
+    expect(sql).not.toContain("''2026-04-15");
     // And the surrounding SELECT / WHERE / GROUP BY event-column refs
     // get the same alias so the later `profile.` columns can't collide.
     expect(sql).toContain('events.profile_id AS profile_id');

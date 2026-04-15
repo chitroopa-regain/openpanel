@@ -360,16 +360,28 @@ export class FunnelService {
       ),
     );
 
+    // Wrap the windowFunnel expression in clix.exp() so clix's select
+    // serializer (which regex-escapes any embedded date-like substring
+    // in plain strings via escapeDate → sqlstring.escape) leaves the
+    // raw SQL alone. Since the Mixpanel-parity fix now embeds
+    // `toDateTime('YYYY-MM-DD ...')` literals inside the step-1
+    // predicate, a plain string here would get double-escaped to
+    // `toDateTime(''YYYY-MM-DD ...'')` — which CH rejects with a
+    // syntax error at the empty-string literal. See query-builder.ts
+    // escapeDate + the comment on the SELECT serializer branch.
+    const windowFunnelExpr = clix.exp(
+      `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`,
+    );
     const selects =
       groupBy === 'profile_id'
         ? [
             `${col('profile_id')} AS profile_id`,
-            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`,
+            windowFunnelExpr,
             ...additionalSelects,
           ]
         : [
             `${col('session_id')} AS session_id`,
-            `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`,
+            windowFunnelExpr,
             `argMax(${col('profile_id')}, ${col('created_at')}) AS profile_id`,
             ...additionalSelects,
           ];
