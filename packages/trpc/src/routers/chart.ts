@@ -671,6 +671,7 @@ export const chartRouter = createTRPCRouter({
             propertyKey: funnelOptions.funnelProperty,
             breakdowns: chartInput.breakdowns,
             breakdownStep: funnelOptions.breakdownStep,
+            timezone,
           }),
           previous
             ? funnelService.getFunnelPropertySums({
@@ -684,6 +685,7 @@ export const chartRouter = createTRPCRouter({
                 propertyKey: funnelOptions.funnelProperty,
                 breakdowns: chartInput.breakdowns,
                 breakdownStep: funnelOptions.breakdownStep,
+                timezone,
               })
             : Promise.resolve(null),
         ]);

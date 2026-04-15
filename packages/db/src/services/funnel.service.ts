@@ -834,6 +834,7 @@ export class FunnelService {
           breakdownSelects,
           breakdownStep,
           eventSeries,
+          timezone,
         });
       } catch {
         // Timing query failed — continue without timing data
@@ -898,6 +899,7 @@ export class FunnelService {
     breakdownSelects = [],
     breakdownStep,
     eventSeries,
+    timezone,
   }: {
     projectId: string;
     startDate: string;
@@ -910,6 +912,7 @@ export class FunnelService {
     breakdownSelects?: string[];
     breakdownStep?: number;
     eventSeries?: ResolvedFunnelStep[];
+    timezone: string;
   }): Promise<Map<string, Record<string, number | null>>> {
     const result = new Map<string, Record<string, number | null>>();
     if (stepConditions.length < 2) {
@@ -1094,7 +1097,9 @@ export class FunnelService {
       ${bdGroupByInFinal}
     `;
 
-    const rows = await chQuery<Record<string, any>>(sql);
+    const rows = await chQuery<Record<string, any>>(sql, {
+      session_timezone: timezone,
+    });
 
     if (breakdowns.length === 0) {
       result.set('none', rows[0] ?? {});
@@ -1129,6 +1134,7 @@ export class FunnelService {
     propertyKey,
     breakdowns = [],
     breakdownStep,
+    timezone,
   }: {
     projectId: string;
     startDate: string;
@@ -1140,6 +1146,7 @@ export class FunnelService {
     propertyKey: string;
     breakdowns?: { name: string }[];
     breakdownStep?: number;
+    timezone: string;
   }): Promise<Map<string, number>> {
     const result = new Map<string, number>();
     if (stepConditions.length < 1) {
@@ -1309,7 +1316,9 @@ export class FunnelService {
       ${bdGroupByInFinal}
     `;
 
-    const rows = await chQuery<Record<string, any>>(sql);
+    const rows = await chQuery<Record<string, any>>(sql, {
+      session_timezone: timezone,
+    });
 
     if (breakdowns.length === 0) {
       const val = rows[0]?.total_sum;
