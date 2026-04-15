@@ -29,6 +29,7 @@ export function ReportPieChart() {
   if (
     isLazyLoading ||
     res.isLoading ||
+    res.isPlaceholderData ||
     (res.isFetching && !res.data?.series.length)
   ) {
     return <Loading />;
