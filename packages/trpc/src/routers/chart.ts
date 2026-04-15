@@ -18,7 +18,9 @@ import {
   getChartStartEndDate,
   getCustomEventWhereClause,
   getEventFiltersWhereClause,
-  getTraitBreakdownExpression,
+  getTraitBreakdownDescriptor,
+  qualifyFunnelCondition,
+  type TraitBreakdown,
   getEventMetasCached,
   getProfilesCached,
   getReportById,
@@ -1358,18 +1360,84 @@ export const chartRouter = createTRPCRouter({
         projectId,
       );
 
+      // Collect profile-trait breakdown descriptors so buildFunnelCte can
+      // register the per-trait CTEs + LEFT ANY JOIN. This mirrors the
+      // service's own getFunnel path and replaces the old correlated
+      // subquery helper (`getTraitBreakdownExpression`), which resolved
+      // `t.profile_id = profile_id` as `t.profile_id = t.profile_id`
+      // (unqualified inner-scope reference) and returned a global scalar
+      // instead of a per-profile value — so the View Users drawer would
+      // bucket every user into the same trait value for trait breakdowns.
+      const traitDescriptors = new Map<string, TraitBreakdown>();
+      for (const b of breakdownDims) {
+        const desc = getTraitBreakdownDescriptor(b.name);
+        if (desc && !traitDescriptors.has(desc.key)) {
+          traitDescriptors.set(desc.key, desc);
+        }
+      }
+
+      // Helper: return the SQL expression for a breakdown column. Trait
+      // breakdowns use the fully-qualified CTE column (`trait_<key>.value`),
+      // matching what buildFunnelCte injects via traitDescriptors. Non-trait
+      // breakdowns fall through to the event-property expression builder.
+      const breakdownExpr = (name: string): string => {
+        const desc = getTraitBreakdownDescriptor(name);
+        if (desc && traitDescriptors.has(desc.key)) {
+          return desc.column;
+        }
+        return getSelectPropertyKey(name);
+      };
+
+      // Pre-compute profile-join signals before building breakdownSelects,
+      // so the argMaxIf qualification trigger can account for the
+      // `profiles FINAL` join that may be attached a few lines below.
+      // Trait-backed profile.properties.* filters and breakdowns BOTH
+      // resolve through profile_traits (filters via `profile_id IN
+      // (SELECT ...)` subqueries, breakdowns via the trait CTE +
+      // LEFT ANY JOIN), so neither should trigger the profiles FINAL
+      // join. Mirrors FunnelService.getFunnel.
+      const profileFiltersRaw = funnelService.getProfileFilters(eventSeries);
+      const profileFilters = profileFiltersRaw.filter(
+        (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null,
+      );
+      const breakdownProfileFields = breakdownDims
+        .filter(
+          (b) =>
+            b.name.startsWith('profile.') &&
+            getTraitBreakdownDescriptor(b.name) === null,
+        )
+        .map((b) => b.name.replace('profile.', ''));
+      const allProfileFields = [...profileFilters, ...breakdownProfileFields];
+      const anyFilterOnProfile = profileFilters.length > 0;
+      const anyBreakdownOnProfile = breakdownProfileFields.length > 0;
+
+      // Any extra join attached to session_funnel (trait CTEs or
+      // profiles FINAL) can expose overlapping column names, making a
+      // bare event-column reference inside argMaxIf ambiguous. Mirrors
+      // FunnelService.getFunnel's broader trigger.
+      const needsQualify =
+        traitDescriptors.size > 0 ||
+        anyFilterOnProfile ||
+        anyBreakdownOnProfile;
+      const qualifiedCreatedAt = needsQualify
+        ? 'events.created_at'
+        : 'created_at';
+      const qualifyStepCondition = (expr: string) =>
+        needsQualify ? qualifyFunnelCondition(expr, 'events') : expr;
+
       const breakdownSelects =
         breakdownVals && breakdownDims.length > 0
           ? breakdownDims.map((b, i) => {
-              const expr =
-                getTraitBreakdownExpression(b.name, projectId) ??
-                getSelectPropertyKey(b.name);
+              const expr = breakdownExpr(b.name);
               if (
                 breakdownStepIdx !== undefined &&
                 breakdownStepIdx >= 0 &&
                 breakdownStepIdx < stepConditions.length
               ) {
-                return `argMaxIf(${expr}, created_at, ${stepConditions[breakdownStepIdx]}) as b_${i}`;
+                const cond = qualifyStepCondition(
+                  stepConditions[breakdownStepIdx]!,
+                );
+                return `argMaxIf(${expr}, ${qualifiedCreatedAt}, ${cond}) as b_${i}`;
               }
               return `${expr} as b_${i}`;
             })
@@ -1382,8 +1450,15 @@ export const chartRouter = createTRPCRouter({
           ? breakdownDims.map((_, i) => `b_${i}`)
           : [];
 
-      // Create funnel CTE using funnel service
-      const { query: funnelCte, firstTimeCtes } = funnelService.buildFunnelCte({
+      // Create funnel CTE using funnel service.
+      // Tell buildFunnelCte up-front whether we'll attach profiles FINAL
+      // below, so it can pre-qualify its internal windowFunnel step
+      // conditions before the downstream join makes them ambiguous.
+      const {
+        query: funnelCte,
+        firstTimeCtes,
+        traitCtes,
+      } = funnelService.buildFunnelCte({
         projectId,
         startDate,
         endDate,
@@ -1393,15 +1468,10 @@ export const chartRouter = createTRPCRouter({
         groupBy: group,
         additionalSelects: breakdownVals ? breakdownSelects : [],
         additionalGroupBy: breakdownVals ? breakdownGroupBy : [],
+        traitDescriptors,
+        expectProfilesFinalJoin:
+          anyFilterOnProfile || anyBreakdownOnProfile,
       });
-
-      // Check for profile filters and profile-based breakdowns — add
-      // profiles JOIN if needed by either step filters or breakdown dimensions.
-      const profileFilters = funnelService.getProfileFilters(eventSeries);
-      const breakdownProfileFields = breakdownDims
-        .filter((b) => b.name.startsWith('profile.'))
-        .map((b) => b.name.replace('profile.', ''));
-      const allProfileFields = [...profileFilters, ...breakdownProfileFields];
 
       if (allProfileFields.length > 0) {
         const profileColumns = new Set<string>(['id']);
@@ -1420,9 +1490,14 @@ export const chartRouter = createTRPCRouter({
         );
       }
 
-      // Build main query — first-time CTEs must be at top level
+      // Build main query — first-time CTEs and trait CTEs must be at the
+      // top level before session_funnel. buildFunnelCte returns both so
+      // the registration loop stays identical across callers.
       const query = clix(ch, timezone);
       for (const cte of firstTimeCtes) {
+        query.with(cte.name, cte.sql);
+      }
+      for (const cte of traitCtes) {
         query.with(cte.name, cte.sql);
       }
       query.with('session_funnel', funnelCte);

@@ -50,7 +50,7 @@ function normalizeBreakdownValue(value: unknown): string {
  * profile_id, device_id, created_at, name, properties. Other columns pass
  * through untouched.
  */
-function qualifyFunnelCondition(expr: string, alias = 'events'): string {
+export function qualifyFunnelCondition(expr: string, alias = 'events'): string {
   const columnPattern = /^\b(profile_id|device_id|created_at|name|properties)\b/;
   let result = '';
   let i = 0;
@@ -267,6 +267,7 @@ export class FunnelService {
     additionalSelects = [],
     additionalGroupBy = [],
     traitDescriptors = new Map(),
+    expectProfilesFinalJoin = false,
   }: {
     projectId: string;
     startDate: string;
@@ -278,6 +279,20 @@ export class FunnelService {
     additionalSelects?: string[];
     additionalGroupBy?: string[];
     traitDescriptors?: Map<string, TraitBreakdown>;
+    /**
+     * When true, the caller intends to attach `LEFT JOIN (SELECT ...
+     * FROM profiles FINAL)` to the returned `query` AFTER this method
+     * returns. That join can expose a second `properties` / `profile_id`
+     * column, so this method must qualify its internal `windowFunnel`
+     * step conditions (and the SELECT/WHERE/GROUP BY event-column refs)
+     * with the `events` alias proactively — otherwise the caller's
+     * later join silently creates `AMBIGUOUS_IDENTIFIER` failures on any
+     * step condition that references `properties[...]`, `profile_id`,
+     * `name`, `created_at`, etc. without an alias prefix. Trait CTE
+     * joins trigger the same qualification path through
+     * `traitDescriptors.size > 0`.
+     */
+    expectProfilesFinalJoin?: boolean;
   }) {
     // Build first-time-ever CTEs and JOIN aliases for steps that have firstTimeFilter
     const firstTimeCteAliases: string[] = [];
@@ -309,17 +324,32 @@ export class FunnelService {
 
     const rawFunnels = this.getFunnelConditions(eventSeries, projectId, firstTimeCteAliases);
 
-    // Once a trait CTE is joined, every bare event-column reference in this
-    // query becomes ambiguous. Qualify step conditions and static column refs
-    // with the `events.` alias (the bare table name, since clix's .from() does
-    // not apply an explicit alias). Subqueries inside `profile_id IN (...)`
-    // are preserved by qualifyFunnelCondition's subquery skip logic.
-    const needsQualify = traitDescriptors.size > 0;
+    // When a trait CTE is joined, OR the caller has signalled it will
+    // attach a profiles FINAL join after this method returns, every bare
+    // event-column reference in this query becomes ambiguous. Qualify
+    // step conditions and static column refs with the `events.` alias
+    // (the bare table name, since clix's .from() does not apply an
+    // explicit alias). Subqueries inside `profile_id IN (...)` are
+    // preserved by qualifyFunnelCondition's subquery-skip logic.
+    const needsQualify =
+      traitDescriptors.size > 0 || expectProfilesFinalJoin;
     const qualify = (expr: string) =>
       needsQualify ? qualifyFunnelCondition(expr, 'events') : expr;
     const col = (c: string) => (needsQualify ? `events.${c}` : c);
 
     const funnels = needsQualify ? rawFunnels.map((c) => qualify(c)) : rawFunnels;
+
+    // Mixpanel-parity attribution window: the report date range controls
+    // funnel ENTRIES (step 1 only), while steps 2..N may complete after
+    // endDate as long as they fall within funnelWindow of step 1's
+    // timestamp. Anchor step 1 to [startDate, endDate] and let the outer
+    // WHERE (extended below to endDate + funnelWindow) include later-step
+    // events that windowFunnel itself will gate via the window parameter.
+    if (funnels.length > 0) {
+      funnels[0] =
+        `(${funnels[0]}) AND ${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= toDateTime(${escapedEnd})`;
+    }
+    const funnelWindowSeconds = Math.ceil(funnelWindowMilliseconds / 1000);
 
     // Collect all real event names for the IN pre-filter.
     const allEventNames = uniq(
@@ -348,10 +378,9 @@ export class FunnelService {
       .select(selects)
       .from(TABLE_NAMES.events, false)
       .where('project_id', '=', projectId)
-      .where('created_at', 'BETWEEN', [
-        clix.datetime(startDate, 'toDateTime'),
-        clix.datetime(endDate, 'toDateTime'),
-      ])
+      .rawWhere(
+        `${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})`,
+      )
       .where('name', 'IN', allEventNames)
       // When trait CTEs are joined, group by the qualified column (the select
       // aliases it back to the bare name, so downstream refs still work).
@@ -395,7 +424,20 @@ export class FunnelService {
       );
     }
 
-    return { query, firstTimeCtes };
+    // Build the top-level CTE SQL for each trait descriptor so callers
+    // can register them unconditionally. Returning the CTEs here — rather
+    // than leaving each caller to loop over `traitDescriptors` again and
+    // compose the same SELECT — removes the "passed traitDescriptors but
+    // forgot to register the CTE" footgun that reached getFunnelProfiles.
+    const traitCtes: { name: string; sql: string }[] = [];
+    for (const desc of traitDescriptors.values()) {
+      traitCtes.push({
+        name: desc.cteName,
+        sql: `SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id`,
+      });
+    }
+
+    return { query, firstTimeCtes, traitCtes };
   }
 
   buildSessionsCte({
@@ -558,7 +600,18 @@ export class FunnelService {
       funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
     const funnelWindowMilliseconds = funnelWindowSeconds * 1000;
     const group = this.getFunnelGroup(funnelGroup);
-    const profileFilters = this.getProfileFilters(eventSeries);
+    // getProfileFilters returns every profile.* filter, including
+    // profile.properties.<trait> filters. Trait filters are already
+    // handled via `profile_id IN (SELECT profile_id FROM profile_traits
+    // ...)` in the step condition; they do NOT need the profiles FINAL
+    // join. Including them here was wasteful (attached an unused join)
+    // AND actively harmful (exposed a second `properties` column that
+    // made bare `properties[...]` references ambiguous in windowFunnel
+    // step conditions and argMaxIf breakdown selects).
+    const profileFiltersRaw = this.getProfileFilters(eventSeries);
+    const profileFilters = profileFiltersRaw.filter(
+      (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null,
+    );
     const anyFilterOnProfile = profileFilters.length > 0;
     // profile.properties.* breakdowns use profile_traits CTE (traitDescriptors);
     // only profile.<scalar> breakdowns like profile.email still need the profiles CTE.
@@ -605,12 +658,38 @@ export class FunnelService {
     let breakdownSelects: string[];
     let breakdownGroupBy: string[];
 
+    // When any extra join is attached to session_funnel (trait CTEs,
+    // or profiles FINAL for scalar profile filters / scalar profile
+    // breakdowns), bare event-column references inside argMaxIf
+    // arguments become ambiguous — every join can expose overlapping
+    // column names (profile.properties vs events.properties,
+    // profile_id in the trait CTE, etc.). Qualify `created_at` AND the
+    // full step condition with the `events` alias so references
+    // resolve to the event row.
+    //
+    // Note: profile-trait filters like profile.properties.country are
+    // already filtered out of `profileFilters` above, so they no
+    // longer trigger the profiles FINAL join on their own. But a
+    // scalar profile filter (e.g. profile.email) or a scalar profile
+    // breakdown (e.g. profile.email) still will — hence this broader
+    // trigger covers both trait CTE joins and that remaining path.
+    const needsBreakdownQualify =
+      traitDescriptors.size > 0 ||
+      anyFilterOnProfile ||
+      anyBreakdownOnProfile;
+    const argMaxIfCreatedAt = needsBreakdownQualify
+      ? 'events.created_at'
+      : 'created_at';
+
     if (breakdownStep !== undefined && breakdownStep < eventSeries.length) {
       const stepConditions = this.getFunnelConditions(eventSeries, projectId);
-      const stepCondition = stepConditions[breakdownStep]!;
+      const rawStepCondition = stepConditions[breakdownStep]!;
+      const stepCondition = needsBreakdownQualify
+        ? qualifyFunnelCondition(rawStepCondition, 'events')
+        : rawStepCondition;
       breakdownSelects = breakdowns.map(
         (b, index) =>
-          `argMaxIf(${breakdownExpr(b.name)}, created_at, ${stepCondition}) as b_${index}`,
+          `argMaxIf(${breakdownExpr(b.name)}, ${argMaxIfCreatedAt}, ${stepCondition}) as b_${index}`,
       );
       // No GROUP BY for breakdown columns — argMaxIf aggregates them
       breakdownGroupBy = [];
@@ -623,7 +702,11 @@ export class FunnelService {
 
     const stepConditions = this.getFunnelConditions(eventSeries, projectId);
 
-    const { query: funnelCte, firstTimeCtes } = this.buildFunnelCte({
+    const {
+      query: funnelCte,
+      firstTimeCtes,
+      traitCtes,
+    } = this.buildFunnelCte({
       projectId,
       startDate: startDate!,
       endDate: endDate!,
@@ -634,6 +717,11 @@ export class FunnelService {
       additionalSelects: breakdownSelects,
       additionalGroupBy: breakdownGroupBy,
       traitDescriptors,
+      // If we're going to attach profiles FINAL below, tell
+      // buildFunnelCte so its internal windowFunnel step conditions
+      // pre-qualify their event columns with `events.`.
+      expectProfilesFinalJoin:
+        anyFilterOnProfile || anyBreakdownOnProfile,
     });
 
     if (anyFilterOnProfile || anyBreakdownOnProfile) {
@@ -673,14 +761,11 @@ export class FunnelService {
     }
 
     // Register trait CTEs at the top level so they are visible inside
-    // session_funnel. The LEFT ANY JOIN on events.profile_id is added inside
-    // buildFunnelCte (via traitDescriptors) — these CTEs must precede
-    // session_funnel in the WITH clause.
-    for (const desc of traitDescriptors.values()) {
-      funnelQuery.with(
-        desc.cteName,
-        `SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id`,
-      );
+    // session_funnel. buildFunnelCte returns them alongside firstTimeCtes
+    // so callers can't forget the outer registration (see getFunnelProfiles
+    // router path for the bug this defends against).
+    for (const cte of traitCtes) {
+      funnelQuery.with(cte.name, cte.sql);
     }
 
     funnelQuery.with('session_funnel', funnelCte);
@@ -929,6 +1014,11 @@ export class FunnelService {
     const ctes: string[] = [];
     const hasBreakdowns = breakdowns.length > 0;
 
+    // Mixpanel-parity attribution window: step_1 stays anchored to the
+    // report range; step 2..N may land up to funnelWindowSeconds after
+    // endDate. See the matching comment in getFunnelPropertySums.
+    const escapedExtendedEnd = `addSeconds(toDateTime(${sqlstring.escape(endDate)}), ${funnelWindowSeconds})`;
+
     // Step 1 CTE (no breakdown columns — timing CTEs are entity-scoped)
     ctes.push(`step_1 AS (
       SELECT ${entityKey},
@@ -942,7 +1032,7 @@ export class FunnelService {
       GROUP BY ${entityKey}
     )`);
 
-    // Steps 2..N
+    // Steps 2..N — scan extended so cross-day conversions are captured.
     for (let i = 1; i < stepConditions.length; i++) {
       const prevCte = `step_${i}`;
       const currCte = `step_${i + 1}`;
@@ -953,7 +1043,7 @@ export class FunnelService {
         JOIN ${TABLE_NAMES.events} e ON e.${entityKey} = prev.${entityKey}
         JOIN step_1 s1 ON s1.${entityKey} = prev.${entityKey}
         WHERE e.project_id = ${sqlstring.escape(projectId)}
-          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND ${escapedExtendedEnd}
           AND e.name IN (${nameList})
           ${groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : ''}
           AND (${stepConditions[i]})
@@ -1051,7 +1141,7 @@ export class FunnelService {
         FROM ${TABLE_NAMES.events} AS e
           ${traitJoins}
         WHERE e.project_id = ${sqlstring.escape(projectId)}
-          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND ${escapedExtendedEnd}
           AND e.name IN (${nameList})
           ${timingIdentifiedFilter}
         GROUP BY e.${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
@@ -1164,7 +1254,15 @@ export class FunnelService {
     const lastStepIdx = stepConditions.length; // 1-based
     const hasBreakdowns = breakdowns.length > 0;
 
-    // Step 1 CTE
+    // Mixpanel-parity attribution window: step_1 must fire inside the
+    // report range [startDate, endDate], but step 2..N + the property
+    // lookup may land up to funnelWindowSeconds AFTER endDate. The per-user
+    // `dateDiff` gate further down still caps each completer to
+    // step1_ts + funnelWindow, so extending the scan here only widens the
+    // *candidate* set — it does not change which users count.
+    const escapedExtendedEnd = `addSeconds(toDateTime(${sqlstring.escape(endDate)}), ${funnelWindowSeconds})`;
+
+    // Step 1 CTE — stays anchored to the report window.
     ctes.push(`step_1 AS (
       SELECT ${entityKey},
         min(created_at) as step_1_ts
@@ -1177,7 +1275,8 @@ export class FunnelService {
       GROUP BY ${entityKey}
     )`);
 
-    // Steps 2..N
+    // Steps 2..N — scan extended to endDate + funnelWindow so cross-day
+    // conversions (viewed yesterday, converted today) are captured.
     for (let i = 1; i < stepConditions.length; i++) {
       const prevCte = `step_${i}`;
       const currCte = `step_${i + 1}`;
@@ -1188,7 +1287,7 @@ export class FunnelService {
         JOIN ${TABLE_NAMES.events} e ON e.${entityKey} = prev.${entityKey}
         JOIN step_1 s1 ON s1.${entityKey} = prev.${entityKey}
         WHERE e.project_id = ${sqlstring.escape(projectId)}
-          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND ${escapedExtendedEnd}
           AND e.name IN (${nameList})
           ${groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : ''}
           AND (${stepConditions[i]})
@@ -1258,13 +1357,19 @@ export class FunnelService {
       const propIdentifiedFilter =
         groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : '';
 
+      // prop_bd must scan the same extended window as step_2..N. When
+      // breakdownStep > 0 the breakdown value comes from a later-step
+      // event via argMaxIf; if that event is cross-day and falls outside
+      // this scan, argMaxIf returns NULL and the user is silently
+      // re-bucketed as "Not set" — losing the attribution that step_2..N
+      // just captured.
       ctes.push(`prop_bd AS (
         SELECT e.${entityKey} AS ${entityKey}
           ${bdExprs.length > 0 ? `, ${bdExprs.join(', ')}` : ''}
         FROM ${TABLE_NAMES.events} AS e
           ${traitJoins}
         WHERE e.project_id = ${sqlstring.escape(projectId)}
-          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+          AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND ${escapedExtendedEnd}
           AND e.name IN (${nameList})
           ${propIdentifiedFilter}
         GROUP BY e.${entityKey}${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
@@ -1285,7 +1390,7 @@ export class FunnelService {
       FROM ${lastStepCte} ls
       JOIN ${TABLE_NAMES.events} e ON e.${entityKey} = ls.${entityKey}
       WHERE e.project_id = ${sqlstring.escape(projectId)}
-        AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
+        AND e.created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND ${escapedExtendedEnd}
         AND e.name IN (${nameList})
         ${groupBy === 'profile_id' ? 'AND e.profile_id != e.device_id' : ''}
       GROUP BY ls.${entityKey}
