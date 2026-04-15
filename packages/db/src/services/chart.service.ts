@@ -302,8 +302,12 @@ export function getChartSql({
   const anyFilterOnProfile = event.filters.some(
     (filter) => filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
   );
-  const anyBreakdownOnProfile = breakdowns.some((breakdown) =>
-    breakdown.name.startsWith('profile.')
+  // profile.properties.* breakdowns use profile_traits CTE (see registerTraitBreakdowns);
+  // only profile.<scalar> breakdowns like profile.email still need the profile CTE.
+  const anyBreakdownOnProfile = breakdowns.some(
+    (breakdown) =>
+      breakdown.name.startsWith('profile.') &&
+      getTraitBreakdownDescriptor(breakdown.name) === null
   );
 
   // Build WHERE clause without the bar filter (for use in subqueries and CTEs)
@@ -339,9 +343,13 @@ export function getChartSql({
         }
       });
 
-    // Collect from breakdowns
+    // Collect from breakdowns (only profile.<scalar> — trait breakdowns use profile_traits CTE)
     breakdowns
-      .filter((b) => b.name.startsWith('profile.'))
+      .filter(
+        (b) =>
+          b.name.startsWith('profile.') &&
+          getTraitBreakdownDescriptor(b.name) === null
+      )
       .forEach((b) => {
         const fieldName = b.name.replace('profile.', '').split('.')[0];
         if (fieldName && fieldName === 'properties') {
@@ -613,8 +621,12 @@ export function getAggregateChartSql({
   const anyFilterOnProfile = event.filters.some(
     (filter) => filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
   );
-  const anyBreakdownOnProfile = breakdowns.some((breakdown) =>
-    breakdown.name.startsWith('profile.')
+  // profile.properties.* breakdowns use profile_traits CTE (see registerTraitBreakdowns);
+  // only profile.<scalar> breakdowns like profile.email still need the profile CTE.
+  const anyBreakdownOnProfile = breakdowns.some(
+    (breakdown) =>
+      breakdown.name.startsWith('profile.') &&
+      getTraitBreakdownDescriptor(breakdown.name) === null
   );
 
   // Build WHERE clause without the bar filter (for use in subqueries and CTEs)
@@ -648,9 +660,13 @@ export function getAggregateChartSql({
         }
       });
 
-    // Collect from breakdowns
+    // Collect from breakdowns (only profile.<scalar> — trait breakdowns use profile_traits CTE)
     breakdowns
-      .filter((b) => b.name.startsWith('profile.'))
+      .filter(
+        (b) =>
+          b.name.startsWith('profile.') &&
+          getTraitBreakdownDescriptor(b.name) === null
+      )
       .forEach((b) => {
         const fieldName = b.name.replace('profile.', '').split('.')[0];
         if (fieldName && fieldName === 'properties') {
