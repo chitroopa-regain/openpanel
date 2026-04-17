@@ -45,6 +45,9 @@ function normalizeBreakdownValue(value: unknown): string {
  *     inner `profile_id FROM profile_traits` stays bare, bound to the
  *     subquery's own FROM)
  *   - leaves already-qualified references alone (anything preceded by `.`)
+ *   - leaves identifier suffixes alone (anything preceded by a word char,
+ *     e.g. `ft_profile_id` from the first-time-ever JOIN alias must not be
+ *     split into `ft_` + `events.profile_id`)
  *
  * Covers the event columns that funnel condition builders actually emit:
  * profile_id, device_id, created_at, name, properties. Other columns pass
@@ -52,6 +55,7 @@ function normalizeBreakdownValue(value: unknown): string {
  */
 export function qualifyFunnelCondition(expr: string, alias = 'events'): string {
   const columnPattern = /^\b(profile_id|device_id|created_at|name|properties)\b/;
+  const wordChar = /\w/;
   let result = '';
   let i = 0;
   while (i < expr.length) {
@@ -113,12 +117,14 @@ export function qualifyFunnelCondition(expr: string, alias = 'events'): string {
       continue;
     }
 
-    // Bare column identifier at a word boundary — qualify unless already prefixed
+    // Bare column identifier at a word boundary — qualify unless already
+    // prefixed (`profile.profile_id`) OR mid-identifier (`ft_profile_id`).
+    // The regex's `\b` anchor matches at slice-start regardless of what
+    // precedes it in the full string, so we must inspect prevChar ourselves.
     const colMatch = expr.slice(i).match(columnPattern);
     if (colMatch) {
       const prevChar = i > 0 ? expr[i - 1]! : '';
-      if (prevChar === '.') {
-        // Already qualified — pass through unchanged
+      if (prevChar === '.' || wordChar.test(prevChar)) {
         result += colMatch[1]!;
       } else {
         result += `${alias}.${colMatch[1]!}`;

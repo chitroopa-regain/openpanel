@@ -630,6 +630,28 @@ describe('FunnelService.getFunnelPropertySums', () => {
     expect(qualifyFunnelCondition("name = 'X'", 'e')).toBe(
       "e.name = 'X'",
     );
+
+    // First-time-ever join column `ft_<i>.ft_profile_id` must NOT be split
+    // into `ft_<i>.ft_events.profile_id`. The regex anchor `\b` matches at
+    // slice-start (no char before in the slice) even when the preceding
+    // char in the full string is a word char, so the helper must reject
+    // mid-identifier matches via prevChar. The c54-launch-board funnel hit
+    // this by combining `firstTimeFilter: true` on step A with a
+    // profile.properties.* trait filter — the CH error was:
+    // "Identifier 'ft_0.ft_events.profile_id' cannot be resolved from
+    //  subquery with name ft_0. In scope session_funnel."
+    expect(
+      qualifyFunnelCondition(
+        "(name = 'X' AND ft_0.ft_profile_id != '')",
+      ),
+    ).toBe("(events.name = 'X' AND ft_0.ft_profile_id != '')");
+
+    // Likewise for trait CTE alias columns that happen to end in `name`,
+    // `properties`, etc. — `trait_user_name.value` must not become
+    // `trait_user_events.name.value`.
+    expect(
+      qualifyFunnelCondition("trait_user_name.value = 'a' AND name = 'X'"),
+    ).toBe("trait_user_name.value = 'a' AND events.name = 'X'");
   });
 
   it('buildFunnelCte emits trait CTEs + LEFT ANY JOIN for profile.properties breakdowns', async () => {
@@ -710,6 +732,126 @@ describe('FunnelService.getFunnelPropertySums', () => {
       `FROM ${mocks.tables.profileTraits} WHERE project_id = 'regain-app' AND key = 'show_monthly_back_press_offer'`
     );
     expect(cteSql).toContain('GROUP BY profile_id');
+  });
+
+  it('buildFunnelCte preserves ft_<i>.ft_profile_id verbatim alongside trait CTEs', async () => {
+    // End-to-end regression for the c54-launch-board funnel that crashed
+    // with:
+    //   Identifier 'ft_0.ft_events.profile_id' cannot be resolved from
+    //   subquery with name ft_0. In scope session_funnel.
+    //
+    // Shape: step 1 has `firstTimeFilter: true` AND the funnel has a
+    // trait breakdown (profile.properties.show_monthly_back_press_offer)
+    // AND a trait filter (profile.properties.country = 'IN' becomes an
+    // `IN (SELECT ... FROM profile_traits ...)` subquery inside step 1's
+    // predicate). All three together trigger `needsQualify=true`, which
+    // used to split `ft_0.ft_profile_id` → `ft_0.ft_events.profile_id`
+    // via qualifyFunnelCondition's regex. The join alias is `ft_0` and
+    // the CTE column is `ft_profile_id` — they must stay intact.
+    const service = new FunnelService({} as any);
+    const traitDescriptors = new Map([
+      [
+        'show_monthly_back_press_offer',
+        {
+          key: 'show_monthly_back_press_offer',
+          cteName: 'trait_show_monthly_back_press_offer',
+          column: 'trait_show_monthly_back_press_offer.value',
+        },
+      ],
+    ]);
+
+    const { query, firstTimeCtes } = service.buildFunnelCte({
+      projectId: 'regain-app',
+      startDate: '2026-03-18 00:00:00',
+      endDate: '2026-04-18 00:00:00',
+      eventSeries: [
+        {
+          id: 'KEbT',
+          name: 'All New Users',
+          displayName: 'All New Users',
+          type: 'event',
+          segment: 'event',
+          firstTimeFilter: true,
+          filters: [
+            {
+              id: 'OHHm',
+              name: 'profile.properties.country',
+              value: ['IN'],
+              operator: 'is',
+            },
+            {
+              id: 'aBFj',
+              name: 'app_version',
+              value: ['54.3.1571'],
+              operator: 'is',
+            },
+          ],
+          customEventComponents: [
+            { eventName: 'New User Identify', filters: [] },
+            { eventName: 'Started Mixpanel Tracking: Beginning', filters: [] },
+            {
+              eventName: 'Started Mixpanel Tracking: From Setup Completed',
+              filters: [],
+            },
+          ],
+        },
+        {
+          id: 'thYj',
+          name: 'Subscription: Paywall Viewed',
+          type: 'event',
+          filters: [],
+          segment: 'event',
+        },
+        {
+          id: 'YYQT',
+          name: 'Server: Purchase',
+          type: 'event',
+          filters: [],
+          segment: 'event',
+        },
+      ] as any,
+      funnelWindowMilliseconds: 604800000, // 7 days
+      timezone: 'Asia/Calcutta',
+      groupBy: 'profile_id',
+      additionalSelects: [
+        'trait_show_monthly_back_press_offer.value as b_0',
+      ],
+      additionalGroupBy: ['b_0'],
+      traitDescriptors,
+    });
+
+    const sql = normalizeSql(query.toSQL());
+
+    // The first-time join must be registered against events.profile_id and
+    // its predicate must stay `ft_0.ft_profile_id != ''` verbatim.
+    expect(sql).toContain(
+      `LEFT JOIN first_time_step_0 ft_0 ON ft_0.ft_profile_id = events.profile_id`
+    );
+    expect(sql).toContain("ft_0.ft_profile_id != ''");
+
+    // The qualifier must not split `ft_profile_id` into `ft_` + `events.profile_id`.
+    expect(sql).not.toContain('ft_0.ft_events.profile_id');
+    expect(sql).not.toContain('ft_events.profile_id');
+
+    // Step 1 condition still gets qualified where it should — event-name
+    // references become `events.name = ...`, proving qualification is
+    // running (so the preserved `ft_0.ft_profile_id` above isn't a
+    // no-op from qualify being skipped entirely).
+    expect(sql).toContain("events.name = 'New User Identify'");
+
+    // And the inner trait subquery for the country filter stays bare —
+    // its `profile_id` is bound to `profile_traits` inside the subquery.
+    expect(sql).toContain(
+      "events.profile_id IN (SELECT profile_id FROM"
+    );
+    expect(sql).not.toContain('SELECT events.profile_id FROM');
+
+    // The first-time CTE itself is emitted at the top level.
+    expect(firstTimeCtes).toHaveLength(1);
+    expect(firstTimeCtes[0]!.name).toBe('first_time_step_0');
+    expect(firstTimeCtes[0]!.sql).toContain(
+      'SELECT profile_id as ft_profile_id'
+    );
   });
 
   it('keeps the dateDiff per-user cap alongside the widened scan', async () => {
