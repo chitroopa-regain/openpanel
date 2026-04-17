@@ -464,30 +464,13 @@ export function getChartSql({
   const effectiveBreakdowns =
     event.segment === 'frequency_distribution' ? [] : breakdowns;
 
-  // Use CTE to define top breakdown values once, then filter main query to top N.
-  // Skip when trait breakdowns are present — ClickHouse CTEs aren't materialized,
-  // so referencing a JOINed CTE column in IN/JOIN triggers "correlated subquery" errors.
-  // Trait breakdowns are typically low-cardinality (boolean/category), so the GROUP BY
-  // naturally produces few values and the outer LIMIT handles the rest.
-  const hasTraitBreakdown = effectiveBreakdowns.some(
-    (b) => getTraitBreakdownDescriptor(b.name) !== null
-  );
-  if (effectiveBreakdowns.length > 0 && limit && !hasTraitBreakdown) {
-    const breakdownSelects = effectiveBreakdowns
-      .map((b) => getBreakdownExpr(b.name, traitDescriptors))
-      .join(', ');
-
-    addCte(
-      'top_breakdowns',
-      `SELECT ${breakdownSelects}
-      FROM ${TABLE_NAMES.events} e
-      ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${getWhereWithoutBar()}
-      GROUP BY ${breakdownSelects}
-      ORDER BY count(*) DESC
-      LIMIT ${limit}`
-    );
-
-    sb.where.bar = `(${effectiveBreakdowns.map((b) => getBreakdownExpr(b.name, traitDescriptors)).join(',')}) IN (SELECT * FROM top_breakdowns)`;
+  // Skip top_breakdowns CTE for time-series charts with breakdowns.
+  // ClickHouse CTEs are not materialized — IN (SELECT * FROM cte) fails with
+  // "correlated subqueries not supported" for trait columns, Map access expressions
+  // (properties['X']), and other non-trivial expressions.
+  // Apply LIMIT to bound result set for high-cardinality breakdowns.
+  if (effectiveBreakdowns.length > 0 && limit) {
+    sb.limit = limit;
   }
 
   effectiveBreakdowns.forEach((breakdown, index) => {
@@ -572,7 +555,8 @@ export function getChartSql({
       ) as total_count`;
   }
 
-  const sql = `${getWith()}${getSelect()} ${getFrom()} ${getJoins()} ${getWhere()} ${getGroupBy()} ${getOrderBy()} ${getFill()}`;
+  const getLimit = () => (sb.limit ? `LIMIT ${sb.limit}` : '');
+  const sql = `${getWith()}${getSelect()} ${getFrom()} ${getJoins()} ${getWhere()} ${getGroupBy()} ${getOrderBy()} ${getLimit()} ${getFill()}`;
   console.log('-- Report --');
   console.log(sql.replaceAll(/[\n\r]/g, ' '));
   console.log('-- End --');
@@ -756,31 +740,11 @@ export function getAggregateChartSql({
     sb.where.property = qualifyProfileId(segmentAggregate.whereClause, aggTraitDescriptors);
   }
 
-  // Skip top_breakdowns CTE when trait breakdowns are present (same reason as time-series).
-  const hasAggTraitBreakdown = breakdowns.some(
-    (b) => getTraitBreakdownDescriptor(b.name) !== null
-  );
-  if (breakdowns.length > 0 && limit && !hasAggTraitBreakdown) {
-    const breakdownExpressions = breakdowns.map(
-      (b) => getBreakdownExpr(b.name, aggTraitDescriptors)
-    );
-    const breakdownSelects = breakdownExpressions.join(', ');
-
-    addCte(
-      'top_breakdowns',
-      `SELECT ${breakdownSelects}
-      FROM (
-        SELECT ${breakdownSelects}, ${segmentAggregate.expression} as breakdown_metric
-        FROM ${TABLE_NAMES.events} e
-        ${profilesJoinRef ? `${profilesJoinRef} ` : ''}${getWhereWithoutBar()}
-        GROUP BY ${breakdownSelects}
-        ORDER BY breakdown_metric DESC
-        LIMIT ${limit}
-      )`
-    );
-
-    sb.where.bar = `(${breakdownExpressions.join(',')}) IN (SELECT * FROM top_breakdowns)`;
-  }
+  // Skip top_breakdowns CTE for aggregate/pie charts entirely.
+  // ClickHouse CTEs are not materialized — IN (SELECT * FROM cte) fails with
+  // "correlated subqueries not supported" for both trait columns and Map access
+  // expressions like properties['paywallVariant']. The outer ORDER BY + LIMIT
+  // already restricts the result set to the top N breakdown values.
 
   // Add breakdowns to SELECT and GROUP BY
   breakdowns.forEach((breakdown, index) => {
