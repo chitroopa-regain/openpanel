@@ -539,8 +539,9 @@ function FunnelBarLabel({
   height,
   value,
   payload,
-}: FunnelBarLabelProps) {
-  const currentVariant = payload?.['step:data:0'];
+  breakdownIndex = 0,
+}: FunnelBarLabelProps & { breakdownIndex?: number }) {
+  const currentVariant = payload?.[`step:data:${breakdownIndex}`];
 
   if (
     typeof x !== 'number' ||
@@ -671,8 +672,9 @@ function FunnelBarShape(props: FunnelBarShapeProps) {
 
 function FunnelBreakdownBarShape({
   showLabel,
+  breakdownIndex,
   ...props
-}: FunnelBarShapeProps & { showLabel?: boolean }) {
+}: FunnelBarShapeProps & { showLabel?: boolean; breakdownIndex?: number }) {
   const { x, y, width, height, fill, value, isActive } = props;
 
   if (
@@ -710,7 +712,9 @@ function FunnelBreakdownBarShape({
   return (
     <g>
       <path d={topRoundedPath} fill={resolvedFill} stroke="none" />
-      {showLabel && <FunnelBarLabel {...props} />}
+      {showLabel && (
+        <FunnelBarLabel {...props} breakdownIndex={breakdownIndex} />
+      )}
     </g>
   );
 }
@@ -1007,6 +1011,7 @@ export function Chart({
                         shape={
                           <FunnelBreakdownBarShape
                             showLabel={showBreakdownPreviewLabels}
+                            breakdownIndex={breakdownIndex}
                           />
                         }
                       >
