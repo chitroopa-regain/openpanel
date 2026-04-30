@@ -1,52 +1,51 @@
 import type { RouterOutputs } from '@/trpc/client';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 export type IVisibleFunnelBreakdowns = ReturnType<
   typeof useVisibleFunnelBreakdowns
 >['breakdowns'];
 
-/** Get the top N breakdown IDs ranked by Total Conv % descending. */
-function getTopNIds(
-  data: RouterOutputs['chart']['funnel']['current'],
-  n: number,
-): string[] {
-  return [...data]
-    .sort((a, b) => (b.lastStep?.percent ?? 0) - (a.lastStep?.percent ?? 0))
-    .slice(0, n)
-    .map((item) => item.id);
-}
+type FunnelBreakdownRow = RouterOutputs['chart']['funnel']['current'][number];
 
 export function useVisibleFunnelBreakdowns(
   data: RouterOutputs['chart']['funnel']['current'],
-  limit?: number | undefined,
+  limit: number | undefined,
+  hiddenBreakdowns: string[] | undefined,
 ) {
   const max = limit ?? 10;
-  const [visibleSeries, setVisibleSeries] = useState<string[]>(
-    getTopNIds(data, max),
+
+  const ranked = useMemo<FunnelBreakdownRow[]>(
+    () =>
+      [...data].sort(
+        (a, b) => (b.lastStep?.percent ?? 0) - (a.lastStep?.percent ?? 0),
+      ),
+    [data],
   );
 
-  useEffect(() => {
-    const next = getTopNIds(data, max);
-    setVisibleSeries((prev) => {
-      if (
-        prev.length === next.length &&
-        prev.every((id, i) => id === next[i])
-      ) {
-        return prev;
-      }
-      return next;
-    });
-  }, [data, max]);
+  const visibleSeriesIds = useMemo(() => {
+    const hidden = new Set(hiddenBreakdowns ?? []);
+    return ranked
+      .slice(0, max)
+      .map((item) => item.id)
+      .filter((id) => !hidden.has(id));
+  }, [ranked, max, hiddenBreakdowns]);
 
-  return useMemo(() => {
-    return {
-      breakdowns: data
-        .map((item, index) => ({
-          ...item,
-          index,
-        }))
-        .filter((item) => visibleSeries.includes(item.id)),
-      setVisibleSeries,
-    } as const;
-  }, [visibleSeries, data]);
+  const breakdowns = useMemo(
+    () =>
+      data
+        .map((item, index) => ({ ...item, index }))
+        .filter((item) => visibleSeriesIds.includes(item.id)),
+    [data, visibleSeriesIds],
+  );
+
+  /** Rank (1-based) of a breakdown id in total-conv-% order. 0 if not found. */
+  const rankOf = useMemo(() => {
+    const indexById = new Map(ranked.map((r, i) => [r.id, i + 1]));
+    return (id: string) => indexById.get(id) ?? 0;
+  }, [ranked]);
+
+  return useMemo(
+    () => ({ breakdowns, visibleSeriesIds, rankOf }) as const,
+    [breakdowns, visibleSeriesIds, rankOf],
+  );
 }

@@ -11,7 +11,10 @@ import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdown
 import { useDispatch } from '@/redux';
 import { pushModal } from '@/modals';
 import { useCallback } from 'react';
-import { changeFunnelTopN } from '../../../components/report/reportSlice';
+import {
+  changeFunnelHiddenBreakdowns,
+  changeFunnelTopN,
+} from '../../../components/report/reportSlice';
 import { Chart, Summary } from './chart';
 import { BreakdownList } from './breakdown-list';
 
@@ -34,17 +37,49 @@ export function ReportFunnelChart() {
   const funnelOptions =
     report.options?.type === 'funnel' ? report.options : undefined;
   const savedTopN = funnelOptions?.topN ?? 10;
+  const savedHiddenBreakdowns = funnelOptions?.hiddenBreakdowns;
   const dispatch = useDispatch();
 
   // Hook for limiting which breakdowns are shown in the chart only
-  const { breakdowns: visibleBreakdowns, setVisibleSeries } =
-    useVisibleFunnelBreakdowns(res.data?.current ?? [], savedTopN);
+  const {
+    breakdowns: visibleBreakdowns,
+    visibleSeriesIds,
+    rankOf,
+  } = useVisibleFunnelBreakdowns(
+    res.data?.current ?? [],
+    savedTopN,
+    savedHiddenBreakdowns,
+  );
 
   const handleTopNChange = useCallback(
     (n: number | undefined) => {
       dispatch(changeFunnelTopN(n));
     },
     [dispatch],
+  );
+
+  const handleToggleVisibility = useCallback(
+    (id: string) => {
+      const isVisible = visibleSeriesIds.includes(id);
+      const hidden = savedHiddenBreakdowns ?? [];
+      if (isVisible) {
+        // Hide: explicitly add to blocklist.
+        dispatch(changeFunnelHiddenBreakdowns([...hidden, id]));
+        return;
+      }
+      // Show: remove from hidden if present, and bump topN if rank is
+      // below the current cutoff so the row actually becomes visible.
+      if (hidden.includes(id)) {
+        dispatch(
+          changeFunnelHiddenBreakdowns(hidden.filter((h) => h !== id)),
+        );
+      }
+      const rank = rankOf(id);
+      if (rank > 0 && rank > savedTopN) {
+        dispatch(changeFunnelTopN(rank === 10 ? undefined : rank));
+      }
+    },
+    [visibleSeriesIds, savedHiddenBreakdowns, savedTopN, rankOf, dispatch],
   );
 
   const handleInspectStep = useCallback(
@@ -93,8 +128,8 @@ export function ReportFunnelChart() {
       {isEditMode && (
         <BreakdownList
           data={res.data}
-          visibleSeriesIds={visibleBreakdowns.map((b) => b.id)}
-          setVisibleSeries={setVisibleSeries}
+          visibleSeriesIds={visibleSeriesIds}
+          onToggleVisibility={handleToggleVisibility}
           onInspectStep={handleInspectStep}
           savedTopN={savedTopN}
           onTopNChange={handleTopNChange}

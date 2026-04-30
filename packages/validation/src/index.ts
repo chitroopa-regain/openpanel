@@ -180,6 +180,8 @@ export const zFunnelOptions = z.object({
   topN: z.number().int().positive().optional(),
   /** Property to sum for funnel_metric chart type (e.g. 'properties.value_inr') */
   funnelProperty: z.string().optional(),
+  /** Breakdown IDs explicitly hidden by the user. Survives reload. */
+  hiddenBreakdowns: z.array(z.string()).optional(),
 });
 
 export const zRetentionOptions = z.object({

@@ -11,7 +11,7 @@ type FunnelSeries = RouterOutputs['chart']['funnel']['current'][number];
 interface BreakdownListProps {
   data: RouterOutputs['chart']['funnel'];
   visibleSeriesIds: string[];
-  setVisibleSeries: React.Dispatch<React.SetStateAction<string[]>>;
+  onToggleVisibility: (id: string) => void;
   onInspectStep?: (
     stepIndex: number,
     breakdownValues?: string[],
@@ -66,7 +66,7 @@ const stickyHeaderLeft2 =
 export function BreakdownList({
   data,
   visibleSeriesIds,
-  setVisibleSeries,
+  onToggleVisibility,
   onInspectStep,
   savedTopN,
   onTopNChange,
@@ -75,18 +75,9 @@ export function BreakdownList({
   const number = useNumber();
   const [sortKey, setSortKey] = useState<SortKey>('totalConv');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [topN, setTopN] = useState(savedTopN ?? 10);
-  const [topNDraft, setTopNDraft] = useState(savedTopN ?? 10);
+  const displayedTopN = savedTopN ?? 10;
+  const [topNDraft, setTopNDraft] = useState(displayedTopN);
   const [showTopNMenu, setShowTopNMenu] = useState(false);
-
-  const toggleVisibility = (id: string) => {
-    setVisibleSeries((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter((s) => s !== id);
-      }
-      return [...prev, id];
-    });
-  };
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -119,23 +110,13 @@ export function BreakdownList({
     return items;
   }, [allBreakdowns, sortKey, sortDir]);
 
-  // Base ranking for Top N: always Total Conv % desc, ignoring visibility grouping.
-  const rankedBreakdowns = useMemo(() => {
-    const items = [...allBreakdowns];
-    items.sort((a, b) => (b.lastStep?.percent ?? 0) - (a.lastStep?.percent ?? 0));
-    return items;
-  }, [allBreakdowns]);
-
   const applyTopN = useCallback(
     (n: number) => {
-      setTopN(n);
       setTopNDraft(n);
-      const topIds = rankedBreakdowns.slice(0, n).map((b) => b.id);
-      setVisibleSeries(topIds);
       setShowTopNMenu(false);
       onTopNChange?.(n === 10 ? undefined : n);
     },
-    [rankedBreakdowns, setVisibleSeries, onTopNChange],
+    [onTopNChange],
   );
 
   if (allBreakdowns.length === 0) {
@@ -180,11 +161,11 @@ export function BreakdownList({
             type="button"
             className="row items-center gap-1 px-2 py-0.5 rounded border border-border hover:bg-muted/50 text-xs font-medium"
             onClick={() => {
-              setTopNDraft(topN);
+              setTopNDraft(displayedTopN);
               setShowTopNMenu(!showTopNMenu);
             }}
           >
-            Top {topN}
+            Top {displayedTopN}
             <ChevronDown className="size-3" />
           </button>
           {showTopNMenu && (
@@ -222,7 +203,7 @@ export function BreakdownList({
                         const v = Math.min(Math.max(topNDraft, 1), allBreakdowns.length);
                         applyTopN(v);
                       } else if (e.key === 'Escape') {
-                        setTopNDraft(topN);
+                        setTopNDraft(displayedTopN);
                         setShowTopNMenu(false);
                       }
                     }}
@@ -331,7 +312,7 @@ export function BreakdownList({
                 <td className={`px-2 py-2 ${stickyLeft0}`}>
                   <Checkbox
                     checked={isVisible}
-                    onCheckedChange={() => toggleVisibility(item.id)}
+                    onCheckedChange={() => onToggleVisibility(item.id)}
                     className="shrink-0"
                     style={{
                       borderColor: color,

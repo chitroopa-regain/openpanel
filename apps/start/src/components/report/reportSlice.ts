@@ -390,6 +390,22 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeFunnelHiddenBreakdowns(
+      state,
+      action: PayloadAction<string[]>,
+    ) {
+      state.dirty = true;
+      const next = action.payload.length > 0 ? action.payload : undefined;
+      if (!state.options || state.options.type !== 'funnel') {
+        state.options = {
+          type: 'funnel',
+          hiddenBreakdowns: next,
+        };
+      } else {
+        state.options.hiddenBreakdowns = next;
+      }
+    },
+
     changeDateConfig(
       state,
       action: PayloadAction<IDateConfig | undefined>,
@@ -534,6 +550,7 @@ export const {
   changeFunnelWindowUnit,
   changeFunnelTopN,
   changeFunnelProperty,
+  changeFunnelHiddenBreakdowns,
   changeDateConfig,
   changeFunnelBreakdownStep,
   changeOptions,
