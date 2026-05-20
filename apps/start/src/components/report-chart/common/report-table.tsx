@@ -949,6 +949,13 @@ export function ReportTable({
       ? [{ key: 'sum' as const, label: 'Value' }]
       : allMetrics;
 
+    // Total across all series (matches the pie chart's centre value) — used
+    // to render a "%" column for pie charts.
+    const pieTotalSum =
+      chartType === 'pie'
+        ? data.series.reduce((acc, s) => acc + (s.metrics?.sum ?? 0), 0)
+        : 0;
+
     metrics.forEach((metric) => {
       cols.push({
         id: `metric-${metric.key}`,
@@ -994,6 +1001,37 @@ export function ReportTable({
         },
       });
     });
+
+    // Percent column for pie charts (share of total)
+    if (chartType === 'pie' && pieTotalSum > 0) {
+      cols.push({
+        id: 'metric-percent',
+        header: '%',
+        accessorFn: (row) => row.sum,
+        enableSorting: true,
+        size: 80,
+        cell: ({ row }) => {
+          const value = (row.original.sum as number) ?? 0;
+          const original = row.original as ExpandableTableRow | TableRow;
+          const isSummary = 'isSummaryRow' in original && original.isSummaryRow === true;
+          const isGroupHeader =
+            'isGroupHeader' in original && original.isGroupHeader === true;
+          const pct = pieTotalSum > 0 ? (value / pieTotalSum) * 100 : 0;
+
+          return (
+            <div
+              className={cn(
+                'h-12 w-full text-right font-mono text-sm px-4 flex items-center justify-end',
+                'shadow-[inset_-1px_-1px_0_var(--border)]',
+                (isSummary || isGroupHeader) && 'font-semibold',
+              )}
+            >
+              {pct.toFixed(1)}%
+            </div>
+          );
+        },
+      });
+    }
 
     // Date columns — skip for pie/metric charts (aggregate, no time axis)
     const showDates = chartType !== 'pie' && chartType !== 'metric';

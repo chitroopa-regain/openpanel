@@ -73,11 +73,17 @@ export function Chart({ data }: Props) {
   );
 
   const sum = series.reduce((acc, serie) => acc + serie.metrics.sum, 0);
+  // When a breakdown is present, the slice label shows only the breakdown value
+  // (e.g. "google-play") rather than "<event> > <breakdown>" — the event prefix
+  // is redundant when every slice shares it and pushes the breakdown out of view.
   const pieData = series.map((serie) => ({
     id: serie.id,
     color: getChartColor(serie.index),
     index: serie.index,
-    name: serie.names.join(' > '),
+    name:
+      serie.names.length > 1
+        ? serie.names.slice(1).join(' > ')
+        : serie.names[0],
     names: serie.names,
     count: serie.metrics.sum,
     percent: serie.metrics.sum / sum,
