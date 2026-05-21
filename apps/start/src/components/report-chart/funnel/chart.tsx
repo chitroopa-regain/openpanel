@@ -2,6 +2,7 @@ import { getPreviousMetric } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import { ChevronRightIcon, InfoIcon, UsersIcon } from 'lucide-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bar,
   BarChart,
@@ -755,18 +756,48 @@ function FunnelXAxisTick({
           : 24,
   );
 
+  // Show the full label on hover when the visible text was truncated.
+  const isTruncated = truncatedName !== displayName;
+  const textRef = useRef<SVGTextElement | null>(null);
+  const [tipPos, setTipPos] = useState<{ x: number; y: number } | null>(null);
+
+  const onEnter = () => {
+    if (!isTruncated || !textRef.current) return;
+    const r = textRef.current.getBoundingClientRect();
+    setTipPos({ x: r.left + r.width / 2, y: r.top });
+  };
+  const onLeave = () => setTipPos(null);
+
   return (
-    <g transform={`translate(${x},${y})`}>
-      <text
-        y={compact ? 10 : 8}
-        textAnchor="middle"
-        fontSize={compact ? 10 : 11}
-        fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
-      >
-        <tspan fill="rgba(255, 255, 255, 0.45)">{index + 1} </tspan>
-        <tspan fill="rgba(255, 255, 255, 0.98)">{truncatedName}</tspan>
-      </text>
-    </g>
+    <>
+      <g transform={`translate(${x},${y})`}>
+        <text
+          ref={textRef}
+          y={compact ? 10 : 8}
+          textAnchor="middle"
+          fontSize={compact ? 10 : 11}
+          fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
+          onMouseEnter={onEnter}
+          onMouseLeave={onLeave}
+          style={isTruncated ? { cursor: 'help' } : undefined}
+        >
+          <tspan fill="rgba(255, 255, 255, 0.45)">{index + 1} </tspan>
+          <tspan fill="rgba(255, 255, 255, 0.98)">{truncatedName}</tspan>
+          {isTruncated && <title>{displayName}</title>}
+        </text>
+      </g>
+      {tipPos && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed z-[1000] pointer-events-none rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md whitespace-nowrap -translate-x-1/2 -translate-y-full"
+              style={{ left: tipPos.x, top: tipPos.y - 6 }}
+            >
+              {displayName}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 
