@@ -622,7 +622,11 @@ export async function getEventList(options: GetEventListOptions) {
   }
 
   if (profileId) {
-    sb.where.deviceId = `(device_id IN (SELECT device_id as did FROM ${TABLE_NAMES.events} WHERE project_id = ${sqlstring.escape(projectId)} AND device_id != '' AND profile_id = ${sqlstring.escape(profileId)} group by did) OR profile_id = ${sqlstring.escape(profileId)})`;
+    // Filter by profile_id only (was: device_id-subquery OR profile_id). The subquery
+    // full-scanned events to merge pre-identify anonymous rows; our SDKs identify at
+    // startup with a persistent id so profile_id covers them. Lets the
+    // (project_id, profile_id, created_at) projection serve this instead of a 1B-row scan.
+    sb.where.profileId = `profile_id = ${sqlstring.escape(profileId)}`;
   }
 
   if (sessionId) {
