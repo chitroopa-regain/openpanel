@@ -6,69 +6,112 @@ const ResponsiveGridLayout = WidthProvider(Responsive);
 
 export type Layout = ReactGridLayout.Layout;
 
+// Group reports into logical rows based on `layout.y`. Cards that share the
+// same `y` belong to the same row; the row's order on screen comes from the
+// sorted distinct y values. Cards without a saved layout get packed 4-per-row
+// into trailing rows so freshly-created reports still render reasonably.
+//
+// Legacy state: if every card has a unique y (meaning no row sharing exists
+// in the data — which happens when an older flat-index persistence model
+// wrote y = arrayIndex), fall back to a default 4-per-row pack of the
+// already-sorted reports. The user can then drag to create row breaks.
+export function deriveRowsFromReports(
+  reports: NonNullable<IServiceReport>[],
+): string[][] {
+  if (reports.length === 0) return [];
+
+  const ys = reports
+    .map((r) => (r as any).layout?.y)
+    .filter((y): y is number => typeof y === 'number');
+  const uniqueYs = new Set(ys);
+  const allUnique = ys.length === reports.length && uniqueYs.size === reports.length;
+
+  if (allUnique) {
+    // Treat as "no row info" — pack into default 4-per-row chunks. Reports
+    // are already sorted by (y, x) by the server, so we use that order.
+    const rows: string[][] = [];
+    for (let i = 0; i < reports.length; i += 4) {
+      rows.push(reports.slice(i, i + 4).map((r) => r.id));
+    }
+    return rows;
+  }
+
+  const groupY = new Map<number, { id: string; x: number }[]>();
+  let pendingY = 1_000_000;
+  let pendingCount = 0;
+  reports.forEach((r) => {
+    const layout = (r as any).layout;
+    let y: number;
+    if (typeof layout?.y === 'number') {
+      y = layout.y;
+    } else {
+      y = pendingY + Math.floor(pendingCount / 4);
+      pendingCount++;
+    }
+    if (!groupY.has(y)) groupY.set(y, []);
+    groupY.get(y)!.push({ id: r.id, x: layout?.x ?? 0 });
+  });
+  const sortedYs = Array.from(groupY.keys()).sort((a, b) => a - b);
+  return sortedYs.map((y) =>
+    groupY
+      .get(y)!
+      .sort((a, b) => a.x - b.x)
+      .map((it) => it.id),
+  );
+}
+
 export const useReportLayouts = (
   reports: NonNullable<IServiceReport>[],
 ): ReactGridLayout.Layouts => {
   return useMemo(() => {
-    const baseLayout = reports.map((report, index) => ({
-      i: report.id,
-      x: report.layout?.x ?? (index % 2) * 6,
-      y: report.layout?.y ?? Math.floor(index / 2) * 4,
-      w: report.layout?.w ?? 6,
-      h: report.layout?.h ?? 4,
-      minW: 3,
-      minH: 3,
-    }));
+    const rows = deriveRowsFromReports(reports);
+    const byId = new Map(reports.map((r) => [r.id, r] as const));
 
-    // Row-fill repack — tiles share their row's full width.
-    // `maxPerRow` caps how many tiles can sit side-by-side; the final row
-    // also stretches to fill the row when N is not divisible by maxPerRow.
-    // `cols` is the breakpoint's column count (so it works at sm=6, xs=4 etc.).
-    const repackPerRow = (maxPerRow: number, cols = 12) => {
-      const total = baseLayout.length;
-      if (total === 0) return baseLayout;
-      const perRow = Math.min(total, maxPerRow);
-      const rowCount = Math.ceil(total / perRow);
-
-      // Tallest h per row — every tile in that row is forced to this
-      // height so the row reads as a clean horizontal band (Mixpanel-style),
-      // instead of zig-zagging when individual tiles have different h.
-      const rowH: number[] = [];
-      const rowY: number[] = [0];
-      for (let r = 0; r < rowCount; r++) {
-        const start = r * perRow;
-        const end = Math.min(start + perRow, total);
-        const maxH = Math.max(
-          ...baseLayout.slice(start, end).map((item) => item.h ?? 4),
-        );
-        rowH.push(maxH);
-        rowY.push((rowY[r] ?? 0) + maxH);
-      }
-
-      return baseLayout.map((item, index) => {
-        const rowIdx = Math.floor(index / perRow);
-        const tilesInRow =
-          rowIdx === rowCount - 1 ? total - rowIdx * perRow : perRow;
-        const w = Math.max(1, Math.floor(cols / tilesInRow));
-        const posInRow = index % perRow;
-        return {
-          ...item,
-          w,
-          h: rowH[rowIdx] ?? item.h ?? 4,
-          x: posInRow * w,
-          y: rowY[rowIdx] ?? 0,
-        };
+    // For each breakpoint, walk through user-defined rows and place them at
+    // the next y-cursor. If a row has more items than `maxPerRow` for this
+    // breakpoint, wrap it into sub-rows. Otherwise the row is rendered
+    // exactly as the user defined it (so a 1-card row spans the full width,
+    // a 2-card row splits in half, etc.).
+    const compute = (
+      maxPerRow: number,
+      cols: number,
+    ): ReactGridLayout.Layout[] => {
+      const out: ReactGridLayout.Layout[] = [];
+      let yCursor = 0;
+      rows.forEach((row) => {
+        if (row.length === 0) return;
+        for (let i = 0; i < row.length; i += maxPerRow) {
+          const chunk = row.slice(i, i + maxPerRow);
+          const w = Math.max(1, Math.floor(cols / chunk.length));
+          const maxH = Math.max(
+            ...chunk.map((id) => (byId.get(id) as any)?.layout?.h ?? 4),
+            4,
+          );
+          chunk.forEach((id, posInChunk) => {
+            out.push({
+              i: id,
+              x: posInChunk * w,
+              y: yCursor,
+              w,
+              h: maxH,
+              minW: 3,
+              minH: 3,
+            });
+          });
+          yCursor += maxH;
+        }
       });
+      return out;
     };
 
     return {
-      xxl: repackPerRow(4, 12),
-      xl: repackPerRow(4, 12),
-      lg: repackPerRow(3, 12),
-      md: repackPerRow(2, 12),
-      sm: repackPerRow(2, 6),
-      xs: repackPerRow(1, 4),
-      xxs: repackPerRow(1, 2),
+      xxl: compute(4, 12),
+      xl: compute(4, 12),
+      lg: compute(3, 12),
+      md: compute(2, 12),
+      sm: compute(2, 6),
+      xs: compute(1, 4),
+      xxs: compute(1, 2),
     };
   }, [reports]);
 };

@@ -22,6 +22,7 @@ import FullPageLoadingState from '@/components/full-page-loading-state';
 import {
   GrafanaGrid,
   type Layout,
+  deriveRowsFromReports,
   useReportLayouts,
 } from '@/components/grafana-grid';
 import { PageContainer } from '@/components/page-container';
@@ -30,6 +31,7 @@ import { PageHeader } from '@/components/page-header';
 import {
   ReportItem,
   ReportItemSkeleton,
+  type DropTarget,
 } from '@/components/report/report-item';
 import { handleErrorToastOptions, useTRPC } from '@/integrations/trpc/react';
 import { pushModal, showConfirm } from '@/modals';
@@ -126,6 +128,13 @@ function Component() {
   const [isGridReady, setIsGridReady] = useState(false);
   const [enableTransitions, setEnableTransitions] = useState(false);
 
+  // Local order state for instant feedback during drag-to-reorder. Re-syncs
+  // from the server whenever the underlying reports list changes (refetch).
+  const [orderedReports, setOrderedReports] = useState(reports);
+  useEffect(() => {
+    setOrderedReports(reports);
+  }, [reports]);
+
   // Wait for initial render to ensure grid has proper dimensions
   useEffect(() => {
     if (reports.length > 0 && !isGridReady) {
@@ -181,12 +190,102 @@ function Component() {
     }),
   );
 
-  // Convert reports to grid layout format for all breakpoints
-  const layouts = useReportLayouts(reports);
+  // Convert reports to grid layout format for all breakpoints.
+  // Driven by orderedReports so drag-to-reorder is reflected immediately.
+  const layouts = useReportLayouts(orderedReports);
 
   const handleLayoutChange = useCallback((newLayout: Layout[]) => {
     // This is called during dragging/resizing, we'll save on drag/resize stop
   }, []);
+
+  const handleDrop = useCallback(
+    (fromId: string, target: DropTarget) => {
+      setOrderedReports((current) => {
+        // 1. Derive the current row structure from the cards' saved layouts.
+        const rows = deriveRowsFromReports(current).map((row) => row.slice());
+
+        // 2. Remove the dragged card from its current row.
+        let sourceRowIdx = -1;
+        let sourceColIdx = -1;
+        for (let r = 0; r < rows.length; r++) {
+          const c = rows[r]!.indexOf(fromId);
+          if (c >= 0) {
+            sourceRowIdx = r;
+            sourceColIdx = c;
+            break;
+          }
+        }
+        if (sourceRowIdx < 0) return current;
+        rows[sourceRowIdx]!.splice(sourceColIdx, 1);
+
+        // Adjust target row index if we removed a card from a row before it.
+        let adjTargetRow =
+          target.kind === 'newRow' ? target.rowIdx : target.rowIdx;
+        if (rows[sourceRowIdx]!.length === 0) {
+          // The source row will be removed entirely; rows after it shift up.
+          if (sourceRowIdx < adjTargetRow) adjTargetRow -= 1;
+        }
+
+        // Now safely remove empty source row.
+        if (rows[sourceRowIdx]!.length === 0) rows.splice(sourceRowIdx, 1);
+
+        // 3. Insert at target.
+        if (target.kind === 'newRow') {
+          const clamped = Math.max(0, Math.min(adjTargetRow, rows.length));
+          rows.splice(clamped, 0, [fromId]);
+        } else {
+          const clamped = Math.max(0, Math.min(adjTargetRow, rows.length - 1));
+          const row = rows[clamped];
+          if (!row) {
+            rows.push([fromId]);
+          } else {
+            // If we removed the card from the SAME row before its slot,
+            // adjust the column index accordingly.
+            let col = target.colIdx;
+            if (sourceRowIdx === clamped && sourceColIdx < col) col -= 1;
+            row.splice(Math.max(0, Math.min(col, row.length)), 0, fromId);
+          }
+        }
+
+        // 4. Detect no-op (no structural change).
+        const beforeFlat = current.map((r) => r.id).join(',');
+        const afterFlat = rows.flat().join(',');
+        if (beforeFlat === afterFlat) return current;
+
+        // 5. Persist + return a new orderedReports array with updated layouts.
+        const next = current.map((r) => ({ ...r }));
+        const byId = new Map(next.map((r) => [r.id, r] as const));
+        rows.forEach((row, rowIdx) => {
+          row.forEach((id, colIdx) => {
+            const r = byId.get(id);
+            if (!r) return;
+            const oldL = (r as any).layout;
+            const newLayout = {
+              x: colIdx,
+              y: rowIdx,
+              w: oldL?.w ?? 6,
+              h: oldL?.h ?? 4,
+              minW: oldL?.minW ?? 3,
+              minH: oldL?.minH ?? 3,
+            };
+            (r as any).layout = { ...(oldL ?? {}), ...newLayout };
+            if (!oldL || oldL.x !== colIdx || oldL.y !== rowIdx) {
+              updateLayout.mutate({ reportId: id, layout: newLayout });
+            }
+          });
+        });
+
+        // Re-sort next by (y, x) so the array order matches the rendered grid.
+        next.sort((a, b) => {
+          const la = (a as any).layout;
+          const lb = (b as any).layout;
+          return (la?.y - lb?.y) || (la?.x - lb?.x);
+        });
+        return next;
+      });
+    },
+    [updateLayout],
+  );
 
   const handleDragStop = useCallback(
     (newLayout: Layout[]) => {
@@ -371,10 +470,10 @@ function Component() {
           onLayoutChange={handleLayoutChange}
           onDragStop={handleDragStop}
           onResizeStop={handleResizeStop}
-          isDraggable={true}
+          isDraggable={false}
           isResizable={true}
         >
-          {reports.map((report) => (
+          {orderedReports.map((report) => (
             <div key={report.id}>
               <ReportItem
                 report={report}
@@ -391,6 +490,7 @@ function Component() {
                 onDuplicate={(reportId) => {
                   reportDuplicate.mutate({ reportId });
                 }}
+                onDrop={handleDrop}
               />
             </div>
           ))}
