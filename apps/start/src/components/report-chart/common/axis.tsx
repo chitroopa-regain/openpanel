@@ -7,7 +7,7 @@ import type { AxisDomain } from 'recharts/types/util/types';
 
 import type { IInterval } from '@openpanel/validation';
 export const AXIS_FONT_PROPS = {
-  fontSize: 8,
+  fontSize: 10,
   className: 'font-mono',
 };
 
@@ -49,7 +49,7 @@ export const useYAxisProps = (options?: {
 };
 
 export const X_AXIS_STYLE_PROPS = {
-  height: 14,
+  height: 18,
   tickSize: 10,
   axisLine: false,
   tickLine: false,

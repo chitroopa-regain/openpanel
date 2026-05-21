@@ -302,6 +302,15 @@ code {
   stroke-opacity: 0;
 }
 
+/* Brighter axis tick labels — Recharts default (#666) is too dim on the
+ * dark theme. --foregroundish is the same soft-bright tone the rest of the
+ * UI uses for secondary text, and matches Mixpanel's axis label brightness. */
+.recharts-wrapper .recharts-cartesian-axis-tick-value,
+.recharts-wrapper .recharts-cartesian-axis-tick-value tspan {
+  fill: var(--foregroundish) !important;
+}
+
+
 button {
   @apply cursor-pointer;
 }
