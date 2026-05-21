@@ -90,6 +90,7 @@ export function MetricCard({
       Math.abs(value) > 9999
         ? new Intl.NumberFormat('en-US', {
             notation: 'compact',
+            minimumFractionDigits: 2,
             maximumFractionDigits: 2,
           }).format(value)
         : number.format(value);
