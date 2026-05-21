@@ -245,6 +245,7 @@ export const zDateConfig = z.object({
   lastEndingDaysAgo: z.number().nullish(),
   sinceDate: z.string().nullish(),
   periodToDateUnit: z.string().nullish(),
+  enableTimeRanges: z.boolean().nullish(),
 });
 
 export type IDateConfig = z.infer<typeof zDateConfig>;

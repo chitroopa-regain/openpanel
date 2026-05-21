@@ -1340,12 +1340,12 @@ export function getChartStartEndDate(
     switch (dateConfig.dateMode) {
       case 'fixed':
         if (dateConfig.fixedStartDate && dateConfig.fixedEndDate) {
+          const startDt = DateTime.fromISO(dateConfig.fixedStartDate, { zone: timezone });
+          const endDt = DateTime.fromISO(dateConfig.fixedEndDate, { zone: timezone });
           return {
-            startDate: DateTime.fromISO(dateConfig.fixedStartDate, { zone: timezone })
-              .startOf('day')
+            startDate: (dateConfig.enableTimeRanges ? startDt : startDt.startOf('day'))
               .toFormat('yyyy-MM-dd HH:mm:ss'),
-            endDate: DateTime.fromISO(dateConfig.fixedEndDate, { zone: timezone })
-              .endOf('day')
+            endDate: (dateConfig.enableTimeRanges ? endDt : endDt.endOf('day'))
               .toFormat('yyyy-MM-dd HH:mm:ss'),
           };
         }
@@ -1364,9 +1364,9 @@ export function getChartStartEndDate(
       }
       case 'since':
         if (dateConfig.sinceDate) {
+          const sinceDt = DateTime.fromISO(dateConfig.sinceDate, { zone: timezone });
           return {
-            startDate: DateTime.fromISO(dateConfig.sinceDate, { zone: timezone })
-              .startOf('day')
+            startDate: (dateConfig.enableTimeRanges ? sinceDt : sinceDt.startOf('day'))
               .toFormat('yyyy-MM-dd HH:mm:ss'),
             endDate: now.endOf('day').toFormat('yyyy-MM-dd HH:mm:ss'),
           };
@@ -1587,13 +1587,43 @@ export function getDatesFromRange(range: IChartRange, timezone: string) {
 export function getChartPrevStartEndDate({
   startDate,
   endDate,
+  range,
 }: {
   startDate: string;
   endDate: string;
+  range?: IChartRange;
 }) {
-  let diff = DateTime.fromFormat(endDate, 'yyyy-MM-dd HH:mm:ss').diff(
-    DateTime.fromFormat(startDate, 'yyyy-MM-dd HH:mm:ss')
-  );
+  const start = DateTime.fromFormat(startDate, 'yyyy-MM-dd HH:mm:ss');
+  const end = DateTime.fromFormat(endDate, 'yyyy-MM-dd HH:mm:ss');
+
+  // For "partial period" ranges (today/lastHour/monthToDate/yearToDate)
+  // the window is shorter than the natural calendar unit, so the legacy
+  // "subtract diff" comparison ends up comparing today-morning vs
+  // yesterday-evening. Instead shift one calendar unit back so we compare
+  // the same wall-clock window a period earlier (Mixpanel-style).
+  const calendarShift = (() => {
+    switch (range) {
+      case 'today':
+        return { days: 1 } as const;
+      case 'lastHour':
+        return { hours: 1 } as const;
+      case 'monthToDate':
+        return { months: 1 } as const;
+      case 'yearToDate':
+        return { years: 1 } as const;
+      default:
+        return null;
+    }
+  })();
+
+  if (calendarShift) {
+    return {
+      startDate: start.minus(calendarShift).toFormat('yyyy-MM-dd HH:mm:ss'),
+      endDate: end.minus(calendarShift).toFormat('yyyy-MM-dd HH:mm:ss'),
+    };
+  }
+
+  let diff = end.diff(start);
 
   // this will make sure our start and end date's are correct
   // otherwise if a day ends with 23:59:59.999 and starts with 00:00:00.000
@@ -1604,10 +1634,10 @@ export function getChartPrevStartEndDate({
   }
 
   return {
-    startDate: DateTime.fromFormat(startDate, 'yyyy-MM-dd HH:mm:ss')
+    startDate: start
       .minus({ millisecond: diff.milliseconds })
       .toFormat('yyyy-MM-dd HH:mm:ss'),
-    endDate: DateTime.fromFormat(endDate, 'yyyy-MM-dd HH:mm:ss')
+    endDate: end
       .minus({ millisecond: diff.milliseconds })
       .toFormat('yyyy-MM-dd HH:mm:ss'),
   };

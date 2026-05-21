@@ -51,12 +51,22 @@ export function TimeWindowPicker({
 
   const handleCustom = useCallback(() => {
     pushModal('DateRangerPicker', {
-      onChange: ({ startDate, endDate, dateMode, fixedStartDate, fixedEndDate, lastAmount, lastUnit, lastEndingDaysAgo, sinceDate, periodToDateUnit }: DateRangerPickerPayload) => {
+      onChange: ({ startDate, endDate, dateMode, fixedStartDate, fixedEndDate, lastAmount, lastUnit, lastEndingDaysAgo, sinceDate, periodToDateUnit, enableTimeRanges }: DateRangerPickerPayload) => {
         // Only set concrete startDate/endDate for fixed mode.
         // Relative modes (last/since/period_to_date) resolve from dateConfig at query time.
         if (startDate && endDate) {
-          onStartDateChange(format(startOfDay(startDate), 'yyyy-MM-dd HH:mm:ss'));
-          onEndDateChange(format(endOfDay(endDate), 'yyyy-MM-dd HH:mm:ss'));
+          onStartDateChange(
+            format(
+              enableTimeRanges ? startDate : startOfDay(startDate),
+              'yyyy-MM-dd HH:mm:ss',
+            ),
+          );
+          onEndDateChange(
+            format(
+              enableTimeRanges ? endDate : endOfDay(endDate),
+              'yyyy-MM-dd HH:mm:ss',
+            ),
+          );
         }
         onChange('custom');
         onDateConfigChange?.({
@@ -68,6 +78,7 @@ export function TimeWindowPicker({
           lastEndingDaysAgo,
           sinceDate,
           periodToDateUnit,
+          enableTimeRanges,
         });
       },
       startDate: startDate ? new Date(startDate) : undefined,
@@ -80,6 +91,7 @@ export function TimeWindowPicker({
       lastEndingDaysAgo: dateConfig?.lastEndingDaysAgo,
       sinceDate: dateConfig?.sinceDate,
       periodToDateUnit: dateConfig?.periodToDateUnit,
+      enableTimeRanges: dateConfig?.enableTimeRanges ?? undefined,
     });
   }, [startDate, endDate, dateConfig]);
 
@@ -118,7 +130,9 @@ export function TimeWindowPicker({
           <span className="truncate">
             {value === 'custom' && dateConfig
               ? dateConfig.dateMode === 'fixed' && dateConfig.fixedStartDate && dateConfig.fixedEndDate
-                ? `${format(parseISO(dateConfig.fixedStartDate), 'MMM d')} – ${format(parseISO(dateConfig.fixedEndDate), 'MMM d')}`
+                ? dateConfig.enableTimeRanges
+                  ? `${format(parseISO(dateConfig.fixedStartDate), 'MMM d, h:mm a')} – ${format(parseISO(dateConfig.fixedEndDate), 'MMM d, h:mm a')}`
+                  : `${format(parseISO(dateConfig.fixedStartDate), 'MMM d')} – ${format(parseISO(dateConfig.fixedEndDate), 'MMM d')}`
                 : dateConfig.dateMode === 'last' && dateConfig.lastAmount
                   ? `Last ${dateConfig.lastAmount} ${dateConfig.lastUnit === 'week' ? 'weeks' : dateConfig.lastUnit === 'month' ? 'months' : 'days'}`
                   : dateConfig.dateMode === 'period_to_date' && dateConfig.periodToDateUnit

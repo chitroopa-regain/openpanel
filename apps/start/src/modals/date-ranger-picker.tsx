@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
+import { Switch } from '@/components/ui/switch';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import {
   addDays,
@@ -32,6 +33,7 @@ export type DateRangerPickerPayload = {
   lastEndingDaysAgo?: number;
   sinceDate?: string;
   periodToDateUnit?: string;
+  enableTimeRanges?: boolean;
 };
 
 type Props = {
@@ -46,7 +48,28 @@ type Props = {
   lastEndingDaysAgo?: number;
   sinceDate?: string;
   periodToDateUnit?: string;
+  enableTimeRanges?: boolean;
 };
+
+// Format a Date as a local "yyyy-MM-ddTHH:mm:ss" string suitable for a
+// datetime-local input or for storage in fixedStartDate/fixedEndDate when
+// time ranges are enabled.
+function formatLocalDateTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+// Merge calendar-picked date with existing time-of-day, so clicking a new
+// day on the calendar does not reset the user's selected time.
+function mergeDateWithTime(datePart: Date, timeSource: Date | undefined): Date {
+  const out = new Date(datePart);
+  if (timeSource) {
+    out.setHours(timeSource.getHours(), timeSource.getMinutes(), timeSource.getSeconds(), 0);
+  } else {
+    out.setHours(0, 0, 0, 0);
+  }
+  return out;
+}
 
 const modes: { key: DateMode; label: string }[] = [
   { key: 'fixed', label: 'Fixed' },
@@ -130,6 +153,11 @@ export default function DateRangerPicker(props: Props) {
     props.periodToDateUnit ?? 'month',
   );
 
+  // Time ranges toggle — when on, fixed/since inputs include time-of-day
+  const [enableTimeRanges, setEnableTimeRanges] = useState(
+    props.enableTimeRanges ?? false,
+  );
+
   const canApply = (() => {
     switch (mode) {
       case 'fixed':
@@ -153,8 +181,13 @@ export default function DateRangerPicker(props: Props) {
             startDate: fixedStart,
             endDate: fixedEnd,
             dateMode: 'fixed',
-            fixedStartDate: `${fixedStart.getFullYear()}-${String(fixedStart.getMonth() + 1).padStart(2, '0')}-${String(fixedStart.getDate()).padStart(2, '0')}`,
-            fixedEndDate: `${fixedEnd.getFullYear()}-${String(fixedEnd.getMonth() + 1).padStart(2, '0')}-${String(fixedEnd.getDate()).padStart(2, '0')}`,
+            fixedStartDate: enableTimeRanges
+              ? formatLocalDateTime(fixedStart)
+              : `${fixedStart.getFullYear()}-${String(fixedStart.getMonth() + 1).padStart(2, '0')}-${String(fixedStart.getDate()).padStart(2, '0')}`,
+            fixedEndDate: enableTimeRanges
+              ? formatLocalDateTime(fixedEnd)
+              : `${fixedEnd.getFullYear()}-${String(fixedEnd.getMonth() + 1).padStart(2, '0')}-${String(fixedEnd.getDate()).padStart(2, '0')}`,
+            enableTimeRanges,
           });
         }
         break;
@@ -173,7 +206,10 @@ export default function DateRangerPicker(props: Props) {
           popModal();
           onChange({
             dateMode: 'since',
-            sinceDate: `${sinceDate.getFullYear()}-${String(sinceDate.getMonth() + 1).padStart(2, '0')}-${String(sinceDate.getDate()).padStart(2, '0')}`,
+            sinceDate: enableTimeRanges
+              ? formatLocalDateTime(sinceDate)
+              : `${sinceDate.getFullYear()}-${String(sinceDate.getMonth() + 1).padStart(2, '0')}-${String(sinceDate.getDate()).padStart(2, '0')}`,
+            enableTimeRanges,
           });
         }
         break;
@@ -192,13 +228,15 @@ export default function DateRangerPicker(props: Props) {
   const previewDates = (() => {
     const now = new Date();
     switch (mode) {
-      case 'fixed':
+      case 'fixed': {
+        const fmt = enableTimeRanges ? 'MMM d, yyyy, h:mm a' : 'MMM d, yyyy';
         return {
           label1: 'Starts',
-          value1: fixedStart ? format(fixedStart, 'MMM d, yyyy') : null,
+          value1: fixedStart ? format(fixedStart, fmt) : null,
           label2: 'Ends',
-          value2: fixedEnd ? format(fixedEnd, 'MMM d, yyyy') : null,
+          value2: fixedEnd ? format(fixedEnd, fmt) : null,
         };
+      }
       case 'last': {
         if (lastAmount <= 0) {
           return { label1: 'From', value1: null, label2: 'To', value2: null };
@@ -219,7 +257,9 @@ export default function DateRangerPicker(props: Props) {
       case 'since':
         return {
           label1: 'Since',
-          value1: sinceDate ? format(sinceDate, 'MMM d, yyyy') : null,
+          value1: sinceDate
+            ? format(sinceDate, enableTimeRanges ? 'MMM d, yyyy, h:mm a' : 'MMM d, yyyy')
+            : null,
           label2: 'To',
           value2: 'Today',
         };
@@ -266,26 +306,77 @@ export default function DateRangerPicker(props: Props) {
         <div className="flex-1 p-4 md:p-6 col gap-4">
           {/* Date fields — shown for Fixed and Since modes only */}
           {(mode === 'fixed' || mode === 'since') && (
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1">
+            <div className="flex flex-col sm:flex-row gap-3 items-end">
+              <div className="flex-1 w-full">
                 <div className="text-xs text-muted-foreground mb-1">
                   {previewDates.label1}
                 </div>
-                <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
-                  {previewDates.value1 ?? (
-                    <span className="text-muted-foreground">Select date</span>
-                  )}
-                </div>
+                {enableTimeRanges && mode === 'fixed' ? (
+                  <input
+                    type="datetime-local"
+                    step={60}
+                    value={fixedStart ? formatLocalDateTime(fixedStart).slice(0, 16) : ''}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        setFixedStart(undefined);
+                        return;
+                      }
+                      const d = new Date(e.target.value);
+                      if (!Number.isNaN(d.getTime())) setFixedStart(d);
+                    }}
+                    className="w-full rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]"
+                  />
+                ) : enableTimeRanges && mode === 'since' ? (
+                  <input
+                    type="datetime-local"
+                    step={60}
+                    value={sinceDate ? formatLocalDateTime(sinceDate).slice(0, 16) : ''}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        setSinceDate(undefined);
+                        return;
+                      }
+                      const d = new Date(e.target.value);
+                      if (!Number.isNaN(d.getTime())) setSinceDate(d);
+                    }}
+                    className="w-full rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]"
+                  />
+                ) : (
+                  <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
+                    {previewDates.value1 ?? (
+                      <span className="text-muted-foreground">Select date</span>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex-1">
+              <div className="flex-1 w-full">
                 <div className="text-xs text-muted-foreground mb-1">
                   {previewDates.label2}
                 </div>
-                <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
-                  {previewDates.value2 ?? (
-                    <span className="text-muted-foreground">Select date</span>
-                  )}
-                </div>
+                {enableTimeRanges && mode === 'fixed' ? (
+                  <input
+                    type="datetime-local"
+                    step={60}
+                    value={fixedEnd ? formatLocalDateTime(fixedEnd).slice(0, 16) : ''}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        setFixedEnd(undefined);
+                        return;
+                      }
+                      const d = new Date(e.target.value);
+                      if (!Number.isNaN(d.getTime())) setFixedEnd(d);
+                    }}
+                    className="w-full rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]"
+                  />
+                ) : (
+                  <div className="rounded border border-border bg-card px-3 py-1.5 text-sm font-mono min-h-[32px]">
+                    {previewDates.value2 ?? (
+                      <span className="text-muted-foreground">
+                        {mode === 'since' ? 'Today' : 'Select date'}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -376,8 +467,30 @@ export default function DateRangerPicker(props: Props) {
               selected={{ from: fixedStart, to: fixedEnd }}
               toDate={new Date()}
               onSelect={(range) => {
-                if (range?.from) setFixedStart(range.from);
-                setFixedEnd(range?.to);
+                if (range?.from) {
+                  setFixedStart(
+                    enableTimeRanges
+                      ? mergeDateWithTime(range.from, fixedStart)
+                      : range.from,
+                  );
+                }
+                if (range?.to) {
+                  setFixedEnd(
+                    enableTimeRanges
+                      ? mergeDateWithTime(
+                          range.to,
+                          fixedEnd ?? new Date(
+                            range.to.getFullYear(),
+                            range.to.getMonth(),
+                            range.to.getDate(),
+                            23, 59, 0,
+                          ),
+                        )
+                      : range.to,
+                  );
+                } else {
+                  setFixedEnd(undefined);
+                }
               }}
               numberOfMonths={isBelowSm ? 1 : 2}
               className="mx-auto min-h-[370px] [&_table]:mx-auto [&_table]:w-auto p-0 pt-2"
@@ -394,7 +507,13 @@ export default function DateRangerPicker(props: Props) {
               selected={sinceDate ? { from: sinceDate, to: new Date() } : undefined}
               toDate={new Date()}
               onSelect={(range) => {
-                if (range?.from) setSinceDate(range.from);
+                if (range?.from) {
+                  setSinceDate(
+                    enableTimeRanges
+                      ? mergeDateWithTime(range.from, sinceDate)
+                      : range.from,
+                  );
+                }
               }}
               numberOfMonths={isBelowSm ? 1 : 2}
               className="mx-auto min-h-[370px] [&_table]:mx-auto [&_table]:w-auto p-0 pt-2"
@@ -439,7 +558,28 @@ export default function DateRangerPicker(props: Props) {
           )}
 
           {/* Actions */}
-          <div className="col flex-col-reverse md:row gap-2">
+          <div className="col flex-col-reverse md:row gap-2 items-center">
+            {(mode === 'fixed' || mode === 'since') && (
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer md:mr-auto">
+                <Switch
+                  checked={enableTimeRanges}
+                  onCheckedChange={(checked) => {
+                    setEnableTimeRanges(checked);
+                    // When enabling: default end-of-day time = 23:59 if the
+                    // current fixedEnd is at exactly midnight (the natural
+                    // date-only default).
+                    if (checked && fixedEnd) {
+                      const e = new Date(fixedEnd);
+                      if (e.getHours() === 0 && e.getMinutes() === 0 && e.getSeconds() === 0) {
+                        e.setHours(23, 59, 0, 0);
+                        setFixedEnd(e);
+                      }
+                    }
+                  }}
+                />
+                Enable Time Ranges
+              </label>
+            )}
             <Button
               type="button"
               variant="outline"
