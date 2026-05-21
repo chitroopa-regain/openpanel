@@ -1417,13 +1417,16 @@ export function getDatesFromRange(range: IChartRange, timezone: string) {
   }
 
   if (range === 'today') {
+    // Clip endDate to now (not end-of-day) so the count reflects elapsed
+    // time only. This makes "compare to previous period" line up with the
+    // same wall-clock window yesterday (Mixpanel-style); without it we'd
+    // compare today's partial data to yesterday's full 24h.
     const startDate = DateTime.now()
       .setZone(timezone)
       .startOf('day')
       .toFormat('yyyy-MM-dd HH:mm:ss');
     const endDate = DateTime.now()
       .setZone(timezone)
-      .endOf('day')
       .toFormat('yyyy-MM-dd HH:mm:ss');
 
     return {
@@ -1504,14 +1507,14 @@ export function getDatesFromRange(range: IChartRange, timezone: string) {
   }
 
   if (range === 'monthToDate') {
+    // Clip endDate to now so previous-month comparison uses the matching
+    // partial-month window (Mixpanel-style).
     const startDate = DateTime.now()
       .setZone(timezone)
       .startOf('month')
       .toFormat('yyyy-MM-dd HH:mm:ss');
     const endDate = DateTime.now()
       .setZone(timezone)
-      .endOf('day')
-      .plus({ millisecond: 1 })
       .toFormat('yyyy-MM-dd HH:mm:ss');
 
     return {
@@ -1539,14 +1542,14 @@ export function getDatesFromRange(range: IChartRange, timezone: string) {
   }
 
   if (range === 'yearToDate') {
+    // Clip endDate to now so previous-year comparison uses the matching
+    // partial-year window (Mixpanel-style).
     const startDate = DateTime.now()
       .setZone(timezone)
       .startOf('year')
       .toFormat('yyyy-MM-dd HH:mm:ss');
     const endDate = DateTime.now()
       .setZone(timezone)
-      .endOf('day')
-      .plus({ millisecond: 1 })
       .toFormat('yyyy-MM-dd HH:mm:ss');
 
     return {

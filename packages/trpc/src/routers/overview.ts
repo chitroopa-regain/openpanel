@@ -82,7 +82,7 @@ function getCurrentAndPrevious<
   },
 >(input: T, fetchPrevious: boolean, timezone: string) {
   const current = getChartStartEndDate(input, timezone);
-  const previous = getChartPrevStartEndDate(current);
+  const previous = getChartPrevStartEndDate({ ...current, range: input.range });
 
   return async <R>(
     fn: (input: T & { startDate: string; endDate: string }) => Promise<R>,

@@ -58,6 +58,7 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
     const currentPeriod = {
       startDate: normalized.startDate,
       endDate: normalized.endDate,
+      range: normalized.range,
     };
     const previousPeriod = getChartPrevStartEndDate(currentPeriod);
 
@@ -275,6 +276,7 @@ export async function executeAggregateChart(
     const currentPeriod = {
       startDate: normalized.startDate,
       endDate: normalized.endDate,
+      range: normalized.range,
     };
     const previousPeriod = getChartPrevStartEndDate(currentPeriod);
 

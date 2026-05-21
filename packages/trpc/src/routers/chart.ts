@@ -601,7 +601,10 @@ export const chartRouter = createTRPCRouter({
 
       const { timezone } = await getSettingsForProject(chartInput.projectId);
       const currentPeriod = getChartStartEndDate(chartInput, timezone);
-      const previousPeriod = getChartPrevStartEndDate(currentPeriod);
+      const previousPeriod = getChartPrevStartEndDate({
+        ...currentPeriod,
+        range: chartInput.range,
+      });
 
       const [current, previous] = await Promise.all([
         funnelService.getFunnel({ ...chartInput, ...currentPeriod, timezone }),
@@ -738,7 +741,10 @@ export const chartRouter = createTRPCRouter({
 
       const { timezone } = await getSettingsForProject(chartInput.projectId);
       const currentPeriod = getChartStartEndDate(chartInput, timezone);
-      const previousPeriod = getChartPrevStartEndDate(currentPeriod);
+      const previousPeriod = getChartPrevStartEndDate({
+        ...currentPeriod,
+        range: chartInput.range,
+      });
 
       const interval = chartInput.interval;
 
