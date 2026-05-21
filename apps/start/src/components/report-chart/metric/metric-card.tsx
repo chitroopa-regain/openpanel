@@ -86,9 +86,17 @@ export function MetricCard({
       return <>{fancyMinutes(value)}</>;
     }
 
+    const displayValue =
+      Math.abs(value) > 9999
+        ? new Intl.NumberFormat('en-US', {
+            notation: 'compact',
+            maximumFractionDigits: 2,
+          }).format(value)
+        : number.format(value);
+
     return (
       <>
-        {number.short(value)}
+        {displayValue}
         {unit && <span className={unitClassName}>{unit}</span>}
       </>
     );
