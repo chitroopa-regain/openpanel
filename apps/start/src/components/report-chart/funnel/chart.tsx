@@ -785,29 +785,29 @@ function getFunnelChartWidth({
     return containerWidth;
   }
 
-  const widestLabelChars = stepLabels.reduce(
-    (max, label) => Math.max(max, label.length),
-    0,
-  );
-  const estimatedLabelWidth = Math.min(
-    240,
-    Math.max(120, widestLabelChars * 7 + 28),
-  );
-  const singleStepWidth = estimatedLabelWidth;
+  // Minimum width per step to keep bars from collapsing into thin lines.
+  // Labels are already truncated by `truncateFunnelLabel`, so step width
+  // doesn't need to fit the full label text.
+  const MIN_STEP_WIDTH = 80;
   const breakdownBarWidth = 44;
   const breakdownGapWidth = 8;
+  // When showing multiple breakdowns per step, the step must be wide enough
+  // to fit them side-by-side. Otherwise just enforce the per-step minimum.
   const groupedStepWidth =
-    Math.max(
-      estimatedLabelWidth,
-      breakdownCount * breakdownBarWidth +
-        Math.max(0, breakdownCount - 1) * breakdownGapWidth +
-        36,
-    );
-  const stepWidth = breakdownCount > 1 ? groupedStepWidth : singleStepWidth;
+    breakdownCount > 1
+      ? Math.max(
+          MIN_STEP_WIDTH,
+          breakdownCount * breakdownBarWidth +
+            Math.max(0, breakdownCount - 1) * breakdownGapWidth +
+            36,
+        )
+      : MIN_STEP_WIDTH;
   const horizontalPadding = 24;
-  const desiredWidth = stepCount * stepWidth + horizontalPadding;
+  const minRequiredWidth = stepCount * groupedStepWidth + horizontalPadding;
 
-  return Math.max(containerWidth, desiredWidth);
+  // Fit to container when possible (no horizontal scroll); fall back to
+  // scrolling only if the container is genuinely too narrow for the floor.
+  return Math.max(containerWidth, minRequiredWidth);
 }
 
 export function Chart({
@@ -843,7 +843,13 @@ export function Chart({
     }
 
     const update = () => {
-      setContainerWidth(node.clientWidth);
+      // Subtract horizontal padding so chartWidth fits inside the scroll
+      // container's content box (otherwise the chart overflows by exactly
+      // padding-left + padding-right and triggers a horizontal scrollbar).
+      const cs = getComputedStyle(node);
+      const padX =
+        (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      setContainerWidth(Math.max(0, node.clientWidth - padX));
     };
 
     update();
