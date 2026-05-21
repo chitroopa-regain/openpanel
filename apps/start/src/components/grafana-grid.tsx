@@ -30,7 +30,10 @@ export const useReportLayouts = (
       const perRow = Math.min(total, maxPerRow);
       const rowCount = Math.ceil(total / perRow);
 
-      // Cumulative y offset using the tallest tile in each row.
+      // Tallest h per row — every tile in that row is forced to this
+      // height so the row reads as a clean horizontal band (Mixpanel-style),
+      // instead of zig-zagging when individual tiles have different h.
+      const rowH: number[] = [];
       const rowY: number[] = [0];
       for (let r = 0; r < rowCount; r++) {
         const start = r * perRow;
@@ -38,6 +41,7 @@ export const useReportLayouts = (
         const maxH = Math.max(
           ...baseLayout.slice(start, end).map((item) => item.h ?? 4),
         );
+        rowH.push(maxH);
         rowY.push((rowY[r] ?? 0) + maxH);
       }
 
@@ -50,6 +54,7 @@ export const useReportLayouts = (
         return {
           ...item,
           w,
+          h: rowH[rowIdx] ?? item.h ?? 4,
           x: posInRow * w,
           y: rowY[rowIdx] ?? 0,
         };
