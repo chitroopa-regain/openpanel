@@ -75,7 +75,7 @@ export function useColumns() {
           return (
             <ProjectLink
               className="row items-center gap-2 font-medium"
-              href={`/profiles/${encodeURIComponent(session.profile.id)}`}
+              href={`/profiles/${encodeURIComponent(session.profile.id)}/events`}
             >
               <ProfileAvatar size="sm" {...session.profile} />
               {getProfileName(session.profile)}
@@ -85,7 +85,7 @@ export function useColumns() {
         return (
           <ProjectLink
             className="font-medium font-mono"
-            href={`/profiles/${encodeURIComponent(session.profileId)}`}
+            href={`/profiles/${encodeURIComponent(session.profileId)}/events`}
           >
             {session.profileId}
           </ProjectLink>

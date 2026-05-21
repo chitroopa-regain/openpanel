@@ -277,7 +277,7 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
         {profile && (
           <ProjectLink
             className="card col gap-2 p-4 py-2 hover:bg-def-100"
-            href={`/profiles/${encodeURIComponent(profile.id)}`}
+            href={`/profiles/${encodeURIComponent(profile.id)}/events`}
             onClick={() => popModal()}
           >
             <div className="row items-center justify-between gap-2">

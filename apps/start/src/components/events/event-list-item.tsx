@@ -90,7 +90,7 @@ export function EventListItem(props: EventListItemProps) {
                 onClick={(e) => {
                   e.stopPropagation();
                 }}
-                to={'/$organizationId/$projectId/profiles/$profileId'}
+                to={'/$organizationId/$projectId/profiles/$profileId/events'}
                 params={{
                   organizationId,
                   projectId,

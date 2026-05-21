@@ -108,7 +108,7 @@ export function useColumns() {
         if (profile) {
           return (
             <ProjectLink
-              href={`/profiles/${encodeURIComponent(profile.id)}`}
+              href={`/profiles/${encodeURIComponent(profile.id)}/events`}
               className="group whitespace-nowrap font-medium hover:underline row items-center gap-2"
             >
               <ProfileAvatar size="sm" {...profile} />
@@ -120,7 +120,7 @@ export function useColumns() {
         if (profileId && profileId !== deviceId) {
           return (
             <ProjectLink
-              href={`/profiles/${encodeURIComponent(profileId)}`}
+              href={`/profiles/${encodeURIComponent(profileId)}/events`}
               className="whitespace-nowrap font-medium hover:underline"
             >
               Unknown
@@ -131,7 +131,7 @@ export function useColumns() {
         if (deviceId) {
           return (
             <ProjectLink
-              href={`/profiles/${encodeURIComponent(deviceId)}`}
+              href={`/profiles/${encodeURIComponent(deviceId)}/events`}
               className="whitespace-nowrap font-medium hover:underline"
             >
               Anonymous

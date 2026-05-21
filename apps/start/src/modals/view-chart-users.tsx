@@ -25,7 +25,7 @@ const ProfileItem = ({ profile }: { profile: any }) => {
   return (
     <ProjectLink
       preload={false}
-      href={`/profiles/${encodeURIComponent(profile.id)}`}
+      href={`/profiles/${encodeURIComponent(profile.id)}/events`}
       title={getProfileName(profile, false)}
       className="col gap-2 rounded-lg border p-2 bg-card"
       onClick={(e) => {
