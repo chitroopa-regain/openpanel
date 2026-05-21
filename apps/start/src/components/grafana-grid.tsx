@@ -20,12 +20,50 @@ export const useReportLayouts = (
       minH: 3,
     }));
 
+    // Row-fill repack — tiles share their row's full width.
+    // `maxPerRow` caps how many tiles can sit side-by-side; the final row
+    // also stretches to fill the row when N is not divisible by maxPerRow.
+    // `cols` is the breakpoint's column count (so it works at sm=6, xs=4 etc.).
+    const repackPerRow = (maxPerRow: number, cols = 12) => {
+      const total = baseLayout.length;
+      if (total === 0) return baseLayout;
+      const perRow = Math.min(total, maxPerRow);
+      const rowCount = Math.ceil(total / perRow);
+
+      // Cumulative y offset using the tallest tile in each row.
+      const rowY: number[] = [0];
+      for (let r = 0; r < rowCount; r++) {
+        const start = r * perRow;
+        const end = Math.min(start + perRow, total);
+        const maxH = Math.max(
+          ...baseLayout.slice(start, end).map((item) => item.h ?? 4),
+        );
+        rowY.push((rowY[r] ?? 0) + maxH);
+      }
+
+      return baseLayout.map((item, index) => {
+        const rowIdx = Math.floor(index / perRow);
+        const tilesInRow =
+          rowIdx === rowCount - 1 ? total - rowIdx * perRow : perRow;
+        const w = Math.max(1, Math.floor(cols / tilesInRow));
+        const posInRow = index % perRow;
+        return {
+          ...item,
+          w,
+          x: posInRow * w,
+          y: rowY[rowIdx] ?? 0,
+        };
+      });
+    };
+
     return {
-      lg: baseLayout,
-      md: baseLayout,
-      sm: baseLayout.map((item) => ({ ...item, w: Math.min(item.w, 6) })),
-      xs: baseLayout.map((item) => ({ ...item, w: 4, x: 0 })),
-      xxs: baseLayout.map((item) => ({ ...item, w: 2, x: 0 })),
+      xxl: repackPerRow(4, 12),
+      xl: repackPerRow(4, 12),
+      lg: repackPerRow(3, 12),
+      md: repackPerRow(2, 12),
+      sm: repackPerRow(2, 6),
+      xs: repackPerRow(1, 4),
+      xxs: repackPerRow(1, 2),
     };
   }, [reports]);
 };
@@ -72,8 +110,16 @@ export function GrafanaGrid({
         <ResponsiveGridLayout
           className="layout"
           layouts={layouts}
-          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
-          cols={{ lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 }}
+          breakpoints={{
+            xxl: 1920,
+            xl: 1500,
+            lg: 1200,
+            md: 996,
+            sm: 768,
+            xs: 480,
+            xxs: 0,
+          }}
+          cols={{ xxl: 12, xl: 12, lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 }}
           rowHeight={100}
           draggableHandle=".drag-handle"
           compactType="vertical"

@@ -259,7 +259,7 @@ function Component() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer fluid>
       <PageHeader
         title={
           <PageBreadcrumbs
