@@ -952,7 +952,7 @@ export function Chart({
       hasPrevious={hasPrevious}
       visibleBreakdownIds={new Set(visibleBreakdowns.map((b) => b.id))}
     >
-      <div className="card w-full">
+      <div className="card w-full h-full flex flex-col">
         {showSingleFunnelLabels && typeof overallPercent === 'number' && (
           <div className="border-b border-border px-4 pt-3">
             <FunnelOverallLegend percent={overallPercent} />
@@ -960,7 +960,10 @@ export function Chart({
         )}
         <div
           ref={containerRef}
-          className="relative aspect-video max-h-[250px] w-full overflow-x-auto overflow-y-hidden p-4 pb-1"
+          // flex-1 + min-h-0 so the chart fills the remaining height of the
+          // parent flex column (replaces the previous aspect-video/max-h-[250px]
+          // cap that caused content to overflow inside small dashboard cards).
+          className="relative flex-1 min-h-0 w-full overflow-x-auto overflow-y-hidden p-4 pb-1"
         >
           <div
             className="relative h-full min-w-full"

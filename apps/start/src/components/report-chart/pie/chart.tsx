@@ -105,8 +105,11 @@ export function Chart({ data }: Props) {
             <Pie
               dataKey={'count'}
               data={pieData}
-              innerRadius={'30%'}
-              outerRadius={'80%'}
+              // Smaller outerRadius leaves room for the external labels
+              // ("google-play", "apps.instagram.com" etc.) so they don't get
+              // clipped by the card edges.
+              innerRadius={'25%'}
+              outerRadius={'62%'}
               isAnimationActive={false}
               label={labelRenderer}
             >

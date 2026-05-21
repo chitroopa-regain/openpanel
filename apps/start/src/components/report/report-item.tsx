@@ -476,7 +476,10 @@ export function ReportItem({
       </div>
       <div
         className={cn(
-          'p-4 overflow-auto flex-1',
+          // No overflow-auto — let the chart's ResponsiveContainer size itself
+          // to the available box. min-h-0 is required so flex-1 can actually
+          // shrink the chart below its intrinsic content height.
+          'p-4 flex-1 min-h-0 overflow-hidden',
           report.chartType === 'metric' && 'p-0',
         )}
       >
@@ -590,7 +593,10 @@ export function ReportItemReadOnly({
       </div>
       <div
         className={cn(
-          'p-4 overflow-auto flex-1',
+          // No overflow-auto — let the chart's ResponsiveContainer size itself
+          // to the available box. min-h-0 is required so flex-1 can actually
+          // shrink the chart below its intrinsic content height.
+          'p-4 flex-1 min-h-0 overflow-hidden',
           report.chartType === 'metric' && 'p-0',
         )}
       >
