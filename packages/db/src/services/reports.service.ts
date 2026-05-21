@@ -120,6 +120,15 @@ export function getReportsByDashboardId(dashboardId: string) {
       include: {
         layout: true,
       },
+      // Order by saved grid position so the dashboard's responsive repack
+      // renders tiles in row/column order. createdAt is a tiebreaker so a
+      // freshly-duplicated report (which copies its source's layout) sits
+      // right after the source.
+      orderBy: [
+        { layout: { y: 'asc' } },
+        { layout: { x: 'asc' } },
+        { createdAt: 'asc' },
+      ],
     })
     .then((reports) => reports.map(transformReport));
 }

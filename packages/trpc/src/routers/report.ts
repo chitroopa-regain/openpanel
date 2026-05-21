@@ -152,6 +152,7 @@ export const reportRouter = createTRPCRouter({
         where: {
           id: reportId,
         },
+        include: { layout: true },
       });
 
       const access = await getProjectAccess({
@@ -163,6 +164,9 @@ export const reportRouter = createTRPCRouter({
         throw TRPCAccessError('You do not have access to this project');
       }
 
+      // Copy the source's layout to the new report so it sorts next to
+      // the source (see getReportsByDashboardId order). The dashboard's
+      // responsive repack then renders the duplicate right after source.
       return db.report.create({
         data: {
           projectId: report.projectId,
@@ -180,6 +184,20 @@ export const reportRouter = createTRPCRouter({
           metric: report.metric,
           options: report.options,
           dateConfig: (report as any).dateConfig ?? undefined,
+          ...(report.layout && {
+            layout: {
+              create: {
+                x: report.layout.x,
+                y: report.layout.y,
+                w: report.layout.w,
+                h: report.layout.h,
+                minW: report.layout.minW ?? undefined,
+                minH: report.layout.minH ?? undefined,
+                maxW: report.layout.maxW ?? undefined,
+                maxH: report.layout.maxH ?? undefined,
+              },
+            },
+          }),
         },
       });
     }),
