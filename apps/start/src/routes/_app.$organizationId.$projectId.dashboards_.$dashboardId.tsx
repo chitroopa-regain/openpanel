@@ -173,10 +173,11 @@ function Component() {
   const updateLayout = useMutation(
     trpc.report.updateLayout.mutationOptions({
       onError: handleErrorToastOptions({}),
-      onSuccess() {
-        // Silently refetch reports (which includes layouts)
-        reportsQuery.refetch();
-      },
+      // Do NOT refetch here. A single drag fires one updateLayout per moved
+      // card; refetching on each success races partial server states against
+      // the optimistic `orderedReports` and corrupts the grid. The optimistic
+      // state is authoritative for the session; the DB is updated in the
+      // background and re-read on the next full load.
     }),
   );
 
@@ -230,6 +231,7 @@ function Component() {
         if (rows[sourceRowIdx]!.length === 0) rows.splice(sourceRowIdx, 1);
 
         // 3. Insert at target.
+        const MAX_PER_ROW = 4;
         if (target.kind === 'newRow') {
           const clamped = Math.max(0, Math.min(adjTargetRow, rows.length));
           rows.splice(clamped, 0, [fromId]);
@@ -238,6 +240,10 @@ function Component() {
           const row = rows[clamped];
           if (!row) {
             rows.push([fromId]);
+          } else if (row.length >= MAX_PER_ROW) {
+            // Row is already full (4 cards) — don't allow dropping into it.
+            // Cancel the move so the card stays where it was.
+            return current;
           } else {
             // If we removed the card from the SAME row before its slot,
             // adjust the column index accordingly.
@@ -247,10 +253,15 @@ function Component() {
           }
         }
 
-        // 4. Detect no-op (no structural change).
-        const beforeFlat = current.map((r) => r.id).join(',');
-        const afterFlat = rows.flat().join(',');
-        if (beforeFlat === afterFlat) return current;
+        // 4. Detect no-op (no structural change). Compare the full ROW
+        // structure, not just the flattened order — moving the last card of
+        // a row into a new row directly below keeps the flat order identical
+        // but changes the rows, so a flat-only check would wrongly bail.
+        const beforeRows = deriveRowsFromReports(current)
+          .map((r) => r.join(','))
+          .join('|');
+        const afterRows = rows.map((r) => r.join(',')).join('|');
+        if (beforeRows === afterRows) return current;
 
         // 5. Persist + return a new orderedReports array with updated layouts.
         const next = current.map((r) => ({ ...r }));
@@ -471,7 +482,7 @@ function Component() {
           onDragStop={handleDragStop}
           onResizeStop={handleResizeStop}
           isDraggable={false}
-          isResizable={true}
+          isResizable={false}
         >
           {orderedReports.map((report) => (
             <div key={report.id}>

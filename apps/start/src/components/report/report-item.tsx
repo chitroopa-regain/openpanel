@@ -79,6 +79,7 @@ function computeSlot(
   cx: number,
   cy: number,
   layout: LayoutSnapshot,
+  draggingId: string,
 ): { target: DropTarget; indicator: Indicator | null } {
   const { rows } = layout;
   if (rows.length === 0) {
@@ -149,6 +150,26 @@ function computeSlot(
     return { target: { kind: 'newRow', rowIdx: rows.length }, indicator: null };
   }
   const row = rows[rowIdx]!;
+  // Enforce max 4 cards per row: if the cursor is over a row that is already
+  // full and the dragged card isn't already part of it (i.e. this would be a
+  // 5th card), don't offer an in-row slot — redirect to a new row below.
+  const draggedInRow = row.items.some((it) => it.id === draggingId);
+  if (row.items.length >= 4 && !draggedInRow) {
+    const fullLeft2 = Math.min(...rows.map((r) => r.items[0]!.rect.left));
+    const fullRight2 = Math.max(
+      ...rows.map((r) => r.items[r.items.length - 1]!.rect.right),
+    );
+    return {
+      target: { kind: 'newRow', rowIdx: rowIdx + 1 },
+      indicator: {
+        kind: 'h',
+        left: fullLeft2,
+        top: row.bottom + 4,
+        width: fullRight2 - fullLeft2,
+        height: 3,
+      },
+    };
+  }
   const FALLBACK_GAP = 16; // visual gap to assume when there's no neighbour card
   const LINE_W = 3;
   for (let i = 0; i < row.items.length; i++) {
@@ -254,7 +275,7 @@ function useDragReorder({
       }
       setGhost((g) => (g ? { ...g, x: e.clientX, y: e.clientY } : g));
       if (down.layout) {
-        const { target, indicator: ind } = computeSlot(e.clientX, e.clientY, down.layout);
+        const { target, indicator: ind } = computeSlot(e.clientX, e.clientY, down.layout, reportId);
         down.target = target;
         setIndicator(ind);
       }

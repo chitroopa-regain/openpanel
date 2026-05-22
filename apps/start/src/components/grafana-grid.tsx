@@ -65,53 +65,43 @@ export const useReportLayouts = (
 ): ReactGridLayout.Layouts => {
   return useMemo(() => {
     const rows = deriveRowsFromReports(reports);
-    const byId = new Map(reports.map((r) => [r.id, r] as const));
 
-    // For each breakpoint, walk through user-defined rows and place them at
-    // the next y-cursor. If a row has more items than `maxPerRow` for this
-    // breakpoint, wrap it into sub-rows. Otherwise the row is rendered
-    // exactly as the user defined it (so a 1-card row spans the full width,
-    // a 2-card row splits in half, etc.).
-    const compute = (
-      maxPerRow: number,
-      cols: number,
-    ): ReactGridLayout.Layout[] => {
-      const out: ReactGridLayout.Layout[] = [];
-      let yCursor = 0;
-      rows.forEach((row) => {
-        if (row.length === 0) return;
-        for (let i = 0; i < row.length; i += maxPerRow) {
-          const chunk = row.slice(i, i + maxPerRow);
-          const w = Math.max(1, Math.floor(cols / chunk.length));
-          const maxH = Math.max(
-            ...chunk.map((id) => (byId.get(id) as any)?.layout?.h ?? 4),
-            4,
-          );
-          chunk.forEach((id, posInChunk) => {
-            out.push({
-              i: id,
-              x: posInChunk * w,
-              y: yCursor,
-              w,
-              h: maxH,
-              minW: 3,
-              minH: 3,
-            });
-          });
-          yCursor += maxH;
-        }
+    // Respect the user's row arrangement: each row renders exactly the cards
+    // the user placed in it, filling the full 12-col width by count
+    // (1 card → full width, 2 → half each, 3 → thirds, 4 → quarters). Capped
+    // at 4 columns of width so a row never makes cards thinner than a quarter.
+    // The layout is identical across breakpoints — rows do NOT re-wrap on
+    // narrow screens; the grid keeps a min pixel width and scrolls
+    // horizontally instead (see GrafanaGrid wrapper).
+    const CARD_H = 3; // 3 * rowHeight(100) + margins ≈ 330px
+    const layout: ReactGridLayout.Layout[] = [];
+    let y = 0;
+    rows.forEach((row) => {
+      if (row.length === 0) return;
+      const w = Math.max(1, Math.floor(12 / Math.min(row.length, 4)));
+      row.forEach((id, idx) => {
+        layout.push({
+          i: id,
+          x: idx * w,
+          y,
+          w,
+          h: CARD_H,
+          minW: 2,
+          minH: 2,
+        });
       });
-      return out;
-    };
+      y += CARD_H;
+    });
 
+    // Same layout for every breakpoint — no responsive reflow.
     return {
-      xxl: compute(4, 12),
-      xl: compute(4, 12),
-      lg: compute(3, 12),
-      md: compute(2, 12),
-      sm: compute(2, 6),
-      xs: compute(1, 4),
-      xxs: compute(1, 2),
+      xxl: layout,
+      xl: layout,
+      lg: layout,
+      md: layout,
+      sm: layout,
+      xs: layout,
+      xxs: layout,
     };
   }, [reports]);
 };
@@ -154,35 +144,43 @@ export function GrafanaGrid({
           transition: none !important;
         }
       `}</style>
-      <div className="-m-4">
-        <ResponsiveGridLayout
-          className="layout"
-          layouts={layouts}
-          breakpoints={{
-            xxl: 1920,
-            xl: 1500,
-            lg: 1200,
-            md: 996,
-            sm: 768,
-            xs: 480,
-            xxs: 0,
-          }}
-          cols={{ xxl: 12, xl: 12, lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 }}
-          rowHeight={100}
-          draggableHandle=".drag-handle"
-          compactType="vertical"
-          preventCollision={false}
-          margin={[16, 16]}
-          transformScale={1}
-          useCSSTransforms={true}
-          onLayoutChange={onLayoutChange}
-          onDragStop={onDragStop}
-          onResizeStop={onResizeStop}
-          isDraggable={isDraggable}
-          isResizable={isResizable}
-        >
-          {children}
-        </ResponsiveGridLayout>
+      {/* Horizontal scroll: the grid keeps a minimum width so a row's cards
+          never get thinner than ~a quarter of 1040px (~250px). On viewports
+          narrower than that the inner grid overflows and scrolls sideways
+          instead of re-wrapping cards to the next row. */}
+      <div className="-m-4 overflow-x-auto">
+        <div style={{ minWidth: 1040 }}>
+          <ResponsiveGridLayout
+            className="layout"
+            layouts={layouts}
+            // Layout is identical across breakpoints (no responsive reflow),
+            // so all cols are 12 and the breakpoints are nominal.
+            breakpoints={{
+              xxl: 1560,
+              xl: 1080,
+              lg: 800,
+              md: 540,
+              sm: 360,
+              xs: 200,
+              xxs: 0,
+            }}
+            cols={{ xxl: 12, xl: 12, lg: 12, md: 12, sm: 12, xs: 12, xxs: 12 }}
+            rowHeight={100}
+            draggableHandle=".drag-handle"
+            compactType="vertical"
+            preventCollision={false}
+            margin={[16, 16]}
+            transformScale={1}
+            useCSSTransforms={true}
+            onLayoutChange={onLayoutChange}
+            onDragStop={onDragStop}
+            onResizeStop={onResizeStop}
+            isDraggable={isDraggable}
+            isResizable={isResizable}
+          >
+            {children}
+          </ResponsiveGridLayout>
+        </div>
       </div>
     </>
   );
