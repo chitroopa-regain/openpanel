@@ -1,14 +1,13 @@
-import { useTRPC } from '@/integrations/trpc/react';
-import { useQuery } from '@tanstack/react-query';
-
 import type { IReportInput } from '@openpanel/validation';
-
+import { useQuery } from '@tanstack/react-query';
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
+import { useTRPC } from '@/integrations/trpc/react';
 
 export function ReportSankeyChart() {
   const {
@@ -43,10 +42,12 @@ export function ReportSankeyChart() {
     previous: false,
   };
   const trpc = useTRPC();
-  const res = useQuery(
-    trpc.chart.sankey.queryOptions(input, {
-      enabled: !isLazyLoading && input.series.length > 0,
-    }),
+  const queryOptions = trpc.chart.sankey.queryOptions(input, {
+    enabled: !isLazyLoading && input.series.length > 0,
+  });
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.sankey.queryOptions({ ...input, bypassCache: true })
   );
 
   if (isLazyLoading || res.isLoading) {

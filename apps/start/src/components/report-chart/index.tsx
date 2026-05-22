@@ -1,8 +1,6 @@
 import { mergeDeepRight } from 'ramda';
-import React, { memo, type RefObject, useEffect, useRef } from 'react';
+import { type RefObject, useEffect, useRef } from 'react';
 import { useInViewport } from 'react-in-viewport';
-
-import { shallowEqual } from 'react-redux';
 import { ReportAreaChart } from './area';
 import { ReportBarChart } from './bar';
 import type { ReportChartProps } from './context';
@@ -26,7 +24,7 @@ export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
     undefined,
     {
       disconnectOnLeave: true,
-    },
+    }
   );
 
   useEffect(() => {
@@ -69,7 +67,7 @@ export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
   };
 
   return (
-    <div ref={ref} className="h-full w-full">
+    <div className="h-full w-full" ref={ref}>
       <ReportChartProvider
         {...mergeDeepRight({ options: {}, isEditMode: false }, props)}
         isLazyLoading={!loaded}

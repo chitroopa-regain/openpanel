@@ -1,37 +1,38 @@
-import { useTRPC } from '@/integrations/trpc/react';
-import type { RouterOutputs } from '@/trpc/client';
 import { useQuery } from '@tanstack/react-query';
-
-import { AspectContainer } from '../aspect-container';
-import { ReportChartEmpty } from '../common/empty';
-import { ReportChartError } from '../common/error';
-import { ReportChartLoading } from '../common/loading';
-import { useReportChartContext } from '../context';
-import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdowns';
-import { useDispatch } from '@/redux';
-import { pushModal } from '@/modals';
 import { useCallback } from 'react';
 import {
   changeFunnelHiddenBreakdowns,
   changeFunnelTopN,
 } from '../../../components/report/reportSlice';
-import { Chart, Summary } from './chart';
+import { AspectContainer } from '../aspect-container';
+import { ReportChartEmpty } from '../common/empty';
+import { ReportChartError } from '../common/error';
+import { ReportChartLoading } from '../common/loading';
+import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
 import { BreakdownList } from './breakdown-list';
+import { Chart, Summary } from './chart';
+import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdowns';
+import { useTRPC } from '@/integrations/trpc/react';
+import { pushModal } from '@/modals';
+import { useDispatch } from '@/redux';
 
 export function ReportFunnelChart() {
   const { isLazyLoading, isEditMode, report, shareId } =
     useReportChartContext();
   const trpc = useTRPC();
-  const res = useQuery(
-    trpc.chart.funnel.queryOptions(
-      {
-        ...report,
-        shareId,
-      },
-      {
-        enabled: !isLazyLoading && report.series.length > 0,
-      },
-    ),
+  const queryOptions = trpc.chart.funnel.queryOptions(
+    {
+      ...report,
+      shareId,
+    },
+    {
+      enabled: !isLazyLoading && report.series.length > 0,
+    }
+  );
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.funnel.queryOptions({ ...report, shareId, bypassCache: true })
   );
 
   const funnelOptions =
@@ -48,14 +49,14 @@ export function ReportFunnelChart() {
   } = useVisibleFunnelBreakdowns(
     res.data?.current ?? [],
     savedTopN,
-    savedHiddenBreakdowns,
+    savedHiddenBreakdowns
   );
 
   const handleTopNChange = useCallback(
     (n: number | undefined) => {
       dispatch(changeFunnelTopN(n));
     },
-    [dispatch],
+    [dispatch]
   );
 
   const handleToggleVisibility = useCallback(
@@ -70,16 +71,14 @@ export function ReportFunnelChart() {
       // Show: remove from hidden if present, and bump topN if rank is
       // below the current cutoff so the row actually becomes visible.
       if (hidden.includes(id)) {
-        dispatch(
-          changeFunnelHiddenBreakdowns(hidden.filter((h) => h !== id)),
-        );
+        dispatch(changeFunnelHiddenBreakdowns(hidden.filter((h) => h !== id)));
       }
       const rank = rankOf(id);
       if (rank > 0 && rank > savedTopN) {
         dispatch(changeFunnelTopN(rank === 10 ? undefined : rank));
       }
     },
-    [visibleSeriesIds, savedHiddenBreakdowns, savedTopN, rankOf, dispatch],
+    [visibleSeriesIds, savedHiddenBreakdowns, savedTopN, rankOf, dispatch]
   );
 
   const handleInspectStep = useCallback(
@@ -104,7 +103,7 @@ export function ReportFunnelChart() {
         breakdownValues,
       });
     },
-    [report, funnelOptions],
+    [report, funnelOptions]
   );
 
   if (isLazyLoading || res.isLoading) {
@@ -128,11 +127,11 @@ export function ReportFunnelChart() {
       {isEditMode && (
         <BreakdownList
           data={res.data}
-          visibleSeriesIds={visibleSeriesIds}
-          onToggleVisibility={handleToggleVisibility}
           onInspectStep={handleInspectStep}
-          savedTopN={savedTopN}
+          onToggleVisibility={handleToggleVisibility}
           onTopNChange={handleTopNChange}
+          savedTopN={savedTopN}
+          visibleSeriesIds={visibleSeriesIds}
         />
       )}
     </div>

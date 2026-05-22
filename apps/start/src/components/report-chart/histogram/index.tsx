@@ -1,29 +1,31 @@
-import { useTRPC } from '@/integrations/trpc/react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
+import { useTRPC } from '@/integrations/trpc/react';
 
 export function ReportHistogramChart() {
   const { isLazyLoading, report, shareId } = useReportChartContext();
   const trpc = useTRPC();
 
-  const res = useQuery(
-    trpc.chart.chart.queryOptions(
-      {
-        ...report,
-        shareId,
-      },
-      {
-        placeholderData: keepPreviousData,
-        staleTime: 1000 * 60 * 1,
-        enabled: !isLazyLoading,
-      },
-    ),
+  const queryOptions = trpc.chart.chart.queryOptions(
+    {
+      ...report,
+      shareId,
+    },
+    {
+      placeholderData: keepPreviousData,
+      staleTime: 1000 * 60 * 1,
+      enabled: !isLazyLoading,
+    }
+  );
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.chart.queryOptions({ ...report, shareId, bypassCache: true })
   );
 
   if (

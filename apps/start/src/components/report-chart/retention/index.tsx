@@ -1,13 +1,13 @@
-import { useTRPC } from '@/integrations/trpc/react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
 import CohortTable from './table';
+import { useTRPC } from '@/integrations/trpc/react';
 
 export function ReportRetentionChart() {
   const { isLazyLoading, report, shareId } = useReportChartContext();
@@ -46,35 +46,36 @@ export function ReportRetentionChart() {
     (secondEvent.length > 0 || !!secondCustomEventId) &&
     !isLazyLoading;
 
-  const retentionOptions = report.options?.type === 'retention' ? report.options : undefined;
+  const retentionOptions =
+    report.options?.type === 'retention' ? report.options : undefined;
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
 
   const trpc = useTRPC();
-  const res = useQuery(
-    trpc.chart.cohort.queryOptions(
-      {
-        firstEvent,
-        secondEvent,
-        firstCustomEventId,
-        secondCustomEventId,
-        firstEventFilters,
-        secondEventFilters,
-        projectId: report.projectId,
-        range: report.range,
-        startDate: report.startDate,
-        endDate: report.endDate,
-        dateConfig: report.dateConfig,
-        criteria,
-        interval: report.interval,
-        shareId,
-        id: 'id' in report ? report.id : undefined,
-      },
-      {
-        placeholderData: keepPreviousData,
-        staleTime: 1000 * 60 * 1,
-        enabled: isEnabled,
-      },
-    ),
+  const cohortInput = {
+    firstEvent,
+    secondEvent,
+    firstCustomEventId,
+    secondCustomEventId,
+    firstEventFilters,
+    secondEventFilters,
+    projectId: report.projectId,
+    range: report.range,
+    startDate: report.startDate,
+    endDate: report.endDate,
+    dateConfig: report.dateConfig,
+    criteria,
+    interval: report.interval,
+    shareId,
+    id: 'id' in report ? report.id : undefined,
+  };
+  const queryOptions = trpc.chart.cohort.queryOptions(cohortInput, {
+    placeholderData: keepPreviousData,
+    staleTime: 1000 * 60 * 1,
+    enabled: isEnabled,
+  });
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.cohort.queryOptions({ ...cohortInput, bypassCache: true })
   );
 
   if (!isEnabled) {

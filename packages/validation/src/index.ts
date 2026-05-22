@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 import {
   chartSegments,
   chartTypes,
@@ -9,6 +7,7 @@ import {
   operators,
   timeWindows,
 } from '@openpanel/constants';
+import { z } from 'zod';
 
 export function objectToZodEnums<K extends string>(
   obj: Record<K, any>
@@ -321,6 +320,13 @@ export const zReportInput = z.object({
     .describe(
       "Optional unit of measurement for the chart's Y-axis (e.g., $, %, users)"
     ),
+  // Cache-control: forces the server to bypass the cached result, recompute
+  // from ClickHouse and overwrite the shared entry. Stripped from the cache
+  // key so a refresh updates the same entry everyone else reads.
+  bypassCache: z
+    .boolean()
+    .optional()
+    .describe('Bypass the cached result and recompute from source'),
 });
 
 // Complete report schema - for saved reports
@@ -387,7 +393,7 @@ export const zOnboardingProject = z
     timezone: z.string().optional(),
   })
   .superRefine((data, ctx) => {
-    if (!data.organization && !data.organizationId) {
+    if (!(data.organization || data.organizationId)) {
       ctx.addIssue({
         code: 'custom',
         message: 'Organization is required',
@@ -686,6 +692,6 @@ export const zCreateImport = z.object({
 
 export type ICreateImport = z.infer<typeof zCreateImport>;
 
-export * from './types.insights';
-export * from './track.validation';
 export * from './event-blocklist';
+export * from './track.validation';
+export * from './types.insights';

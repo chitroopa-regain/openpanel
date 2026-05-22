@@ -1,29 +1,31 @@
-import { useTRPC } from '@/integrations/trpc/react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-
-import { cn } from '@/utils/cn';
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
+import { useTRPC } from '@/integrations/trpc/react';
+import { cn } from '@/utils/cn';
 
 export function ReportBarChart() {
   const { isLazyLoading, report, shareId } = useReportChartContext();
   const trpc = useTRPC();
 
-  const res = useQuery(
-    trpc.chart.aggregate.queryOptions(
-      {
-        ...report,
-        shareId,
-      },
-      {
-        placeholderData: keepPreviousData,
-        staleTime: 1000 * 60 * 1,
-        enabled: !isLazyLoading,
-      },
-    ),
+  const queryOptions = trpc.chart.aggregate.queryOptions(
+    {
+      ...report,
+      shareId,
+    },
+    {
+      placeholderData: keepPreviousData,
+      staleTime: 1000 * 60 * 1,
+      enabled: !isLazyLoading,
+    }
+  );
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.aggregate.queryOptions({ ...report, shareId, bypassCache: true })
   );
 
   if (
@@ -52,8 +54,8 @@ function Loading() {
         <div className="divide-y divide-def-200 dark:divide-def-800">
           {Array.from({ length: 10 }).map((_, index) => (
             <div
+              className="relative animate-pulse px-4 py-3"
               key={index as number}
-              className="relative px-4 py-3 animate-pulse"
             >
               <div className="relative z-10 flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-4">

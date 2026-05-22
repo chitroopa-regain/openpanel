@@ -1,17 +1,16 @@
-import { TRPCError, initTRPC } from '@trpc/server';
-import type { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
-import { has } from 'ramda';
-import superjson from 'superjson';
-import { ZodError } from 'zod';
-
 import { COOKIE_OPTIONS, type SessionValidationResult } from '@openpanel/auth';
 import { runWithAlsSession } from '@openpanel/db';
 import { getRedisCache } from '@openpanel/redis';
 import type { ISetCookie } from '@openpanel/validation';
+import { initTRPC, TRPCError } from '@trpc/server';
+import type { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
 import {
   createTrpcRedisLimiter,
   defaultFingerPrint,
 } from '@trpc-limiter/redis';
+import { has } from 'ramda';
+import superjson from 'superjson';
+import { ZodError } from 'zod';
 import { getOrganizationAccess, getProjectAccess } from './access';
 import { TRPCAccessError } from './errors';
 
@@ -34,7 +33,7 @@ export const rateLimitMiddleware = ({
 export async function createContext({ req, res }: CreateFastifyContextOptions) {
   const cookies = (req as any).cookies as Record<string, string | undefined>;
   const setCookie: ISetCookie = (key, value, options) => {
-    // @ts-ignore
+    // @ts-expect-error
     res.setCookie(key, value, {
       maxAge: options.maxAge,
       ...COOKIE_OPTIONS,
@@ -43,7 +42,7 @@ export async function createContext({ req, res }: CreateFastifyContextOptions) {
 
   if (process.env.NODE_ENV !== 'production') {
     await new Promise((res) =>
-      setTimeout(() => res(1), Math.min(Math.random() * 500, 200)),
+      setTimeout(() => res(1), Math.min(Math.random() * 500, 200))
     );
   }
 
@@ -150,7 +149,7 @@ const loggerMiddleware = t.middleware(
       });
     }
     return next();
-  },
+  }
 );
 
 const sessionScopeMiddleware = t.middleware(async ({ ctx, next }) => {
@@ -173,42 +172,207 @@ const middlewareMarker = 'middlewareMarker' as 'middlewareMarker' & {
   __brand: 'middlewareMarker';
 };
 
+// Hard eviction TTL is derived from the freshness window: an entry lives
+// long enough that the team keeps serving (and revalidating) it, but is
+// eventually evicted so a cold cache recomputes from scratch.
+const HARD_TTL_MULTIPLIER = 20;
+const MIN_HARD_TTL = 60 * 60 * 24; // 1 day
+const MAX_HARD_TTL = 60 * 60 * 24 * 14; // 14 days
+
+// Cache hits are served in every environment (prod, staging, local). Set
+// OP_QUERY_CACHE=0 as a kill-switch to disable — e.g. if it misbehaves in prod,
+// or while editing query SQL locally (the cache key is the report input, not
+// the code, so a cached result survives a query-code change). The manual
+// refresh button forces a per-report recompute without disabling the cache.
+function isQueryCacheEnabled() {
+  return process.env.OP_QUERY_CACHE !== '0';
+}
+
+// Redis envelope: the cached payload plus the epoch-ms it was computed at.
+type CacheEnvelope = { t: number; d: unknown };
+
+function isEnvelope(value: unknown): value is CacheEnvelope {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    't' in value &&
+    'd' in value &&
+    typeof (value as CacheEnvelope).t === 'number'
+  );
+}
+
+// Surface cache age to the client so it can render "Updated X ago" and decide
+// whether to background-revalidate. Only plain objects carry it (the heavy
+// report endpoints all return objects); primitives/arrays pass through as-is.
+//
+// NOTE: a top-level ARRAY payload gets no `_cache`, so the client never sees
+// `stale` and SWR auto-revalidation is silently disabled for it. All currently
+// cached endpoints return objects, so this is fine today — but wrap array
+// payloads (e.g. `{ d: data, _cache }`) before adding a new array-returning
+// report to this middleware, or it won't refresh.
+function attachCacheMeta(data: unknown, cachedAt: number, stale: boolean) {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return {
+      ...(data as Record<string, unknown>),
+      _cache: { cachedAt, stale },
+    };
+  }
+  return data;
+}
+
+// Fields that must NOT be part of the cache key: cache-control (bypassCache),
+// editor UI state (ready/dirty), display-only (name/lineType/unit/layout),
+// identity/access (id/shareId), and pagination defaults the editor injects
+// (limit/offset). Stripped at the top level only — nested `name` (event names),
+// `id` (series handles) etc. still matter and are preserved. Without this, the
+// same report fragments into different entries in the dashboard grid vs the
+// editor → inconsistent "Updated X ago" and duplicate ClickHouse queries.
+const NON_QUERY_KEY_FIELDS = new Set([
+  'bypassCache',
+  'ready',
+  'dirty',
+  'name',
+  'lineType',
+  'unit',
+  'layout',
+  'id',
+  'shareId',
+  'limit',
+  'offset',
+]);
+
+// Recursively sort object keys so field order can't fragment the key.
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  // Serialize Dates explicitly — otherwise the object branch below would turn
+  // them into `{}` (Object.keys(date) is empty), collapsing distinct dates to
+  // the same key.
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, k) => {
+        acc[k] = sortKeysDeep((value as Record<string, unknown>)[k]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+function canonicalKey(input: Record<string, unknown>): string {
+  const filtered: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!NON_QUERY_KEY_FIELDS.has(k)) {
+      filtered[k] = v;
+    }
+  }
+  return JSON.stringify(sortKeysDeep(filtered));
+}
+
 export const cacheMiddleware = (
-  cbOrTtl: number | ((input: any, opts: { path: string }) => number),
+  cbOrTtl: number | ((input: any, opts: { path: string }) => number)
 ) =>
   t.middleware(async ({ ctx, next, path, type, getRawInput, input }) => {
-    const ttl =
+    // The callback now returns the *freshness window* (seconds), not the TTL.
+    const freshness =
       typeof cbOrTtl === 'function' ? cbOrTtl(input, { path }) : cbOrTtl;
-    if (!ttl) {
+    if (!freshness || type !== 'query' || !isQueryCacheEnabled()) {
       return next();
     }
-    const rawInput = await getRawInput();
-    if (type !== 'query') {
-      return next();
-    }
+
+    const rawInput = (await getRawInput()) as
+      | (Record<string, unknown> & { bypassCache?: boolean; shareId?: string })
+      | undefined;
+    // Only authenticated viewers may force a recompute. Public share / embed
+    // views go through the same public procedure, so honoring bypassCache there
+    // would let an anonymous viewer hammer ClickHouse (the single-flight lock
+    // caps concurrency, not frequency). They always get the shared cached value.
+    const bypass = rawInput?.bypassCache === true && !rawInput?.shareId;
+
+    // Canonical key: same logical query → same entry across every view.
     let key = `trpc:${path}:`;
     if (rawInput) {
-      key += JSON.stringify(rawInput).replace(/\"/g, "'");
+      key += canonicalKey(rawInput).replace(/"/g, "'");
     }
-    const cache = await getRedisCache().getJson(key);
-    if (cache && process.env.NODE_ENV === 'production') {
+
+    const hardTtl = Math.min(
+      MAX_HARD_TTL,
+      Math.max(MIN_HARD_TTL, freshness * HARD_TTL_MULTIPLIER)
+    );
+
+    const store = (data: unknown) => {
+      if (data === undefined || data === null) {
+        return;
+      }
+      getRedisCache()
+        .setJson(key, hardTtl, {
+          t: Date.now(),
+          d: data,
+        } satisfies CacheEnvelope)
+        .catch(() => {});
+    };
+
+    const read = async (): Promise<CacheEnvelope | null> => {
+      const cached = await getRedisCache().getJson(key);
+      return isEnvelope(cached) ? cached : null;
+    };
+
+    const computeAndStore = async () => {
+      const result = await next();
+      // @ts-expect-error result.data is present on an ok result
+      const data = result.data;
+      if (data) {
+        store(data);
+        // @ts-expect-error attach age metadata to the freshly computed payload
+        result.data = attachCacheMeta(data, Date.now(), false);
+      }
+      return result;
+    };
+
+    // Forced refresh (manual button or client-driven revalidation): bypass the
+    // read, recompute, and overwrite the shared entry. A single-flight lock
+    // collapses concurrent revalidations of the same key into one ClickHouse
+    // query; the losers serve the existing stale value instead of piling on.
+    if (bypass) {
+      const lockKey = `${key}:lock`;
+      const gotLock = await getRedisCache().set(lockKey, '1', 'EX', 30, 'NX');
+      if (!gotLock) {
+        const env = await read();
+        if (env) {
+          return {
+            ok: true,
+            data: attachCacheMeta(env.d, env.t, true),
+            ctx,
+            marker: middlewareMarker,
+          };
+        }
+      }
+      const result = await computeAndStore();
+      if (gotLock) {
+        getRedisCache()
+          .del(lockKey)
+          .catch(() => {});
+      }
+      return result;
+    }
+
+    // Normal read: serve the cached value instantly, flagged stale when it has
+    // aged past its freshness window so the client knows to revalidate.
+    const env = await read();
+    if (env) {
+      const stale = Date.now() - env.t > freshness * 1000;
       return {
         ok: true,
-        data: cache,
+        data: attachCacheMeta(env.d, env.t, stale),
         ctx,
         marker: middlewareMarker,
       };
     }
-    const result = await next();
 
-    // @ts-expect-error
-    if (result.data) {
-      getRedisCache().setJson(
-        key,
-        ttl,
-        // @ts-expect-error
-        result.data,
-      );
-    }
-    return result;
+    // Cold cache: compute, store, return fresh.
+    return computeAndStore();
   });

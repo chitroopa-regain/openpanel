@@ -1,4 +1,10 @@
+import { timeWindows } from '@openpanel/constants';
+import { useRouter } from '@tanstack/react-router';
+import { CopyIcon, MoreHorizontal, Trash } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ReportChart } from '@/components/report-chart';
+import { ReportCacheBadge } from '@/components/report-chart/report-cache-status';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,13 +13,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/utils/cn';
-import { CopyIcon, MoreHorizontal, Trash } from 'lucide-react';
-
-import { timeWindows } from '@openpanel/constants';
-
-import { useRouter } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 
 // Mixpanel-style drag-to-reorder. We don't use a drag library — they all
 // shift the other cards visually while dragging, which we don't want.
@@ -41,7 +40,7 @@ type LayoutSnapshot = { items: LayoutItem[]; rows: LayoutRow[] };
 
 function snapshotLayout(): LayoutSnapshot {
   const els = Array.from(
-    document.querySelectorAll<HTMLElement>('[data-report-item-id]'),
+    document.querySelectorAll<HTMLElement>('[data-report-item-id]')
   );
   // DOM order matches orderedReports order (the parent renders with .map).
   const items: LayoutItem[] = els.map((el, index) => ({
@@ -79,7 +78,7 @@ function computeSlot(
   cx: number,
   cy: number,
   layout: LayoutSnapshot,
-  draggingId: string,
+  draggingId: string
 ): { target: DropTarget; indicator: Indicator | null } {
   const { rows } = layout;
   if (rows.length === 0) {
@@ -91,7 +90,7 @@ function computeSlot(
   const lastRow = rows[rows.length - 1]!;
   const fullLeft = Math.min(...rows.map((r) => r.items[0]!.rect.left));
   const fullRight = Math.max(
-    ...rows.map((r) => r.items[r.items.length - 1]!.rect.right),
+    ...rows.map((r) => r.items[r.items.length - 1]!.rect.right)
   );
 
   // 1. Above the first row → new row at top.
@@ -143,9 +142,7 @@ function computeSlot(
 
   // 4. Inside a row → find the column-gap nearest the cursor and center the
   // indicator in the actual gap between cards.
-  const rowIdx = rows.findIndex(
-    (r) => cy >= r.top - 4 && cy <= r.bottom + 4,
-  );
+  const rowIdx = rows.findIndex((r) => cy >= r.top - 4 && cy <= r.bottom + 4);
   if (rowIdx < 0) {
     return { target: { kind: 'newRow', rowIdx: rows.length }, indicator: null };
   }
@@ -157,7 +154,7 @@ function computeSlot(
   if (row.items.length >= 4 && !draggedInRow) {
     const fullLeft2 = Math.min(...rows.map((r) => r.items[0]!.rect.left));
     const fullRight2 = Math.max(
-      ...rows.map((r) => r.items[r.items.length - 1]!.rect.right),
+      ...rows.map((r) => r.items[r.items.length - 1]!.rect.right)
     );
     return {
       target: { kind: 'newRow', rowIdx: rowIdx + 1 },
@@ -217,7 +214,11 @@ function useDragReorder({
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [ghost, setGhost] = useState<{ x: number; y: number; w: number } | null>(null);
+  const [ghost, setGhost] = useState<{
+    x: number;
+    y: number;
+    w: number;
+  } | null>(null);
   const [indicator, setIndicator] = useState<Indicator | null>(null);
   // Keep latest callbacks in a ref so we don't re-attach listeners every render.
   const cbsRef = useRef({ onDrop, onActivate });
@@ -225,7 +226,9 @@ function useDragReorder({
 
   useEffect(() => {
     const root = rootRef.current;
-    if (!root) return;
+    if (!root) {
+      return;
+    }
 
     type DownState = {
       x: number;
@@ -244,11 +247,17 @@ function useDragReorder({
     };
 
     const onDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0) {
+        return;
+      }
       const target = e.target as HTMLElement | null;
-      if (!target || !root.contains(target)) return;
+      if (!(target && root.contains(target))) {
+        return;
+      }
       const handle = target.closest('[data-drag-handle]') as HTMLElement | null;
-      if (!handle) return;
+      if (!handle) {
+        return;
+      }
       down = {
         x: e.clientX,
         y: e.clientY,
@@ -261,11 +270,15 @@ function useDragReorder({
     };
 
     const onMove = (e: MouseEvent) => {
-      if (!down) return;
+      if (!down) {
+        return;
+      }
       const dx = e.clientX - down.x;
       const dy = e.clientY - down.y;
       if (!down.isDrag) {
-        if (Math.hypot(dx, dy) <= 6) return;
+        if (Math.hypot(dx, dy) <= 6) {
+          return;
+        }
         down.isDrag = true;
         down.layout = snapshotLayout();
         document.body.style.cursor = 'grabbing';
@@ -275,7 +288,12 @@ function useDragReorder({
       }
       setGhost((g) => (g ? { ...g, x: e.clientX, y: e.clientY } : g));
       if (down.layout) {
-        const { target, indicator: ind } = computeSlot(e.clientX, e.clientY, down.layout, reportId);
+        const { target, indicator: ind } = computeSlot(
+          e.clientX,
+          e.clientY,
+          down.layout,
+          reportId
+        );
         down.target = target;
         setIndicator(ind);
       }
@@ -285,7 +303,9 @@ function useDragReorder({
     const onUp = (e: MouseEvent) => {
       const d = down;
       down = null;
-      if (!d) return;
+      if (!d) {
+        return;
+      }
       if (d.isDrag) {
         cleanupCursor();
         setIsDragging(false);
@@ -327,18 +347,18 @@ function useDragReorder({
 
 export function ReportItemSkeleton() {
   return (
-    <div className="card h-full flex flex-col animate-pulse">
-      <div className="flex items-center justify-between border-b border-border p-4">
+    <div className="card flex h-full animate-pulse flex-col">
+      <div className="flex items-center justify-between border-border border-b p-4">
         <div className="flex-1">
-          <div className="h-5 w-32 bg-muted rounded mb-2" />
-          <div className="h-4 w-24 bg-muted/50 rounded" />
+          <div className="mb-2 h-5 w-32 rounded bg-muted" />
+          <div className="h-4 w-24 rounded bg-muted/50" />
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-muted rounded" />
-          <div className="w-8 h-8 bg-muted rounded" />
+          <div className="h-8 w-8 rounded bg-muted" />
+          <div className="h-8 w-8 rounded bg-muted" />
         </div>
       </div>
-      <div className="p-4 flex-1 flex items-center justify-center aspect-video" />
+      <div className="flex aspect-video flex-1 items-center justify-center p-4" />
     </div>
   );
 }
@@ -378,7 +398,7 @@ export function ReportItem({
         : '';
       window.open(
         `/${organizationId}/${projectId}/reports/${report.id}${search}`,
-        '_blank',
+        '_blank'
       );
       return;
     }
@@ -397,20 +417,20 @@ export function ReportItem({
 
   return (
     <div
-      ref={rootRef}
-      data-report-item-id={report.id}
       className={cn(
-        'card h-full flex flex-col',
+        'card flex h-full flex-col',
         // Source card stays visible at original position during drag (Mixpanel
         // behavior). We don't fade it — the ghost makes the drag obvious enough.
-        isDragging && 'ring-2 ring-primary/40',
+        isDragging && 'ring-2 ring-primary/40'
       )}
+      data-report-item-id={report.id}
+      ref={rootRef}
     >
-      <div className="flex items-center hover:bg-muted/50 justify-between border-b border-border p-4 leading-none [&_svg]:hover:opacity-100">
+      <div className="flex items-center justify-between border-border border-b p-4 leading-none hover:bg-muted/50 [&_svg]:hover:opacity-100">
         <div
+          className="-m-4 flex-1 cursor-grab p-4 active:cursor-grabbing"
           data-drag-handle
           data-drag-handle-primary
-          className="flex-1 cursor-grab active:cursor-grabbing -m-4 p-4"
           onKeyUp={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               navigateToReport(false);
@@ -421,7 +441,7 @@ export function ReportItem({
         >
           <div className="font-medium">{report.name}</div>
           {chartRange !== null && (
-            <div className="mt-2 flex gap-2 ">
+            <div className="mt-2 flex gap-2">
               <span
                 className={
                   (chartRange !== range && range !== null) ||
@@ -446,16 +466,17 @@ export function ReportItem({
           )}
         </div>
         <div className="flex items-center gap-2">
+          <ReportCacheBadge reportId={report.id} />
           <div
+            className="cursor-grab rounded p-2 hover:bg-muted active:cursor-grabbing"
             data-drag-handle
-            className="cursor-grab active:cursor-grabbing p-2 hover:bg-muted rounded"
           >
             <svg
-              width="16"
+              className="opacity-30 hover:opacity-100"
+              fill="currentColor"
               height="16"
               viewBox="0 0 16 16"
-              fill="currentColor"
-              className="opacity-30 hover:opacity-100"
+              width="16"
             >
               <circle cx="4" cy="4" r="1.5" />
               <circle cx="4" cy="8" r="1.5" />
@@ -476,7 +497,7 @@ export function ReportItem({
                   onDuplicate(report.id);
                 }}
               >
-                <CopyIcon size={16} className="mr-2" />
+                <CopyIcon className="mr-2" size={16} />
                 Duplicate
               </DropdownMenuItem>
               <DropdownMenuGroup>
@@ -487,7 +508,7 @@ export function ReportItem({
                     onDelete(report.id);
                   }}
                 >
-                  <Trash size={16} className="mr-2" />
+                  <Trash className="mr-2" size={16} />
                   Delete
                 </DropdownMenuItem>
               </DropdownMenuGroup>
@@ -500,26 +521,28 @@ export function ReportItem({
           // No overflow-auto — let the chart's ResponsiveContainer size itself
           // to the available box. min-h-0 is required so flex-1 can actually
           // shrink the chart below its intrinsic content height.
-          'p-4 flex-1 min-h-0 overflow-hidden',
-          report.chartType === 'metric' && 'p-0',
+          'min-h-0 flex-1 overflow-hidden p-4',
+          report.chartType === 'metric' && 'p-0'
         )}
       >
         <ReportChart
-          report={{
-            ...report,
-            range: range ?? report.range,
-            startDate: startDate ?? null,
-            endDate: endDate ?? null,
-            interval: interval ?? report.interval,
-          }}
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
             metricLayout:
               report.chartType === 'metric' && report.breakdowns.length === 0
                 ? 'hero'
                 : 'compact',
-            metricSurface:
-              report.chartType === 'metric' ? 'plain' : 'card',
+            metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
+          }}
+          report={{
+            ...report,
+            // layout changes on drag-reorder but is not a query input; drop it
+            // so reordering doesn't change the query key and refetch the chart.
+            layout: undefined,
+            range: range ?? report.range,
+            startDate: startDate ?? null,
+            endDate: endDate ?? null,
+            interval: interval ?? report.interval,
           }}
         />
       </div>
@@ -528,7 +551,7 @@ export function ReportItem({
             <>
               {indicator && (
                 <div
-                  className="fixed z-[999] pointer-events-none rounded-full bg-foreground/35"
+                  className="pointer-events-none fixed z-[999] rounded-full bg-foreground/35"
                   style={{
                     left: indicator.left,
                     top: indicator.top,
@@ -539,25 +562,28 @@ export function ReportItem({
               )}
               {ghost && (
                 <div
-                  className="fixed z-[1000] pointer-events-none"
+                  className="pointer-events-none fixed z-[1000]"
                   style={{
                     left: ghost.x + 14,
                     top: ghost.y + 14,
                     width: Math.min(ghost.w * 0.55, 360),
                   }}
                 >
-                  <div className="card border-2 border-primary/60 bg-card/95 backdrop-blur-sm shadow-2xl rounded-lg px-4 py-3">
-                    <div className="font-medium truncate">{report.name}</div>
+                  <div className="card rounded-lg border-2 border-primary/60 bg-card/95 px-4 py-3 shadow-2xl backdrop-blur-sm">
+                    <div className="truncate font-medium">{report.name}</div>
                     {chartRange !== null && (
-                      <div className="mt-1 text-xs text-muted-foreground truncate">
-                        {timeWindows[chartRange as keyof typeof timeWindows]?.label}
+                      <div className="mt-1 truncate text-muted-foreground text-xs">
+                        {
+                          timeWindows[chartRange as keyof typeof timeWindows]
+                            ?.label
+                        }
                       </div>
                     )}
                   </div>
                 </div>
               )}
             </>,
-            document.body,
+            document.body
           )
         : null}
     </div>
@@ -582,12 +608,12 @@ export function ReportItemReadOnly({
   const chartRange = report.range;
 
   return (
-    <div className="card h-full flex flex-col">
-      <div className="flex items-center justify-between border-b border-border p-4 leading-none">
+    <div className="card flex h-full flex-col">
+      <div className="flex items-center justify-between border-border border-b p-4 leading-none">
         <div className="flex-1">
           <div className="font-medium">{report.name}</div>
           {chartRange !== null && (
-            <div className="mt-2 flex gap-2 ">
+            <div className="mt-2 flex gap-2">
               <span
                 className={
                   (chartRange !== range && range !== null) ||
@@ -617,26 +643,28 @@ export function ReportItemReadOnly({
           // No overflow-auto — let the chart's ResponsiveContainer size itself
           // to the available box. min-h-0 is required so flex-1 can actually
           // shrink the chart below its intrinsic content height.
-          'p-4 flex-1 min-h-0 overflow-hidden',
-          report.chartType === 'metric' && 'p-0',
+          'min-h-0 flex-1 overflow-hidden p-4',
+          report.chartType === 'metric' && 'p-0'
         )}
       >
         <ReportChart
-          report={{
-            ...report,
-            range: range ?? report.range,
-            startDate: startDate ?? null,
-            endDate: endDate ?? null,
-            interval: interval ?? report.interval,
-          }}
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
             metricLayout:
               report.chartType === 'metric' && report.breakdowns.length === 0
                 ? 'hero'
                 : 'compact',
-            metricSurface:
-              report.chartType === 'metric' ? 'plain' : 'card',
+            metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
+          }}
+          report={{
+            ...report,
+            // layout changes on drag-reorder but is not a query input; drop it
+            // so reordering doesn't change the query key and refetch the chart.
+            layout: undefined,
+            range: range ?? report.range,
+            startDate: startDate ?? null,
+            endDate: endDate ?? null,
+            interval: interval ?? report.interval,
           }}
           shareId={shareId}
         />

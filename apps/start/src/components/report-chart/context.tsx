@@ -1,8 +1,15 @@
+import type { IChartSerie, IReportInput } from '@openpanel/validation';
 import isEqual from 'lodash.isequal';
 import type { LucideIcon } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
-
-import type { IChartSerie, IReportInput } from '@openpanel/validation';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 export type ReportChartContextType = {
   options: Partial<{
@@ -33,6 +40,20 @@ export type ReportChartContextType = {
   reportId?: string;
 };
 
+// Cache age + revalidation state, surfaced by the active chart leaf's data hook
+// and consumed by <ReportCacheStatus> ("Updated X ago" + refresh button).
+export type ReportCacheStatus = {
+  cachedAt: number | null;
+  isRevalidating: boolean;
+};
+
+type ReportChartContextValue = ReportChartContextType & {
+  cacheStatus: ReportCacheStatus;
+  setCacheStatus: (status: ReportCacheStatus) => void;
+  registerRefresh: (fn: (() => void) | null) => void;
+  refresh: () => void;
+};
+
 type ReportChartContextProviderProps = ReportChartContextType & {
   children: React.ReactNode;
 };
@@ -42,13 +63,13 @@ export type ReportChartProps = Partial<ReportChartContextType> & {
   lazy?: boolean;
 };
 
-const context = createContext<ReportChartContextType | null>(null);
+const context = createContext<ReportChartContextValue | null>(null);
 
 export const useReportChartContext = () => {
   const ctx = useContext(context);
   if (!ctx) {
     throw new Error(
-      'useReportChartContext must be used within a ReportChartProvider',
+      'useReportChartContext must be used within a ReportChartProvider'
     );
   }
   return ctx;
@@ -66,7 +87,27 @@ export const ReportChartProvider = ({
     }
   }, [propsToContext]);
 
-  return <context.Provider value={ctx}>{children}</context.Provider>;
+  const [cacheStatus, setCacheStatus] = useState<ReportCacheStatus>({
+    cachedAt: null,
+    isRevalidating: false,
+  });
+
+  // The refresh handler is owned by the active leaf's data hook; keep it in a
+  // ref so registering it doesn't re-render, and expose a stable trigger.
+  const refreshRef = useRef<(() => void) | null>(null);
+  const registerRefresh = useCallback((fn: (() => void) | null) => {
+    refreshRef.current = fn;
+  }, []);
+  const refresh = useCallback(() => {
+    refreshRef.current?.();
+  }, []);
+
+  const value = useMemo<ReportChartContextValue>(
+    () => ({ ...ctx, cacheStatus, setCacheStatus, registerRefresh, refresh }),
+    [ctx, cacheStatus, registerRefresh, refresh]
+  );
+
+  return <context.Provider value={value}>{children}</context.Provider>;
 };
 
 export default context;

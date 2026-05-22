@@ -1,15 +1,16 @@
-import { useTRPC } from '@/integrations/trpc/react';
-import { useNumber } from '@/hooks/use-numer-formatter';
-import type { RouterOutputs } from '@/trpc/client';
+import { getPreviousMetric } from '@openpanel/common';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useReportChartContext } from '../context';
+import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
-import { AspectContainer } from '../aspect-container';
-import { getChartColor } from '@/utils/theme';
-import { getPreviousMetric } from '@openpanel/common';
 import { PreviousDiffIndicatorPure } from '../common/previous-diff-indicator';
+import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
+import { useNumber } from '@/hooks/use-numer-formatter';
+import { useTRPC } from '@/integrations/trpc/react';
+import type { RouterOutputs } from '@/trpc/client';
+import { getChartColor } from '@/utils/theme';
 
 type FunnelData = RouterOutputs['chart']['funnel'];
 type FunnelSeries = FunnelData['current'][number];
@@ -24,18 +25,20 @@ export function ReportFunnelMetricChart() {
     report.options?.type === 'funnel' ? report.options : undefined;
   const funnelProperty = funnelOptions?.funnelProperty;
 
-  const res = useQuery(
-    trpc.chart.funnel.queryOptions(
-      {
-        ...report,
-        shareId,
-      },
-      {
-        placeholderData: keepPreviousData,
-        staleTime: 1000 * 60 * 1,
-        enabled: !isLazyLoading && report.series.length > 0,
-      },
-    ),
+  const queryOptions = trpc.chart.funnel.queryOptions(
+    {
+      ...report,
+      shareId,
+    },
+    {
+      placeholderData: keepPreviousData,
+      staleTime: 1000 * 60 * 1,
+      enabled: !isLazyLoading && report.series.length > 0,
+    }
+  );
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.funnel.queryOptions({ ...report, shareId, bypassCache: true })
   );
 
   if (isLazyLoading || res.isLoading) {
@@ -93,7 +96,7 @@ export function ReportFunnelMetricChart() {
       : undefined;
 
     const label = hasBreakdowns
-      ? (series.breakdowns?.join(' > ') || 'Not set')
+      ? series.breakdowns?.join(' > ') || 'Not set'
       : 'Total';
 
     return {
@@ -118,7 +121,9 @@ export function ReportFunnelMetricChart() {
         : 'Funnel Metric';
 
   return (
-    <div className={`col gap-4 ${!isEditMode ? 'h-full items-center justify-center' : ''}`}>
+    <div
+      className={`col gap-4 ${isEditMode ? '' : 'h-full items-center justify-center'}`}
+    >
       {/* KPI Cards */}
       <div
         className={`grid gap-4 ${
@@ -131,17 +136,17 @@ export function ReportFunnelMetricChart() {
       >
         {metrics.map((metric) => (
           <div
+            className="card group relative flex cursor-default flex-col items-center justify-center gap-2 p-6"
             key={metric.id}
-            className="card group relative flex flex-col items-center justify-center gap-2 p-6 cursor-default"
           >
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
               <div
                 className="h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: metric.color }}
               />
               <span>{metric.label}</span>
             </div>
-            <div className="font-mono text-4xl font-bold">
+            <div className="font-bold font-mono text-4xl">
               {number.short(metric.value)}
             </div>
             {metric.prevValue != null && (
@@ -151,18 +156,19 @@ export function ReportFunnelMetricChart() {
               />
             )}
             {/* Hover tooltip */}
-            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full z-50 hidden group-hover:flex rounded-lg border bg-card p-3 shadow-lg text-sm whitespace-nowrap mt-2">
+            <div className="absolute bottom-0 left-1/2 z-50 mt-2 hidden -translate-x-1/2 translate-y-full whitespace-nowrap rounded-lg border bg-card p-3 text-sm shadow-lg group-hover:flex">
               <div className="flex gap-2">
                 <div
-                  className="w-[3px] rounded-full shrink-0"
+                  className="w-[3px] shrink-0 rounded-full"
                   style={{ backgroundColor: metric.color }}
                 />
                 <div className="flex flex-col gap-0.5">
                   <span className="text-muted-foreground">
-                    Sum of {funnelProperty?.replace('properties.', '')} on {metricLabel}
+                    Sum of {funnelProperty?.replace('properties.', '')} on{' '}
+                    {metricLabel}
                   </span>
                   <span className="text-muted-foreground">{metric.label}</span>
-                  <span className="font-mono font-semibold bg-def-200 px-1.5 py-0.5 rounded w-fit">
+                  <span className="w-fit rounded bg-def-200 px-1.5 py-0.5 font-mono font-semibold">
                     {number.format(metric.value)}
                   </span>
                 </div>
@@ -177,7 +183,7 @@ export function ReportFunnelMetricChart() {
         <div className="card overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border bg-def-100">
+              <tr className="border-border border-b bg-def-100">
                 <th className="px-4 py-2 text-left font-medium text-muted-foreground">
                   Metric
                 </th>
@@ -194,15 +200,15 @@ export function ReportFunnelMetricChart() {
             <tbody>
               {metrics.map((metric) => (
                 <tr
+                  className="border-border border-b last:border-0"
                   key={metric.id}
-                  className="border-b border-border last:border-0"
                 >
                   <td className="px-4 py-2 font-medium">{metricLabel}</td>
                   {hasBreakdowns && (
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-2">
                         <div
-                          className="h-2.5 w-2.5 rounded-full shrink-0"
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
                           style={{ backgroundColor: metric.color }}
                         />
                         {metric.label}

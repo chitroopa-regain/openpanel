@@ -1,10 +1,20 @@
-import { ReportChart } from '@/components/report-chart';
+import type { IServiceReport } from '@openpanel/db';
+import { useQuery } from '@tanstack/react-query';
+import { useParams, useRouter, useSearch } from '@tanstack/react-router';
 import {
-  clearReportDraft,
-  createReportDraftToken,
-  loadReportDraft,
-  saveReportDraft,
-} from '@/components/report-chart/report-draft';
+  CodeIcon,
+  GanttChartSquareIcon,
+  Settings2Icon,
+  ShareIcon,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import EditReportName from '../report/edit-report-name';
+import { ReportCacheBadge } from './report-cache-status';
+import {
+  type BreadcrumbItem,
+  PageBreadcrumbs,
+} from '@/components/page-breadcrumbs';
 import { ReportChartType } from '@/components/report/ReportChartType';
 import { ReportInterval } from '@/components/report/ReportInterval';
 import { ReportLineType } from '@/components/report/ReportLineType';
@@ -22,19 +32,15 @@ import {
   setReport,
 } from '@/components/report/reportSlice';
 import { ReportSidebar } from '@/components/report/sidebar/ReportSidebar';
-import { PageBreadcrumbs, type BreadcrumbItem } from '@/components/page-breadcrumbs';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ReportChart } from '@/components/report-chart';
+import {
+  clearReportDraft,
+  createReportDraftToken,
+  loadReportDraft,
+  saveReportDraft,
+} from '@/components/report-chart/report-draft';
 import { TimeWindowPicker } from '@/components/time-window-picker';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
-import { useAppParams } from '@/hooks/use-app-params';
-import { useBreakpoint } from '@/hooks/use-breakpoint';
-import { pushModal } from '@/modals';
-import { useDispatch, useSelector } from '@/redux';
-import { CodeIcon, GanttChartSquareIcon, Settings2Icon, ShareIcon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-
-import type { IServiceReport } from '@openpanel/db';
 import {
   Dialog,
   DialogContent,
@@ -43,11 +49,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useAppParams } from '@/hooks/use-app-params';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { useTRPC } from '@/integrations/trpc/react';
-import { useQuery } from '@tanstack/react-query';
-import { useParams, useRouter, useSearch } from '@tanstack/react-router';
-import { toast } from 'sonner';
-import EditReportName from '../report/edit-report-name';
+import { pushModal } from '@/modals';
+import { useDispatch, useSelector } from '@/redux';
 
 function ReportSqlContent({ active }: { active: boolean }) {
   const report = useSelector((state) => state.report);
@@ -99,22 +107,30 @@ function ReportSqlContent({ active }: { active: boolean }) {
       ...queryOpts,
       enabled:
         queryOpts.enabled &&
-        !['bar', 'pie', 'funnel', 'funnel_metric', 'retention', 'conversion', 'sankey'].includes(
-          chartType,
-        ),
-    }),
+        ![
+          'bar',
+          'pie',
+          'funnel',
+          'funnel_metric',
+          'retention',
+          'conversion',
+          'sankey',
+        ].includes(chartType),
+    })
   );
   const aggregateRes = useQuery(
     trpc.chart.aggregate.queryOptions(input, {
       ...queryOpts,
       enabled: queryOpts.enabled && ['bar', 'pie'].includes(chartType),
-    }),
+    })
   );
   const funnelRes = useQuery(
     trpc.chart.funnel.queryOptions(input, {
       ...queryOpts,
-      enabled: queryOpts.enabled && (chartType === 'funnel' || chartType === 'funnel_metric'),
-    }),
+      enabled:
+        queryOpts.enabled &&
+        (chartType === 'funnel' || chartType === 'funnel_metric'),
+    })
   );
   const cohortRes = useQuery(
     trpc.chart.cohort.queryOptions(
@@ -139,24 +155,22 @@ function ReportSqlContent({ active }: { active: boolean }) {
         enabled:
           queryOpts.enabled &&
           chartType === 'retention' &&
-          (firstRetentionEvent.length > 0 ||
-            !!firstRetentionCustomEventId) &&
-          (secondRetentionEvent.length > 0 ||
-            !!secondRetentionCustomEventId),
-      },
-    ),
+          (firstRetentionEvent.length > 0 || !!firstRetentionCustomEventId) &&
+          (secondRetentionEvent.length > 0 || !!secondRetentionCustomEventId),
+      }
+    )
   );
   const conversionRes = useQuery(
     trpc.chart.conversion.queryOptions(input, {
       ...queryOpts,
       enabled: queryOpts.enabled && chartType === 'conversion',
-    }),
+    })
   );
   const sankeyRes = useQuery(
     trpc.chart.sankey.queryOptions(input, {
       ...queryOpts,
       enabled: queryOpts.enabled && chartType === 'sankey',
-    }),
+    })
   );
 
   const res =
@@ -175,7 +189,9 @@ function ReportSqlContent({ active }: { active: boolean }) {
   const timezone = res.data?.timezone ?? 'UTC';
 
   useEffect(() => {
-    if (!active) return;
+    if (!active) {
+      return;
+    }
     void res.refetch();
   }, [active, chartType, res.refetch]);
 
@@ -196,12 +212,12 @@ function ReportSqlContent({ active }: { active: boolean }) {
       ];
       const pattern = new RegExp(
         `\\b(FROM|JOIN)\\s+(${tables.join('|')})\\b`,
-        'gi',
+        'gi'
       );
       const withDb = sql.replace(pattern, '$1 openpanel.$2');
       return `${withDb}\nSETTINGS session_timezone = '${timezone}'`;
     },
-    [timezone],
+    [timezone]
   );
 
   const handleCopy = useCallback(() => {
@@ -210,9 +226,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
   }, [queries]);
 
   const handleCopyForPlay = useCallback(() => {
-    navigator.clipboard.writeText(
-      queries.map(toPlayQuery).join('\n\n'),
-    );
+    navigator.clipboard.writeText(queries.map(toPlayQuery).join('\n\n'));
     toast('Copied for ClickHouse Play');
   }, [queries, toPlayQuery]);
 
@@ -232,17 +246,17 @@ function ReportSqlContent({ active }: { active: boolean }) {
       ) : (
         <div className="space-y-4">
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleCopy}>
+            <Button onClick={handleCopy} size="sm" variant="outline">
               Copy
             </Button>
-            <Button variant="outline" size="sm" onClick={handleCopyForPlay}>
+            <Button onClick={handleCopyForPlay} size="sm" variant="outline">
               Copy for CH Play
             </Button>
           </div>
           {queries.map((sql, i) => (
             <pre
+              className="overflow-x-auto whitespace-pre-wrap rounded bg-muted p-4 font-mono text-xs"
               key={i}
-              className="rounded bg-muted p-4 text-xs overflow-x-auto whitespace-pre-wrap font-mono"
             >
               {sql}
             </pre>
@@ -257,13 +271,13 @@ function ShowQueryButton() {
   const [open, setOpen] = useState(false);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog onOpenChange={setOpen} open={open}>
       <DialogTrigger asChild>
-        <Button variant="outline" icon={CodeIcon}>
+        <Button icon={CodeIcon} variant="outline">
           SQL
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-auto">
+      <DialogContent className="max-h-[80vh] max-w-3xl overflow-auto">
         <DialogHeader>
           <DialogTitle>ClickHouse Query</DialogTitle>
           <DialogDescription>
@@ -346,8 +360,8 @@ export default function ReportEditor({
       {
         enabled: !!projectId,
         staleTime: 1000 * 60,
-      },
-    ),
+      }
+    )
   );
   const dashboardQuery = useQuery(
     trpc.dashboard.byId.queryOptions(
@@ -358,8 +372,8 @@ export default function ReportEditor({
       {
         enabled: !!search?.dashboardId && !!projectId,
         staleTime: 1000 * 60,
-      },
-    ),
+      }
+    )
   );
 
   // Set report if reportId exists
@@ -367,9 +381,7 @@ export default function ReportEditor({
     if (initialReport) {
       const draftToken = search?.draft;
       const draft =
-        draftToken && initialReport.id
-          ? loadReportDraft(draftToken)
-          : null;
+        draftToken && initialReport.id ? loadReportDraft(draftToken) : null;
 
       if (draft && draft.reportId === initialReport.id) {
         dispatch(hydrateDraftReport(draft.report));
@@ -406,7 +418,9 @@ export default function ReportEditor({
   }, [search?.draft]);
 
   useEffect(() => {
-    if (!reportId || !organizationId || !projectId || !report.ready || !report.dirty) {
+    if (
+      !(reportId && organizationId && projectId && report.ready && report.dirty)
+    ) {
       return;
     }
 
@@ -494,34 +508,35 @@ export default function ReportEditor({
   return (
     <Sheet>
       <div>
-        <div className="p-4 flex items-center justify-between">
+        <div className="flex items-center justify-between p-4">
           <div className="min-w-0">
-            <PageBreadcrumbs
-              items={breadcrumbItems}
-            />
+            <PageBreadcrumbs items={breadcrumbItems} />
             <div className="mt-2">
               <EditReportName />
             </div>
           </div>
-          {initialReport?.id && (
-            <Button
-              variant="outline"
-              icon={ShareIcon}
-              onClick={() =>
-                pushModal('ShareReportModal', { reportId: initialReport.id })
-              }
-            >
-              Share
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <ReportCacheBadge reportId={initialReport?.id} />
+            {initialReport?.id && (
+              <Button
+                icon={ShareIcon}
+                onClick={() =>
+                  pushModal('ShareReportModal', { reportId: initialReport.id })
+                }
+                variant="outline"
+              >
+                Share
+              </Button>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-2 p-4 pt-0 md:grid-cols-6">
           {!isAboveLg && (
             <SheetTrigger asChild>
               <Button
+                className="self-start"
                 icon={GanttChartSquareIcon}
                 variant="cta"
-                className="self-start"
               >
                 Pick events
               </Button>
@@ -543,26 +558,28 @@ export default function ReportEditor({
             />
             <TimeWindowPicker
               className="min-w-0 flex-1"
+              dateConfig={report.dateConfig}
+              endDate={report.endDate}
               onChange={(value) => {
                 dispatch(changeDateRanges(value));
               }}
-              value={report.range}
-              onStartDateChange={(date) => dispatch(changeStartDate(date))}
+              onDateConfigChange={(config) =>
+                dispatch(changeDateConfig(config))
+              }
               onEndDateChange={(date) => dispatch(changeEndDate(date))}
-              endDate={report.endDate}
+              onStartDateChange={(date) => dispatch(changeStartDate(date))}
               startDate={report.startDate}
-              dateConfig={report.dateConfig}
-              onDateConfigChange={(config) => dispatch(changeDateConfig(config))}
+              value={report.range}
             />
             <ReportInterval
+              chartType={report.chartType}
               className="min-w-0 flex-1"
+              dateConfig={report.dateConfig}
+              endDate={report.endDate}
               interval={report.interval}
               onChange={(newInterval) => dispatch(changeInterval(newInterval))}
               range={report.range}
-              chartType={report.chartType}
               startDate={report.startDate}
-              endDate={report.endDate}
-              dateConfig={report.dateConfig}
             />
             <ReportLineType className="min-w-0 flex-1" />
           </div>
@@ -581,14 +598,15 @@ export default function ReportEditor({
           <div className="min-w-0 flex-1">
             {report.ready && (
               <ReportChart
-                report={{ ...report, projectId }}
                 isEditMode
                 options={{
                   metricLayout:
-                    report.chartType === 'metric' && report.breakdowns.length === 0
+                    report.chartType === 'metric' &&
+                    report.breakdowns.length === 0
                       ? 'hero'
                       : 'compact',
                 }}
+                report={{ ...report, projectId }}
               />
             )}
           </div>

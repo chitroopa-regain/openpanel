@@ -1,11 +1,7 @@
-import { flatten, map, pipe, prop, range, sort, uniq } from 'ramda';
-import sqlstring from 'sqlstring';
-import { z } from 'zod';
-
+import { round } from '@openpanel/common';
 import {
-  type IClickhouseProfile,
-  type IServiceProfile,
-  TABLE_NAMES,
+  AggregateChartEngine,
+  ChartEngine,
   ch,
   chQuery,
   clix,
@@ -18,21 +14,23 @@ import {
   getChartStartEndDate,
   getCustomEventWhereClause,
   getEventFiltersWhereClause,
-  getTraitBreakdownDescriptor,
-  qualifyFunnelCondition,
-  type TraitBreakdown,
   getEventMetasCached,
   getProfilesCached,
   getReportById,
   getSelectPropertyKey,
   getSettingsForProject,
+  getTraitBreakdownDescriptor,
+  type IClickhouseProfile,
+  type IServiceProfile,
   onlyReportEvents,
+  qualifyFunnelCondition,
   resolveSeriesForFunnel,
   sankeyService,
+  TABLE_NAMES,
+  type TraitBreakdown,
   validateShareAccess,
 } from '@openpanel/db';
 import {
-  type IChartEvent,
   type IChartEventFilter,
   type ICustomEventComponent,
   zChartEventFilter,
@@ -43,20 +41,17 @@ import {
   zReportInput,
   zTimeInterval,
 } from '@openpanel/validation';
-
-import { round } from '@openpanel/common';
-import { AggregateChartEngine, ChartEngine } from '@openpanel/db';
 import {
   differenceInDays,
   differenceInMonths,
   differenceInWeeks,
   formatISO,
 } from 'date-fns';
-import {
-  getConcreteEventNameWhereClause,
-  getRetentionReturnEventWhereClause,
-} from './chart-retention.utils';
+import { flatten, map, pipe, prop, range, sort, uniq } from 'ramda';
+import sqlstring from 'sqlstring';
+import { z } from 'zod';
 import { getProjectAccess } from '../access';
+import { getReportFreshness } from '../cache-freshness';
 import { TRPCAccessError } from '../errors';
 import {
   cacheMiddleware,
@@ -64,6 +59,10 @@ import {
   protectedProcedure,
   publicProcedure,
 } from '../trpc';
+import {
+  getConcreteEventNameWhereClause,
+  getRetentionReturnEventWhereClause,
+} from './chart-retention.utils';
 
 function utc(date: string | Date) {
   if (typeof date === 'string') {
@@ -72,7 +71,7 @@ function utc(date: string | Date) {
   return formatISO(date).replace('T', ' ').slice(0, 19);
 }
 
-const cacher = cacheMiddleware(60);
+const cacher = cacheMiddleware(getReportFreshness);
 
 const chartProcedure = publicProcedure.use(
   async ({ ctx, next, getRawInput }) => {
@@ -237,7 +236,7 @@ export const chartRouter = createTRPCRouter({
         db.customEvent.findMany({ where: { projectId } }).catch((error) => {
           console.warn(
             'chart.events: failed to load custom events, falling back to event_names_mv only',
-            error,
+            error
           );
           return [];
         }),
@@ -372,7 +371,9 @@ export const chartRouter = createTRPCRouter({
       const traitKeys = await chQuery<{ key: string }>(
         `SELECT DISTINCT key FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} LIMIT 1000`
       );
-      const traitProperties = traitKeys.map((t) => `profile.properties.${t.key}`);
+      const traitProperties = traitKeys.map(
+        (t) => `profile.properties.${t.key}`
+      );
       profileProperties.push(...traitProperties);
 
       const query = clix(ch)
@@ -395,7 +396,7 @@ export const chartRouter = createTRPCRouter({
         });
         if (ce && Array.isArray(ce.components)) {
           propEventNames = (ce.components as { eventName: string }[]).map(
-            (c) => c.eventName,
+            (c) => c.eventName
           );
         }
       }
@@ -469,114 +470,120 @@ export const chartRouter = createTRPCRouter({
         customEventId: z.string().optional(),
       })
     )
-    .query(async ({ input: { event, property, projectId, customEventId, ...input } }) => {
-      if (property === 'has_profile') {
-        return {
-          values: ['true', 'false'],
-        };
-      }
-
-      // Resolve custom event to its component event names
-      let eventNames: string[] = [];
-      if (customEventId) {
-        const ce = await db.customEvent.findUnique({
-          where: { id: customEventId },
-        });
-        if (ce && Array.isArray(ce.components)) {
-          eventNames = (ce.components as { eventName: string }[]).map(
-            (c) => c.eventName,
-          );
-        }
-      }
-      if (eventNames.length === 0 && event && event !== '*') {
-        eventNames = [event];
-      }
-
-      const values: string[] = [];
-
-      // profile.properties.* — query profile_traits for distinct latest values.
-      // Both user traits and device/geo keys (country, os, brand, ...) are dual-written
-      // to profile_traits by profile_manager.go, so a single fast path serves both.
-      // The inner subquery picks each profile's latest value first, then deduplicates
-      // at the SQL level — flat SELECT DISTINCT with LIMIT can cut off before reaching
-      // all distinct values.
-      if (property.startsWith('profile.properties.')) {
-        const traitKey = property.replace('profile.properties.', '').split('.')[0];
-        if (traitKey) {
-          const traitValues = await chQuery<{ value: string }>(
-            `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
-          );
+    .query(
+      async ({
+        input: { event, property, projectId, customEventId, ...input },
+      }) => {
+        if (property === 'has_profile') {
           return {
-            values: traitValues.map((t) => t.value),
+            values: ['true', 'false'],
           };
         }
-      }
 
-      if (property.startsWith('properties.')) {
-        const query = clix(ch)
-          .select<{
-            property_value: string;
-            created_at: string;
-          }>(['distinct property_value', 'max(created_at) as created_at'])
-          .from(TABLE_NAMES.event_property_values_mv)
-          .where('project_id', '=', projectId)
-          .where('property_key', '=', property.replace(/^properties\./, ''))
-          .groupBy(['property_value'])
-          .orderBy('created_at', 'DESC');
-
-        if (eventNames.length === 1) {
-          query.where('name', '=', eventNames[0]!);
-        } else if (eventNames.length > 1) {
-          query.where('name', 'IN', eventNames);
+        // Resolve custom event to its component event names
+        let eventNames: string[] = [];
+        if (customEventId) {
+          const ce = await db.customEvent.findUnique({
+            where: { id: customEventId },
+          });
+          if (ce && Array.isArray(ce.components)) {
+            eventNames = (ce.components as { eventName: string }[]).map(
+              (c) => c.eventName
+            );
+          }
+        }
+        if (eventNames.length === 0 && event && event !== '*') {
+          eventNames = [event];
         }
 
-        const res = await query.execute();
+        const values: string[] = [];
 
-        values.push(...res.map((e) => e.property_value));
-      } else {
-        const query = clix(ch)
-          .select<{ values: string[] }>([
-            `distinct ${getSelectPropertyKey(property)} as values`,
-          ])
-          .from(TABLE_NAMES.events)
-          .where('project_id', '=', projectId)
-          .where('created_at', '>', clix.exp('now() - INTERVAL 30 DAY'))
-          .orderBy('created_at', 'DESC')
-          .limit(100_000);
-
-        if (eventNames.length === 1) {
-          query.where('name', '=', eventNames[0]!);
-        } else if (eventNames.length > 1) {
-          query.where('name', 'IN', eventNames);
+        // profile.properties.* — query profile_traits for distinct latest values.
+        // Both user traits and device/geo keys (country, os, brand, ...) are dual-written
+        // to profile_traits by profile_manager.go, so a single fast path serves both.
+        // The inner subquery picks each profile's latest value first, then deduplicates
+        // at the SQL level — flat SELECT DISTINCT with LIMIT can cut off before reaching
+        // all distinct values.
+        if (property.startsWith('profile.properties.')) {
+          const traitKey = property
+            .replace('profile.properties.', '')
+            .split('.')[0];
+          if (traitKey) {
+            const traitValues = await chQuery<{ value: string }>(
+              `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
+            );
+            return {
+              values: traitValues.map((t) => t.value),
+            };
+          }
         }
 
-        if (property.startsWith('profile.')) {
-          query.leftAnyJoin(
-            clix(ch)
-              .select<IClickhouseProfile>([])
-              .from(TABLE_NAMES.profiles)
-              .where('project_id', '=', projectId),
-            'profile.id = profile_id',
-            'profile'
+        if (property.startsWith('properties.')) {
+          const query = clix(ch)
+            .select<{
+              property_value: string;
+              created_at: string;
+            }>(['distinct property_value', 'max(created_at) as created_at'])
+            .from(TABLE_NAMES.event_property_values_mv)
+            .where('project_id', '=', projectId)
+            .where('property_key', '=', property.replace(/^properties\./, ''))
+            .groupBy(['property_value'])
+            .orderBy('created_at', 'DESC');
+
+          if (eventNames.length === 1) {
+            query.where('name', '=', eventNames[0]!);
+          } else if (eventNames.length > 1) {
+            query.where('name', 'IN', eventNames);
+          }
+
+          const res = await query.execute();
+
+          values.push(...res.map((e) => e.property_value));
+        } else {
+          const query = clix(ch)
+            .select<{ values: string[] }>([
+              `distinct ${getSelectPropertyKey(property)} as values`,
+            ])
+            .from(TABLE_NAMES.events)
+            .where('project_id', '=', projectId)
+            .where('created_at', '>', clix.exp('now() - INTERVAL 30 DAY'))
+            .orderBy('created_at', 'DESC')
+            .limit(100_000);
+
+          if (eventNames.length === 1) {
+            query.where('name', '=', eventNames[0]!);
+          } else if (eventNames.length > 1) {
+            query.where('name', 'IN', eventNames);
+          }
+
+          if (property.startsWith('profile.')) {
+            query.leftAnyJoin(
+              clix(ch)
+                .select<IClickhouseProfile>([])
+                .from(TABLE_NAMES.profiles)
+                .where('project_id', '=', projectId),
+              'profile.id = profile_id',
+              'profile'
+            );
+          }
+
+          const events = await query.execute();
+
+          values.push(
+            ...pipe(
+              (data: typeof events) => map(prop('values'), data),
+              flatten,
+              uniq,
+              sort((a, b) => a.length - b.length)
+            )(events)
           );
         }
 
-        const events = await query.execute();
-
-        values.push(
-          ...pipe(
-            (data: typeof events) => map(prop('values'), data),
-            flatten,
-            uniq,
-            sort((a, b) => a.length - b.length)
-          )(events)
-        );
+        return {
+          values,
+        };
       }
-
-      return {
-        values,
-      };
-    }),
+    ),
 
   funnel: chartProcedure
     .use(cacher)
@@ -626,18 +633,18 @@ export const chartRouter = createTRPCRouter({
       ) {
         const eventSeries = await resolveSeriesForFunnel(
           chartInput.series,
-          chartInput.projectId,
+          chartInput.projectId
         );
         const allEventNames = uniq(
           eventSeries.flatMap((e: any) =>
             e.customEventComponents
               ? e.customEventComponents.map((c: any) => c.eventName)
-              : [e.name],
-          ),
+              : [e.name]
+          )
         );
         const stepConditions = funnelService.getFunnelConditions(
           eventSeries,
-          chartInput.projectId,
+          chartInput.projectId
         );
 
         const funnelWindowUnit = funnelOptions.funnelWindowUnit ?? 'hour';
@@ -645,12 +652,12 @@ export const chartRouter = createTRPCRouter({
           second: 1,
           minute: 60,
           hour: 3600,
-          day: 86400,
-          week: 604800,
-          month: 2592000,
+          day: 86_400,
+          week: 604_800,
+          month: 2_592_000,
         };
         const defaultWindowByUnit: Record<string, number> = {
-          second: 86400,
+          second: 86_400,
           minute: 1440,
           hour: 24,
           day: 1,
@@ -659,7 +666,8 @@ export const chartRouter = createTRPCRouter({
         };
         const funnelWindow =
           funnelOptions.funnelWindow ??
-          (defaultWindowByUnit[funnelWindowUnit] ?? 24);
+          defaultWindowByUnit[funnelWindowUnit] ??
+          24;
         const funnelWindowSeconds =
           funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
         const group = funnelService.getFunnelGroup(funnelOptions.funnelGroup);
@@ -779,42 +787,45 @@ export const chartRouter = createTRPCRouter({
       };
     }),
 
-  sankey: protectedProcedure.input(zReportInput).query(async ({ input }) => {
-    const { timezone } = await getSettingsForProject(input.projectId);
-    const currentPeriod = getChartStartEndDate(input, timezone);
+  sankey: protectedProcedure
+    .use(cacher)
+    .input(zReportInput)
+    .query(async ({ input }) => {
+      const { timezone } = await getSettingsForProject(input.projectId);
+      const currentPeriod = getChartStartEndDate(input, timezone);
 
-    // Extract sankey options
-    const options = input.options;
+      // Extract sankey options
+      const options = input.options;
 
-    if (!options || options.type !== 'sankey') {
-      throw new Error('Sankey options are required');
-    }
+      if (!options || options.type !== 'sankey') {
+        throw new Error('Sankey options are required');
+      }
 
-    // Extract start/end events from series based on mode
-    const eventSeries = onlyReportEvents(input.series);
+      // Extract start/end events from series based on mode
+      const eventSeries = onlyReportEvents(input.series);
 
-    if (!eventSeries[0]) {
-      throw new Error('Start and end events are required');
-    }
+      if (!eventSeries[0]) {
+        throw new Error('Start and end events are required');
+      }
 
-    const data = await sankeyService.getSankey({
-      projectId: input.projectId,
-      startDate: currentPeriod.startDate,
-      endDate: currentPeriod.endDate,
-      steps: options.steps,
-      mode: options.mode,
-      startEvent: eventSeries[0],
-      endEvent: eventSeries[1],
-      exclude: options.exclude || [],
-      include: options.include,
-      timezone,
-    });
+      const data = await sankeyService.getSankey({
+        projectId: input.projectId,
+        startDate: currentPeriod.startDate,
+        endDate: currentPeriod.endDate,
+        steps: options.steps,
+        mode: options.mode,
+        startEvent: eventSeries[0],
+        endEvent: eventSeries[1],
+        exclude: options.exclude || [],
+        include: options.include,
+        timezone,
+      });
 
-    return {
-      ...data,
-      timezone,
-    };
-  }),
+      return {
+        ...data,
+        timezone,
+      };
+    }),
 
   chart: chartProcedure
     .use(cacher)
@@ -885,6 +896,7 @@ export const chartRouter = createTRPCRouter({
         dateConfig: zDateConfig.nullish(),
         shareId: z.string().optional(),
         id: z.string().optional(),
+        bypassCache: z.boolean().optional(),
       })
     )
     .query(async ({ input, ctx }) => {
@@ -941,12 +953,12 @@ export const chartRouter = createTRPCRouter({
             firstEvent = components.map((c) => c.eventName);
             firstEventCustomWhere = getCustomEventWhereClause(
               components,
-              projectId,
+              projectId
             );
             firstComponentFilters = components.flatMap((c) => c.filters);
           }
           // Preserve outer series-level filters on the custom event
-          firstEventFilters = (firstItem.filters ?? []);
+          firstEventFilters = firstItem.filters ?? [];
         }
 
         if (secondItem?.type === 'event') {
@@ -961,12 +973,12 @@ export const chartRouter = createTRPCRouter({
             secondEvent = components.map((c) => c.eventName);
             secondEventCustomWhere = getCustomEventWhereClause(
               components,
-              projectId,
+              projectId
             );
             secondComponentFilters = components.flatMap((c) => c.filters);
           }
           // Preserve outer series-level filters on the custom event
-          secondEventFilters = (secondItem.filters ?? []);
+          secondEventFilters = secondItem.filters ?? [];
         }
       }
 
@@ -980,7 +992,7 @@ export const chartRouter = createTRPCRouter({
           firstEvent = components.map((c) => c.eventName);
           firstEventCustomWhere = getCustomEventWhereClause(
             components,
-            projectId,
+            projectId
           );
           firstComponentFilters = components.flatMap((c) => c.filters);
         }
@@ -994,7 +1006,7 @@ export const chartRouter = createTRPCRouter({
           secondEvent = components.map((c) => c.eventName);
           secondEventCustomWhere = getCustomEventWhereClause(
             components,
-            projectId,
+            projectId
           );
           secondComponentFilters = components.flatMap((c) => c.filters);
         }
@@ -1064,7 +1076,9 @@ export const chartRouter = createTRPCRouter({
       // Profile-only filters are handled via a JOIN, so the MV suffices.
       // Custom events with component filters also need the events table.
       const needsEventsTable = (filters: IChartEventFilter[]) =>
-        filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile');
+        filters.some(
+          (f) => !f.name.startsWith('profile.') && f.name !== 'has_profile'
+        );
 
       const useEventsFirst =
         !!firstEventCustomWhere ||
@@ -1086,16 +1100,24 @@ export const chartRouter = createTRPCRouter({
         const profileFilters = filters
           .filter((f) => f.name.startsWith('profile.'))
           .map((f) => f.name.replace('profile.', ''));
-        if (profileFilters.length === 0) return '';
-        const columns = uniq(profileFilters.map((f) => f.split('.')[0])).join(', ');
+        if (profileFilters.length === 0) {
+          return '';
+        }
+        const columns = uniq(profileFilters.map((f) => f.split('.')[0])).join(
+          ', '
+        );
         return `LEFT ANY JOIN (SELECT id, ${columns} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) AS profile ON profile.id = profile_id`;
       };
 
       const buildFilterWhere = (filters: IChartEventFilter[]) => {
-        if (filters.length === 0) return '';
+        if (filters.length === 0) {
+          return '';
+        }
         const where = getEventFiltersWhereClause(filters, projectId);
         const clauses = Object.values(where);
-        if (clauses.length === 0) return '';
+        if (clauses.length === 0) {
+          return '';
+        }
         return `AND ${clauses.join(' AND ')}`;
       };
 
@@ -1113,8 +1135,12 @@ export const chartRouter = createTRPCRouter({
 
       // cohort_events_mv pre-filters to identified users (profile_id != device_id).
       // When falling back to the raw events table, replicate that condition.
-      const firstIdentifiedFilter = useEventsFirst ? 'AND profile_id != device_id' : '';
-      const secondIdentifiedFilter = useEventsSecond ? 'AND profile_id != device_id' : '';
+      const firstIdentifiedFilter = useEventsFirst
+        ? 'AND profile_id != device_id'
+        : '';
+      const secondIdentifiedFilter = useEventsSecond
+        ? 'AND profile_id != device_id'
+        : '';
 
       // For custom events, use the pre-built WHERE clause (includes component filters).
       // For regular events, use whereEventNameIs() + separate filter clause.
@@ -1199,7 +1225,13 @@ export const chartRouter = createTRPCRouter({
       }>(cohortQuery);
 
       return {
-        data: processCohortData(cohortData, diffInterval, dates.startDate, dates.endDate, interval),
+        data: processCohortData(
+          cohortData,
+          diffInterval,
+          dates.startDate,
+          dates.endDate,
+          interval
+        ),
         queries: [cohortQuery],
         timezone,
       };
@@ -1306,7 +1338,9 @@ export const chartRouter = createTRPCRouter({
             'If true, show users who dropped off at this step. If false, show users who completed at least this step.'
           ),
         funnelWindow: z.number().optional(),
-        funnelWindowUnit: z.enum(['second', 'minute', 'hour', 'day', 'week', 'month']).optional(),
+        funnelWindowUnit: z
+          .enum(['second', 'minute', 'hour', 'day', 'week', 'month'])
+          .optional(),
         funnelGroup: z.string().optional(),
         breakdowns: z.array(z.object({ name: z.string() })).optional(),
         breakdownValues: z.array(z.string()).optional(),
@@ -1342,9 +1376,9 @@ export const chartRouter = createTRPCRouter({
         second: 1,
         minute: 60,
         hour: 3600,
-        day: 86400,
-        week: 604800,
-        month: 2592000,
+        day: 86_400,
+        week: 604_800,
+        month: 2_592_000,
       };
       const funnelWindowSeconds =
         (funnelWindow || 24) * (unitMultipliers[funnelWindowUnit] ?? 3600);
@@ -1363,7 +1397,7 @@ export const chartRouter = createTRPCRouter({
       const breakdownStepIdx = input.breakdownStep;
       const stepConditions = funnelService.getFunnelConditions(
         eventSeries,
-        projectId,
+        projectId
       );
 
       // Collect profile-trait breakdown descriptors so buildFunnelCte can
@@ -1404,13 +1438,13 @@ export const chartRouter = createTRPCRouter({
       // join. Mirrors FunnelService.getFunnel.
       const profileFiltersRaw = funnelService.getProfileFilters(eventSeries);
       const profileFilters = profileFiltersRaw.filter(
-        (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null,
+        (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null
       );
       const breakdownProfileFields = breakdownDims
         .filter(
           (b) =>
             b.name.startsWith('profile.') &&
-            getTraitBreakdownDescriptor(b.name) === null,
+            getTraitBreakdownDescriptor(b.name) === null
         )
         .map((b) => b.name.replace('profile.', ''));
       const allProfileFields = [...profileFilters, ...breakdownProfileFields];
@@ -1441,7 +1475,7 @@ export const chartRouter = createTRPCRouter({
                 breakdownStepIdx < stepConditions.length
               ) {
                 const cond = qualifyStepCondition(
-                  stepConditions[breakdownStepIdx]!,
+                  stepConditions[breakdownStepIdx]!
                 );
                 return `argMaxIf(${expr}, ${qualifiedCreatedAt}, ${cond}) as b_${i}`;
               }
@@ -1475,8 +1509,7 @@ export const chartRouter = createTRPCRouter({
         additionalSelects: breakdownVals ? breakdownSelects : [],
         additionalGroupBy: breakdownVals ? breakdownGroupBy : [],
         traitDescriptors,
-        expectProfilesFinalJoin:
-          anyFilterOnProfile || anyBreakdownOnProfile,
+        expectProfilesFinalJoin: anyFilterOnProfile || anyBreakdownOnProfile,
       });
 
       if (allProfileFields.length > 0) {
@@ -1538,7 +1571,11 @@ export const chartRouter = createTRPCRouter({
 
       // Filter by specific breakdown values if provided
       if (breakdownVals && breakdownDims.length > 0) {
-        for (let i = 0; i < breakdownVals.length && i < breakdownDims.length; i++) {
+        for (
+          let i = 0;
+          i < breakdownVals.length && i < breakdownDims.length;
+          i++
+        ) {
           const val = breakdownVals[i]!;
           if (val === 'Not set') {
             query.rawWhere(`(b_${i} = '' OR b_${i} IS NULL)`);
@@ -1584,7 +1621,7 @@ function processCohortData(
   diffInterval: number,
   startDate?: string,
   endDate?: string,
-  interval?: string,
+  interval?: string
 ) {
   const processed = data.map((row) => {
     const sum = row.total_first_event_count;
@@ -1595,7 +1632,7 @@ function processCohortData(
     return {
       cohort_interval: row.cohort_interval,
       sum,
-      values: values,
+      values,
       percentages: values.map((value) => (sum > 0 ? round(value / sum, 4) : 0)),
     };
   });
@@ -1603,10 +1640,10 @@ function processCohortData(
   // Fill in missing dates with zero rows
   if (startDate && endDate) {
     const existingDates = new Set(processed.map((r) => r.cohort_interval));
-    let start = new Date(startDate.slice(0, 10));
+    const start = new Date(startDate.slice(0, 10));
     // Handle endDate that spills into next day due to +1ms rounding
     // e.g. "2026-04-09 00:00:00" should be treated as Apr 8, not Apr 9
-    let end = new Date(endDate.slice(0, 10));
+    const end = new Date(endDate.slice(0, 10));
     const timeStr = endDate.length > 10 ? endDate.slice(11, 19) : '';
     if (timeStr === '00:00:00') {
       end.setUTCDate(end.getUTCDate() - 1);
@@ -1640,7 +1677,9 @@ function processCohortData(
         d.setUTCDate(d.getUTCDate() + 1);
       }
     }
-    processed.sort((a, b) => a.cohort_interval.localeCompare(b.cohort_interval));
+    processed.sort((a, b) =>
+      a.cohort_interval.localeCompare(b.cohort_interval)
+    );
   }
 
   if (processed.length === 0) {
@@ -1663,7 +1702,9 @@ function processCohortData(
   // Aggregate data for weighted averages, excluding zero-sum rows (synthetic gap-fill rows)
   let nonZeroRowCount = 0;
   processed.forEach((row) => {
-    if (row.sum === 0) return; // skip synthetic zero rows
+    if (row.sum === 0) {
+      return; // skip synthetic zero rows
+    }
     nonZeroRowCount++;
     averageData.totalSum += row.sum;
     row.values.forEach((value, index) => {
@@ -1683,7 +1724,10 @@ function processCohortData(
   // Calculate weighted average values, excluding zeros
   const averageRow = {
     cohort_interval: 'Weighted Average',
-    sum: nonZeroRowCount > 0 ? round(averageData.totalSum / nonZeroRowCount, 0) : 0,
+    sum:
+      nonZeroRowCount > 0
+        ? round(averageData.totalSum / nonZeroRowCount, 0)
+        : 0,
     percentages: averageData.percentages.map(({ sum, weightedSum }) =>
       sum > 0 ? round(weightedSum / sum, 4) : 0
     ),

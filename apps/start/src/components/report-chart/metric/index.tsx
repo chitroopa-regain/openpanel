@@ -1,11 +1,11 @@
-import { useTRPC } from '@/integrations/trpc/react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { useReportChartContext } from '../context';
+import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
+import { useTRPC } from '@/integrations/trpc/react';
 
 export function ReportMetricChart() {
   const { isLazyLoading, report, shareId, options } = useReportChartContext();
@@ -13,18 +13,20 @@ export function ReportMetricChart() {
   const isHero = options.metricLayout === 'hero';
   const isPlainHero = isHero && options.metricSurface === 'plain';
 
-  const res = useQuery(
-    trpc.chart.aggregate.queryOptions(
-      {
-        ...report,
-        shareId,
-      },
-      {
-        placeholderData: keepPreviousData,
-        staleTime: 1000 * 60 * 1,
-        enabled: !isLazyLoading,
-      },
-    ),
+  const queryOptions = trpc.chart.aggregate.queryOptions(
+    {
+      ...report,
+      shareId,
+    },
+    {
+      placeholderData: keepPreviousData,
+      staleTime: 1000 * 60 * 1,
+      enabled: !isLazyLoading,
+    }
+  );
+  const res = useQuery(queryOptions);
+  useReportRevalidation(res, queryOptions.queryKey, () =>
+    trpc.chart.aggregate.queryOptions({ ...report, shareId, bypassCache: true })
   );
 
   if (
@@ -45,7 +47,7 @@ export function ReportMetricChart() {
 
   if (isHero && !isPlainHero) {
     return (
-      <AspectContainer className="min-h-[420px] max-h-[620px]">
+      <AspectContainer className="max-h-[620px] min-h-[420px]">
         <Chart data={res.data} />
       </AspectContainer>
     );
