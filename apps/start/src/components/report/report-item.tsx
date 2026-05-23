@@ -378,9 +378,10 @@ function AddToRowButton({
   onAddAt: (rowIdx: number, side: 'start' | 'end') => void;
 }) {
   const [open, setOpen] = useState(false);
-  // Button width = 28px (w-7); place just outside the card so the right
-  // edge of a "start" button sits flush against the card's left edge.
-  const positionCls = side === 'start' ? '-left-7' : '-right-7';
+  // Sits in the 24px page gutter outside the card. Hidden by default,
+  // fades in when the row is hovered. Hover gives the icon a soft rounded
+  // background — same look as Mixpanel.
+  const positionCls = side === 'start' ? '-left-5' : '-right-5';
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <Tooltiper
@@ -394,11 +395,13 @@ function AddToRowButton({
             type="button"
             className={cn(
               'absolute top-1/2 z-20 -translate-y-1/2',
-              'flex h-7 w-7 items-center justify-center rounded-full',
-              'border border-border bg-card text-muted-foreground shadow-sm',
-              'opacity-0 transition-opacity group-hover/card:opacity-70',
-              'hover:!opacity-100 hover:text-foreground hover:border-primary/60',
-              open && '!opacity-100 text-foreground border-primary/60',
+              'flex h-6 w-6 items-center justify-center rounded',
+              'text-muted-foreground transition-opacity',
+              // Hidden by default, fades in when the row is hovered or the
+              // menu is open.
+              'opacity-0 group-hover/row:opacity-100',
+              'hover:text-foreground hover:bg-muted',
+              open && '!opacity-100 text-foreground bg-muted',
               positionCls,
             )}
           >
@@ -440,7 +443,9 @@ export function ReportItem({
   rowIdx,
   isFirstInRow,
   isLastInRow,
+  isRowHovered,
   onAddAt,
+  onRowHoverChange,
 }: {
   report: any;
   organizationId: string;
@@ -456,7 +461,9 @@ export function ReportItem({
   rowIdx?: number;
   isFirstInRow?: boolean;
   isLastInRow?: boolean;
+  isRowHovered?: boolean;
   onAddAt?: (rowIdx: number, side: 'start' | 'end') => void;
+  onRowHoverChange?: (rowIdx: number, hovered: boolean) => void;
 }) {
   const router = useRouter();
   const chartRange = report.range;
@@ -488,13 +495,25 @@ export function ReportItem({
   return (
     <div
       className={cn(
-        'card group/card relative flex h-full flex-col',
+        'card group/row relative flex h-full flex-col transition-colors',
+        // Subtle row-wide highlight when any card in this row is hovered.
+        isRowHovered && 'bg-muted/20',
         // Source card stays visible at original position during drag (Mixpanel
         // behavior). We don't fade it — the ghost makes the drag obvious enough.
         isDragging && 'ring-2 ring-primary/40'
       )}
       data-report-item-id={report.id}
       ref={rootRef}
+      onMouseEnter={
+        typeof rowIdx === 'number' && onRowHoverChange
+          ? () => onRowHoverChange(rowIdx, true)
+          : undefined
+      }
+      onMouseLeave={
+        typeof rowIdx === 'number' && onRowHoverChange
+          ? () => onRowHoverChange(rowIdx, false)
+          : undefined
+      }
     >
       {isFirstInRow && typeof rowIdx === 'number' && onAddAt && (
         <AddToRowButton side="start" rowIdx={rowIdx} onAddAt={onAddAt} />

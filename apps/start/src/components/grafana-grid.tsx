@@ -148,10 +148,9 @@ export function GrafanaGrid({
           never get thinner than ~a quarter of 1040px (~250px). On viewports
           narrower than that the inner grid overflows and scrolls sideways
           instead of re-wrapping cards to the next row. */}
-      {/* Keep vertical bleed against the page container's p-4. Add a 28px
-        horizontal gutter (px-7) so the floating "+ Add content to row"
-        buttons that sit at -left-7 / -right-7 stay fully visible. */}
-      <div className="-my-4 px-7 overflow-x-auto">
+      {/* -mx-2 + page p-8 = 24px effective horizontal gutter, room for the
+        + buttons that sit at -left-5 / -right-5 with breathing space. */}
+      <div className="-mx-2 -my-4 overflow-x-auto">
         <div style={{ minWidth: 1040 }}>
           <ResponsiveGridLayout
             className="layout"

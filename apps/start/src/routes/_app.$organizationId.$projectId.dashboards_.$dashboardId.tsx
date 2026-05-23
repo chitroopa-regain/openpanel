@@ -298,6 +298,19 @@ function Component() {
     [updateLayout],
   );
 
+  // Track which row the cursor is currently over so the entire row (cards
+  // + plus buttons) can highlight together. null when not hovering any row.
+  const [hoveredRowIdx, setHoveredRowIdx] = useState<number | null>(null);
+  const handleRowHoverChange = useCallback(
+    (rowIdx: number, hovered: boolean) => {
+      setHoveredRowIdx((current) => {
+        if (hovered) return rowIdx;
+        return current === rowIdx ? null : current;
+      });
+    },
+    [],
+  );
+
   // Per-card row position lookup so the floating "+" buttons can render at
   // the left/right edges of each row.
   const rowPositionById = useMemo(() => {
@@ -602,7 +615,12 @@ function Component() {
                   rowIdx={info?.rowIdx}
                   isFirstInRow={info?.isFirst}
                   isLastInRow={info?.isLast}
+                  isRowHovered={
+                    info?.rowIdx !== undefined &&
+                    hoveredRowIdx === info.rowIdx
+                  }
                   onAddAt={handleAddAt}
+                  onRowHoverChange={handleRowHoverChange}
                 />
               </div>
             );
