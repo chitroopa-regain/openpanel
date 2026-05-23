@@ -1,10 +1,11 @@
 import { timeWindows } from '@openpanel/constants';
 import { useRouter } from '@tanstack/react-router';
-import { CopyIcon, MoreHorizontal, Trash } from 'lucide-react';
+import { CopyIcon, MoreHorizontal, PlusIcon, Trash } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ReportChart } from '@/components/report-chart';
 import { ReportCacheBadge } from '@/components/report-chart/report-cache-status';
+import { Tooltiper } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -363,6 +364,65 @@ export function ReportItemSkeleton() {
   );
 }
 
+// Floating "+" button rendered at the left and right edge of a dashboard
+// row. Click opens a small menu; "Create report" navigates to the report
+// editor and stashes the (row, side) so the dashboard can drop the newly
+// created report at exactly that slot when the user returns.
+function AddToRowButton({
+  side,
+  rowIdx,
+  onAddAt,
+}: {
+  side: 'start' | 'end';
+  rowIdx: number;
+  onAddAt: (rowIdx: number, side: 'start' | 'end') => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const positionCls = side === 'start' ? '-left-9' : '-right-9';
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <Tooltiper
+        asChild
+        content="Add content to row"
+        side={side === 'start' ? 'left' : 'right'}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            aria-label="Add content to row"
+            type="button"
+            className={cn(
+              'absolute top-1/2 z-20 -translate-y-1/2',
+              'flex h-7 w-7 items-center justify-center rounded-full',
+              'border border-border bg-card text-muted-foreground shadow-sm',
+              'opacity-0 transition-opacity group-hover/card:opacity-70',
+              'hover:!opacity-100 hover:text-foreground hover:border-primary/60',
+              open && '!opacity-100 text-foreground border-primary/60',
+              positionCls,
+            )}
+          >
+            <PlusIcon className="size-4" />
+          </button>
+        </DropdownMenuTrigger>
+      </Tooltiper>
+      <DropdownMenuContent
+        align={side === 'start' ? 'start' : 'end'}
+        className="w-48"
+      >
+        <DropdownMenuItem
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen(false);
+            onAddAt(rowIdx, side);
+          }}
+        >
+          <PlusIcon className="mr-2 size-4" />
+          Create report
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function ReportItem({
   report,
   organizationId,
@@ -375,6 +435,10 @@ export function ReportItem({
   onDelete,
   onDuplicate,
   onDrop,
+  rowIdx,
+  isFirstInRow,
+  isLastInRow,
+  onAddAt,
 }: {
   report: any;
   organizationId: string;
@@ -387,6 +451,10 @@ export function ReportItem({
   onDelete: (reportId: string) => void;
   onDuplicate: (reportId: string) => void;
   onDrop?: (fromId: string, target: DropTarget) => void;
+  rowIdx?: number;
+  isFirstInRow?: boolean;
+  isLastInRow?: boolean;
+  onAddAt?: (rowIdx: number, side: 'start' | 'end') => void;
 }) {
   const router = useRouter();
   const chartRange = report.range;
@@ -418,7 +486,7 @@ export function ReportItem({
   return (
     <div
       className={cn(
-        'card flex h-full flex-col',
+        'card group/card relative flex h-full flex-col',
         // Source card stays visible at original position during drag (Mixpanel
         // behavior). We don't fade it — the ghost makes the drag obvious enough.
         isDragging && 'ring-2 ring-primary/40'
@@ -426,6 +494,12 @@ export function ReportItem({
       data-report-item-id={report.id}
       ref={rootRef}
     >
+      {isFirstInRow && typeof rowIdx === 'number' && onAddAt && (
+        <AddToRowButton side="start" rowIdx={rowIdx} onAddAt={onAddAt} />
+      )}
+      {isLastInRow && typeof rowIdx === 'number' && onAddAt && (
+        <AddToRowButton side="end" rowIdx={rowIdx} onAddAt={onAddAt} />
+      )}
       <div className="flex items-center justify-between border-border border-b p-4 leading-none hover:bg-muted/50 [&_svg]:hover:opacity-100">
         <div
           className="-m-4 flex-1 cursor-grab p-4 active:cursor-grabbing"

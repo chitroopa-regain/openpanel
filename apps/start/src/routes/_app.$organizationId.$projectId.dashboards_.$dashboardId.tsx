@@ -37,7 +37,7 @@ import { handleErrorToastOptions, useTRPC } from '@/integrations/trpc/react';
 import { pushModal, showConfirm } from '@/modals';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export const Route = createFileRoute(
   '/_app/$organizationId/$projectId/dashboards_/$dashboardId',
@@ -298,6 +298,101 @@ function Component() {
     [updateLayout],
   );
 
+  // Per-card row position lookup so the floating "+" buttons can render at
+  // the left/right edges of each row.
+  const rowPositionById = useMemo(() => {
+    const m = new Map<
+      string,
+      { rowIdx: number; isFirst: boolean; isLast: boolean }
+    >();
+    const rows = deriveRowsFromReports(orderedReports);
+    rows.forEach((row, rowIdx) => {
+      row.forEach((id, colIdx) => {
+        m.set(id, {
+          rowIdx,
+          isFirst: colIdx === 0,
+          isLast: colIdx === row.length - 1,
+        });
+      });
+    });
+    return m;
+  }, [orderedReports]);
+
+  // "Add to row" handler — stash the intended (row, side) and a baseline
+  // snapshot of report IDs, then navigate to the create flow. When the user
+  // saves the new report and React Query refetches, the effect below picks
+  // up the new report and drops it at the requested slot.
+  const PENDING_INSERT_KEY = `openpanel:pendingInsert:${dashboardId}`;
+  const handleAddAt = useCallback(
+    (insertRowIdx: number, side: 'start' | 'end') => {
+      try {
+        sessionStorage.setItem(
+          PENDING_INSERT_KEY,
+          JSON.stringify({
+            rowIdx: insertRowIdx,
+            side,
+            baselineIds: orderedReports.map((r) => r.id),
+            createdAt: Date.now(),
+          }),
+        );
+      } catch {
+        // sessionStorage may fail in private mode — fall through to navigate.
+      }
+      router.navigate({
+        to: '/$organizationId/$projectId/reports',
+        params: { organizationId, projectId },
+        search: { dashboardId },
+      });
+    },
+    [
+      PENDING_INSERT_KEY,
+      orderedReports,
+      router,
+      organizationId,
+      projectId,
+      dashboardId,
+    ],
+  );
+
+  // After a "Create report" round-trip, place the newly-created report at
+  // the previously-clicked slot. Runs on every reports refetch; bails out
+  // when there's no pending intent.
+  useEffect(() => {
+    if (reports.length === 0) return;
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(PENDING_INSERT_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const intent = JSON.parse(raw) as {
+        rowIdx: number;
+        side: 'start' | 'end';
+        baselineIds: string[];
+      };
+      const baseline = new Set(intent.baselineIds);
+      const newReport = reports.find((r) => !baseline.has(r.id));
+      if (!newReport) return; // not yet refetched
+      const rows = deriveRowsFromReports(reports);
+      const row = rows[intent.rowIdx];
+      const colIdx =
+        intent.side === 'start' ? 0 : row ? row.length : 0;
+      handleDrop(newReport.id, {
+        kind: 'inRow',
+        rowIdx: intent.rowIdx,
+        colIdx,
+      });
+      sessionStorage.removeItem(PENDING_INSERT_KEY);
+    } catch {
+      sessionStorage.removeItem(PENDING_INSERT_KEY);
+    }
+    // We intentionally only fire on reports identity changes; handleDrop is
+    // stable enough via the updateLayout dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports]);
+
   const handleDragStop = useCallback(
     (newLayout: Layout[]) => {
       // Save each changed layout after drag stops
@@ -484,27 +579,34 @@ function Component() {
           isDraggable={false}
           isResizable={false}
         >
-          {orderedReports.map((report) => (
-            <div key={report.id}>
-              <ReportItem
-                report={report}
-                organizationId={organizationId}
-                projectId={projectId}
-                dashboardId={dashboardId}
-                range={null}
-                startDate={null}
-                endDate={null}
-                interval={null}
-                onDelete={(reportId) => {
-                  reportDeletion.mutate({ reportId });
-                }}
-                onDuplicate={(reportId) => {
-                  reportDuplicate.mutate({ reportId });
-                }}
-                onDrop={handleDrop}
-              />
-            </div>
-          ))}
+          {orderedReports.map((report) => {
+            const info = rowPositionById.get(report.id);
+            return (
+              <div key={report.id}>
+                <ReportItem
+                  report={report}
+                  organizationId={organizationId}
+                  projectId={projectId}
+                  dashboardId={dashboardId}
+                  range={null}
+                  startDate={null}
+                  endDate={null}
+                  interval={null}
+                  onDelete={(reportId) => {
+                    reportDeletion.mutate({ reportId });
+                  }}
+                  onDuplicate={(reportId) => {
+                    reportDuplicate.mutate({ reportId });
+                  }}
+                  onDrop={handleDrop}
+                  rowIdx={info?.rowIdx}
+                  isFirstInRow={info?.isFirst}
+                  isLastInRow={info?.isLast}
+                  onAddAt={handleAddAt}
+                />
+              </div>
+            );
+          })}
         </GrafanaGrid>
       )}
     </PageContainer>
