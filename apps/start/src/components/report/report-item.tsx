@@ -378,7 +378,9 @@ function AddToRowButton({
   onAddAt: (rowIdx: number, side: 'start' | 'end') => void;
 }) {
   const [open, setOpen] = useState(false);
-  const positionCls = side === 'start' ? '-left-9' : '-right-9';
+  // Button width = 28px (w-7); place just outside the card so the right
+  // edge of a "start" button sits flush against the card's left edge.
+  const positionCls = side === 'start' ? '-left-7' : '-right-7';
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <Tooltiper
