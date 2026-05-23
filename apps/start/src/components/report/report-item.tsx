@@ -467,25 +467,6 @@ export function ReportItem({
         </div>
         <div className="flex items-center gap-2">
           <ReportCacheBadge reportId={report.id} />
-          <div
-            className="cursor-grab rounded p-2 hover:bg-muted active:cursor-grabbing"
-            data-drag-handle
-          >
-            <svg
-              className="opacity-30 hover:opacity-100"
-              fill="currentColor"
-              height="16"
-              viewBox="0 0 16 16"
-              width="16"
-            >
-              <circle cx="4" cy="4" r="1.5" />
-              <circle cx="4" cy="8" r="1.5" />
-              <circle cx="4" cy="12" r="1.5" />
-              <circle cx="12" cy="4" r="1.5" />
-              <circle cx="12" cy="8" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-            </svg>
-          </div>
           <DropdownMenu>
             <DropdownMenuTrigger className="flex h-8 w-8 items-center justify-center rounded hover:border">
               <MoreHorizontal size={16} />
