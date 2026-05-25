@@ -230,10 +230,15 @@ export async function up() {
       name: 'cohort_events_mv',
       tableName: 'events',
       orderBy: ['project_id', 'name', 'created_at', 'profile_id'],
+      // Bucket by Asia/Kolkata calendar dates (every org on this cluster is
+      // in IST). Without the explicit timezone arg, toDate() would bucket by
+      // UTC dates, which causes retention queries (which filter the date
+      // column with the org's timezone) to miss the first ~5.5h of each IST
+      // day. See the timezone bug write-up in the retention docs.
       query: `SELECT
         project_id,
         name,
-        toDate(created_at) AS created_at,
+        toDate(created_at, 'Asia/Kolkata') AS created_at,
         profile_id,
         COUNT() AS event_count
       FROM {events}
