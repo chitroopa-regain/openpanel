@@ -48,9 +48,10 @@ export function Chart({ data }: Props) {
   const [sortBy, setSortBy] = useState<SortOption>('count-desc');
   const {
     isEditMode,
-    report: { metric, limit, previous },
+    report: { metric, limit, previous, breakdowns },
     options: { onClick, dropdownMenuContent },
   } = useReportChartContext();
+  const hasBreakdown = (breakdowns?.length ?? 0) > 0;
   const number = useNumber();
 
   // Use useVisibleSeries to add index property for colors
@@ -253,13 +254,17 @@ export function Chart({ data }: Props) {
                                 : {})}
                             >
                               <SerieName
-                                // When a breakdown is present, show only the
-                                // breakdown value(s) — the event prefix
+                                // When a breakdown is configured, show only
+                                // the breakdown value(s) — the event prefix
                                 // (e.g. "Uninstall: CTA Clicked >") is the
                                 // same on every row and just steals space.
+                                // A series with no breakdown value is the
+                                // "(not set)" bucket.
                                 name={
-                                  serie.names.length > 1
-                                    ? serie.names.slice(1)
+                                  hasBreakdown
+                                    ? serie.names.length > 1
+                                      ? serie.names.slice(1)
+                                      : [NOT_SET_VALUE]
                                     : serie.names
                                 }
                                 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold tracking-tight"
