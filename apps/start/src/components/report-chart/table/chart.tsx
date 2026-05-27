@@ -66,7 +66,7 @@ export function Chart({ data }: Props) {
   const barColor = getChartColor(0);
 
   return (
-    <div className="flex h-full w-full flex-col">
+    <div className="flex h-full w-full flex-col px-4">
       <div className="grid shrink-0 grid-cols-[1fr_auto] items-end gap-4 border-b py-3">
         <div className="flex flex-col">
           <div className="text-sm font-semibold">
@@ -102,9 +102,9 @@ export function Chart({ data }: Props) {
             >
               <div
                 aria-hidden
-                className="pointer-events-none absolute inset-y-0 left-0 -z-0 rounded-r"
+                className="pointer-events-none absolute inset-y-0 -left-2 -right-2 -z-0 rounded"
                 style={{
-                  width: `${pct}%`,
+                  width: `calc(${pct}% + 1rem)`,
                   backgroundColor: barColor,
                   opacity: 0.08,
                 }}
