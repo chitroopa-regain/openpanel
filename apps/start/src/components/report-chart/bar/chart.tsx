@@ -253,7 +253,15 @@ export function Chart({ data }: Props) {
                                 : {})}
                             >
                               <SerieName
-                                name={serie.names}
+                                // When a breakdown is present, show only the
+                                // breakdown value(s) — the event prefix
+                                // (e.g. "Uninstall: CTA Clicked >") is the
+                                // same on every row and just steals space.
+                                name={
+                                  serie.names.length > 1
+                                    ? serie.names.slice(1)
+                                    : serie.names
+                                }
                                 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold tracking-tight"
                               />
                             </div>
