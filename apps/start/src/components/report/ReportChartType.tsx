@@ -11,6 +11,7 @@ import {
   type LucideIcon,
   PieChartIcon,
   SigmaIcon,
+  TableIcon,
   TrendingUpIcon,
   UsersIcon,
 } from 'lucide-react';
@@ -51,6 +52,7 @@ export function ReportChartType({
     area: AreaChartIcon,
     bar: ChartBarIcon,
     pie: PieChartIcon,
+    table: TableIcon,
     funnel: ((props) => (
       <ConeIcon className={cn('rotate-180', props.className)} />
     )) as LucideIcon,

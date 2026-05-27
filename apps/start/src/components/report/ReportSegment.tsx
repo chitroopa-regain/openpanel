@@ -40,7 +40,8 @@ export function ReportSegment({
   onChange,
 }: ReportChartTypeProps) {
   const chartType = useSelector((state) => state.report.chartType);
-  const isAggregateChart = chartType === 'pie' || chartType === 'bar';
+  const isAggregateChart =
+    chartType === 'pie' || chartType === 'bar' || chartType === 'table';
 
   const items = mapKeys(chartSegments)
     .filter((key) => key !== 'frequency_distribution' || isAggregateChart)

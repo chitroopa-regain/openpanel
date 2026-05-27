@@ -110,6 +110,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
         ![
           'bar',
           'pie',
+          'table',
           'funnel',
           'funnel_metric',
           'retention',
@@ -121,7 +122,8 @@ function ReportSqlContent({ active }: { active: boolean }) {
   const aggregateRes = useQuery(
     trpc.chart.aggregate.queryOptions(input, {
       ...queryOpts,
-      enabled: queryOpts.enabled && ['bar', 'pie'].includes(chartType),
+      enabled:
+        queryOpts.enabled && ['bar', 'pie', 'table'].includes(chartType),
     })
   );
   const funnelRes = useQuery(
@@ -174,7 +176,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
   );
 
   const res =
-    chartType === 'bar' || chartType === 'pie'
+    chartType === 'bar' || chartType === 'pie' || chartType === 'table'
       ? aggregateRes
       : chartType === 'funnel' || chartType === 'funnel_metric'
         ? funnelRes

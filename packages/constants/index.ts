@@ -100,6 +100,7 @@ export const chartTypes = {
   bar: 'Bar',
   histogram: 'Histogram',
   pie: 'Pie',
+  table: 'Table',
   metric: 'Metric',
   area: 'Area',
   map: 'Map',
