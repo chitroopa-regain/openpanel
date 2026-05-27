@@ -1,18 +1,25 @@
 import { cn } from '@/utils/cn';
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
-import { Check } from 'lucide-react';
+import { Check, Minus } from 'lucide-react';
 import * as React from 'react';
 
-export const DumpCheckbox = ({ checked }: { checked: boolean }) => {
+export const DumpCheckbox = ({
+  checked,
+}: {
+  checked: boolean | 'indeterminate';
+}) => {
+  const isChecked = checked === true;
+  const isIndeterminate = checked === 'indeterminate';
   return (
     <div
       className={cn(
         'block h-4 w-4 shrink-0 rounded-sm border border-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-        checked && 'bg-primary text-primary-foreground',
+        (isChecked || isIndeterminate) && 'bg-primary text-primary-foreground',
       )}
     >
       <div className="flex items-center justify-center text-current">
-        {checked && <Check className="h-4 w-4" />}
+        {isChecked && <Check className="h-4 w-4" />}
+        {isIndeterminate && <Minus className="h-4 w-4" />}
       </div>
     </div>
   );

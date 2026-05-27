@@ -46,15 +46,38 @@ export function ComboboxAdvanced({
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState('');
 
-  const selectables = items
-    .filter((item) => !value.find((s) => s === item.value))
-    .filter(
-      (item) =>
-        (typeof item.label === 'string' &&
-          item.label.toLowerCase().includes(inputValue.toLowerCase())) ||
-        (typeof item.value === 'string' &&
-          item.value.toLowerCase().includes(inputValue.toLowerCase())),
-    );
+  const matchesQuery = React.useCallback(
+    (item: IItem, q: string) =>
+      !q ||
+      (typeof item.label === 'string' &&
+        item.label.toLowerCase().includes(q)) ||
+      (typeof item.value === 'string' &&
+        item.value.toLowerCase().includes(q)),
+    [],
+  );
+
+  const matchingItems = items.filter((item) =>
+    matchesQuery(item, inputValue.toLowerCase()),
+  );
+  const matchingValues = matchingItems.map((i) => i.value);
+  const matchingCount = matchingItems.length;
+  const allMatchingSelected =
+    matchingValues.length > 0 &&
+    matchingValues.every((v) => value.includes(v));
+  const someMatchingSelected = matchingValues.some((v) => value.includes(v));
+
+  const toggleSelectAll = React.useCallback(() => {
+    if (allMatchingSelected) {
+      const matchingSet = new Set(matchingValues);
+      onChange(value.filter((v) => !matchingSet.has(v)));
+    } else {
+      onChange(Array.from(new Set([...value, ...matchingValues])));
+    }
+  }, [allMatchingSelected, matchingValues, value, onChange]);
+
+  const selectables = matchingItems.filter(
+    (item) => !value.find((s) => s === item.value),
+  );
 
   const renderItem = (item: IItem) => {
     const checked = !!value.find((s) => s === desanitize(item.value));
@@ -83,14 +106,6 @@ export function ComboboxAdvanced({
 
   const data = React.useMemo(() => {
     return [
-      ...(inputValue === ''
-        ? []
-        : [
-            {
-              value: inputValue,
-              label: `Pick '${inputValue}'`,
-            },
-          ]),
       ...value.map((val) => {
         const item = items.find((item) => item.value === val);
         return item
@@ -99,7 +114,7 @@ export function ComboboxAdvanced({
       }),
       ...selectables,
     ].filter((item) => item.value);
-  }, [inputValue, selectables, items]);
+  }, [selectables, items, value]);
 
   const trigger = children ?? (
     <Button variant={'outline'} className={className} size={size} autoHeight>
@@ -128,6 +143,32 @@ export function ComboboxAdvanced({
               value={inputValue}
               onValueChange={setInputValue}
             />
+            {matchingCount > 0 && (
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={toggleSelectAll}
+                className="flex w-full cursor-pointer items-center gap-2 border-b px-3 py-2 text-left text-sm text-primary hover:bg-accent"
+              >
+                <DumpCheckbox
+                  checked={
+                    allMatchingSelected
+                      ? true
+                      : someMatchingSelected
+                        ? 'indeterminate'
+                        : false
+                  }
+                />
+                <span>
+                  {inputValue
+                    ? `Select all matching (${matchingCount})`
+                    : `Select all (${matchingCount})`}
+                </span>
+              </button>
+            )}
             <VirtualList
               height={Math.min(items.length * 32, 300)}
               data={data.map((item) => ({
