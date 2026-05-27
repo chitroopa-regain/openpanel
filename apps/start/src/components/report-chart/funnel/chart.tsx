@@ -553,6 +553,24 @@ function FunnelBarLabel({
   ) {
     return null;
   }
+
+  // Conversion vs the IMMEDIATELY PREVIOUS step (Mixpanel-style), not vs the
+  // first step. Step 0 always shows 100%. For step N, divide its count by
+  // step N-1's count.
+  const stepIndex: number =
+    typeof (payload as any)?.stepIndex === 'number'
+      ? (payload as any).stepIndex
+      : 0;
+  const prevStepCount: number | undefined =
+    stepIndex > 0
+      ? currentVariant.steps?.[stepIndex - 1]?.count
+      : undefined;
+  const fromPrevPercent =
+    stepIndex === 0
+      ? 100
+      : prevStepCount && prevStepCount > 0
+        ? (currentVariant.step.count / prevStepCount) * 100
+        : 0;
   const { effectiveY } = getFunnelBarGeometry({
     y,
     height,
@@ -585,7 +603,7 @@ function FunnelBarLabel({
         fontSize={11}
         fontWeight={600}
       >
-        {formatFunnelPercent(currentVariant.step.percent)}
+        {formatFunnelPercent(fromPrevPercent)}
       </text>
       <text
         x={labelX}

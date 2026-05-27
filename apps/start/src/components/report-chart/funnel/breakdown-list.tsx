@@ -327,7 +327,7 @@ export function BreakdownList({
                 >
                   {label}
                 </td>
-                <td className={`px-3 py-2 text-right font-mono font-semibold ${stickyLeft2}`}>
+                <td className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${stickyLeft2}`}>
                   {number.formatWithUnit(
                     item.lastStep.percent / 100,
                     '%',
@@ -338,7 +338,7 @@ export function BreakdownList({
                     return (
                       <td
                         key={`${item.id}-s${stepIdx}`}
-                        className="px-3 py-2 text-right font-mono border-l border-border cursor-pointer hover:bg-muted/50"
+                        className="px-3 py-2 text-right font-mono whitespace-nowrap border-l border-border cursor-pointer hover:bg-muted/50"
                         onClick={() =>
                           onInspectStep?.(stepIdx, item.breakdowns)
                         }
@@ -354,14 +354,14 @@ export function BreakdownList({
                           ? formatDuration(step.medianTimeToConvertSeconds)
                           : '—'}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono">
+                      <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
                         {number.formatWithUnit(
                           step.stepConversionPercent / 100,
                           '%',
                         )}
                       </td>
                       <td
-                        className="px-3 py-2 text-right font-mono cursor-pointer hover:bg-muted/50"
+                        className="px-3 py-2 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-muted/50"
                         onClick={() =>
                           onInspectStep?.(stepIdx, item.breakdowns)
                         }
