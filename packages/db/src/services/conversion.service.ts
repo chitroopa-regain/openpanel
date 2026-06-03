@@ -35,7 +35,9 @@ export class ConversionService {
     };
     const funnelWindow =
       funnelOptions?.funnelWindow ?? (defaultWindowByUnit[funnelWindowUnit] ?? 24);
-    const group = funnelGroup === 'profile_id' ? 'profile_id' : 'session_id';
+    const group = funnelGroup
+      ? (funnelGroup === 'profile_id' ? 'profile_id' : 'session_id')
+      : (options?.type === 'retention' ? 'profile_id' : 'session_id');
     const breakdownExpressions = breakdowns.map(
       (b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name),
     );
