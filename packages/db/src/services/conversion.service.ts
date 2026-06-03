@@ -7,6 +7,7 @@ import { clix } from '../clickhouse/query-builder';
 import {
   getEventFiltersWhereClause,
   getSelectPropertyKey,
+  getTraitBreakdownDescriptor,
   getTraitBreakdownExpression,
 } from './chart.service';
 import { resolveSeriesForFunnel, funnelService } from './funnel.service';
@@ -41,8 +42,8 @@ export class ConversionService {
       });
     }
 
-    const funnelOptions = options?.type === 'funnel' ? options : undefined;
-    const funnelGroup = options?.funnelGroup;
+    const funnelOptions = options?.type === 'funnel' ? (options as any) : undefined;
+    const funnelGroup = funnelOptions?.funnelGroup;
     const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
     const defaultWindowByUnit: Record<string, number> = {
       second: 86400, minute: 1440, hour: 24, day: 1, week: 1, month: 1,
@@ -51,7 +52,7 @@ export class ConversionService {
       funnelOptions?.funnelWindow ?? (defaultWindowByUnit[funnelWindowUnit] ?? 24);
     const group = funnelGroup
       ? (funnelGroup === 'profile_id' ? 'profile_id' : 'session_id')
-      : (options?.type === 'retention' ? 'profile_id' : 'session_id');
+      : 'session_id';
     const breakdownExpressions = breakdowns.map(
       (b) => getTraitBreakdownExpression(b.name, projectId) ?? getSelectPropertyKey(b.name),
     );
@@ -197,6 +198,8 @@ export class ConversionService {
     endDate,
     options,
     series,
+    breakdowns = [],
+    limit,
     timezone,
   }: Omit<IReportInput, 'range' | 'previous' | 'metric' | 'chartType'> & {
     timezone: string;
@@ -215,12 +218,34 @@ export class ConversionService {
     const conditionA = conditions[0]!;
     const conditionB = conditions[1]!;
 
-    const retentionDay = options?.day ?? 1;
+    const retentionDay = (options as { day?: number } | undefined)?.day ?? 1;
+    const breakdownExpressions = breakdowns.map((b) => {
+      const desc = getTraitBreakdownDescriptor(b.name);
+      return desc ? `nullIf(${desc.cteName}.value, '')` : getSelectPropertyKey(b.name);
+    });
+    const breakdownSelects = breakdownExpressions.map(
+      (expr, index) => `${expr} as b_${index}`,
+    );
+    const breakdownGroupBy = breakdowns.map((_, index) => `b_${index}`);
+    const traitBreakdownDescriptors = Array.from(
+      new Map(
+        breakdowns
+          .map((b) => getTraitBreakdownDescriptor(b.name))
+          .filter(Boolean)
+          .map((d) => [d!.key, d!]),
+      ).values(),
+    );
+    const traitCtes = traitBreakdownDescriptors.map(
+      (d) => `${d.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(d.key)} GROUP BY profile_id)`,
+    );
+    const traitJoins = traitBreakdownDescriptors
+      .map((d) => `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = e.profile_id`)
+      .join(' ');
 
     const needsEventsTable = (filters: any[]) =>
       filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile' && f.name !== 'name');
 
-    const firstItem = series[0];
+    const firstItem = series[0] as { type?: string; filters?: any[] } | undefined;
     const firstCustomEventComponents = resolvedEvents[0]?.customEventComponents;
     const firstEventFilters = firstItem?.filters ?? [];
 
@@ -230,7 +255,7 @@ export class ConversionService {
       needsEventsTable(firstEventFilters);
 
     const firstEventTable = useEventsFirst ? TABLE_NAMES.events : TABLE_NAMES.cohort_events_mv;
-    const firstIdentifiedFilter = useEventsFirst ? 'AND profile_id != device_id' : '';
+    const firstIdentifiedFilter = useEventsFirst ? 'AND e.profile_id != e.device_id' : '';
 
     const query = clix(this.client, timezone)
       .select<{
@@ -238,8 +263,10 @@ export class ConversionService {
         total_first: number;
         conversions: number;
         conversion_rate_percentage: number;
+        [key: string]: string | number;
       }>([
         'cohort_interval AS event_day',
+        ...breakdownGroupBy,
         'uniqExact(userID) AS total_first',
         `uniqExactIf(userID, dateDiff('day', cohort_interval, event_date) = ${retentionDay}) AS conversions`,
         `round(100.0 * conversions / total_first, 2) AS conversion_rate_percentage`,
@@ -247,14 +274,17 @@ export class ConversionService {
       .from(
         clix.exp(`
         (
-          WITH cohort_users AS (
+          WITH ${traitCtes.length ? `${traitCtes.join(', ')},` : ''}
+          cohort_users AS (
             SELECT
-              profile_id AS userID,
-              toDate(created_at, '${timezone}') AS cohort_interval
-            FROM ${firstEventTable}
+              e.profile_id AS userID,
+              toDate(e.created_at, '${timezone}') AS cohort_interval
+              ${breakdownSelects.length ? `, ${breakdownSelects.join(', ')}` : ''}
+            FROM ${firstEventTable} AS e
+            ${traitJoins}
             WHERE ${conditionA}
-              AND project_id = ${sqlstring.escape(projectId)}
-              AND created_at BETWEEN toDate('${startDate}', '${timezone}') AND toDate('${endDate}', '${timezone}')
+              AND e.project_id = ${sqlstring.escape(projectId)}
+              AND e.created_at BETWEEN toDate('${startDate}', '${timezone}') AND toDate('${endDate}', '${timezone}')
               ${firstIdentifiedFilter}
           ),
           last_event AS (
@@ -272,40 +302,37 @@ export class ConversionService {
             cohort_interval,
             userID,
             event_date
+            ${breakdownGroupBy.length ? `, ${breakdownGroupBy.join(', ')}` : ''}
           FROM cohort_users
           LEFT JOIN last_event ON cohort_users.userID = last_event.profile_id
         )
         `)
       )
-      .groupBy(['event_day'])
+      .groupBy(['event_day', ...breakdownGroupBy])
       .orderBy('event_day');
+
+    for (const order of breakdownGroupBy) {
+      query.orderBy(order);
+    }
 
     const queries = [query.toSQL()];
     const results = await query.execute();
 
-    const data = [
-      {
-        id: 'conversion',
-        breakdowns: [],
-        data: results.map((d, index) => {
-          const fullDateStr = `${d.event_day} 00:00:00`;
-          const timestamp = new Date(fullDateStr).getTime();
+    const data = this.toSeries(results, breakdowns, limit).map(
+      (serie, serieIndex) => ({
+        ...serie,
+        data: serie.data.map((d, index) => {
+          const fullDateStr = `${d.date} 00:00:00`;
           return {
-            date: fullDateStr,
-            total: Number(d.total_first),
-            conversions: Number(d.conversions),
-            rate: Number(d.conversion_rate_percentage),
-            timestamp,
-            serieIndex: 0,
+            ...d,
+            timestamp: new Date(fullDateStr).getTime(),
+            serieIndex,
             index,
-            serie: {
-              id: 'conversion',
-              breakdowns: [],
-            },
+            serie: omit(['data'], serie),
           };
         }),
-      },
-    ];
+      }),
+    );
 
     return {
       data,
@@ -331,9 +358,9 @@ export class ConversionService {
           breakdowns: [],
           data: data.map((d) => ({
             date: d.event_day,
-            total: d.total_first,
-            conversions: d.conversions,
-            rate: d.conversion_rate_percentage,
+            total: Number(d.total_first),
+            conversions: Number(d.conversions),
+            rate: Number(d.conversion_rate_percentage),
           })),
         },
       ];
@@ -360,9 +387,9 @@ export class ConversionService {
         }
         acc[key]!.data.push({
           date: d.event_day,
-          total: d.total_first,
-          conversions: d.conversions,
-          rate: d.conversion_rate_percentage,
+          total: Number(d.total_first),
+          conversions: Number(d.conversions),
+          rate: Number(d.conversion_rate_percentage),
         });
         return acc;
       },
