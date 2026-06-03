@@ -73,7 +73,8 @@ export const useReportLayouts = (
     // The layout is identical across breakpoints — rows do NOT re-wrap on
     // narrow screens; the grid keeps a min pixel width and scrolls
     // horizontally instead (see GrafanaGrid wrapper).
-    const CARD_H = 3; // 3 * rowHeight(100) + margins ≈ 330px
+    const isTopLevelAppMetrics = reports.some((r) => r.dashboardId === 'top-level-app-metrics');
+    const CARD_H = isTopLevelAppMetrics ? 6 : 3; // 3 * rowHeight(100) + margins ≈ 330px, 6 * rowHeight(100) + margins ≈ 630px
     const layout: ReactGridLayout.Layout[] = [];
     let y = 0;
     rows.forEach((row) => {

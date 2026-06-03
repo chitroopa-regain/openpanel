@@ -609,6 +609,8 @@ export function ReportItem({
                 ? 'hero'
                 : 'compact',
             metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
+            maxHeight: report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
+            minHeight: report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
           }}
           report={{
             ...report,
@@ -731,6 +733,8 @@ export function ReportItemReadOnly({
                 ? 'hero'
                 : 'compact',
             metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
+            maxHeight: report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
+            minHeight: report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
           }}
           report={{
             ...report,
