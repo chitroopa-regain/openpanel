@@ -187,6 +187,7 @@ export const zRetentionOptions = z.object({
   type: z.literal('retention'),
   criteria: zCriteria.optional(),
   funnelGroup: z.string().optional(),
+  day: z.number().optional(),
 });
 
 export const zSankeyOptions = z.object({
