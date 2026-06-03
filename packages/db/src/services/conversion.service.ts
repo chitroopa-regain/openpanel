@@ -218,7 +218,7 @@ export class ConversionService {
     const retentionDay = options?.day ?? 1;
 
     const needsEventsTable = (filters: any[]) =>
-      filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile');
+      filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile' && f.name !== 'name');
 
     const firstItem = series[0];
     const firstCustomEventComponents = resolvedEvents[0]?.customEventComponents;

@@ -1077,7 +1077,7 @@ export const chartRouter = createTRPCRouter({
       // Custom events with component filters also need the events table.
       const needsEventsTable = (filters: IChartEventFilter[]) =>
         filters.some(
-          (f) => !f.name.startsWith('profile.') && f.name !== 'has_profile'
+          (f) => !f.name.startsWith('profile.') && f.name !== 'has_profile' && f.name !== 'name'
         );
 
       const useEventsFirst =
