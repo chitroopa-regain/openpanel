@@ -27,6 +27,20 @@ export class ConversionService {
   }: Omit<IReportInput, 'range' | 'previous' | 'metric' | 'chartType'> & {
     timezone: string;
   }) {
+    if (options?.type === 'retention') {
+      return this.getRetentionTrend({
+        projectId,
+        startDate,
+        endDate,
+        options,
+        series,
+        breakdowns,
+        limit,
+        interval,
+        timezone,
+      });
+    }
+
     const funnelOptions = options?.type === 'funnel' ? options : undefined;
     const funnelGroup = options?.funnelGroup;
     const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
@@ -170,6 +184,128 @@ export class ConversionService {
         };
       },
     );
+
+    return {
+      data,
+      queries,
+    };
+  }
+
+  async getRetentionTrend({
+    projectId,
+    startDate,
+    endDate,
+    options,
+    series,
+    timezone,
+  }: Omit<IReportInput, 'range' | 'previous' | 'metric' | 'chartType'> & {
+    timezone: string;
+  }) {
+    const resolvedEvents = await resolveSeriesForFunnel(series, projectId);
+
+    if (resolvedEvents.length !== 2) {
+      throw new Error('events must be an array of two events');
+    }
+
+    if (!startDate || !endDate) {
+      throw new Error('startDate and endDate are required');
+    }
+
+    const conditions = funnelService.getFunnelConditions(resolvedEvents, projectId);
+    const conditionA = conditions[0]!;
+    const conditionB = conditions[1]!;
+
+    const retentionDay = options?.day ?? 1;
+
+    const needsEventsTable = (filters: any[]) =>
+      filters.some((f) => !f.name.startsWith('profile.') && f.name !== 'has_profile');
+
+    const firstItem = series[0];
+    const firstCustomEventComponents = resolvedEvents[0]?.customEventComponents;
+    const firstEventFilters = firstItem?.filters ?? [];
+
+    const useEventsFirst =
+      firstItem?.type === 'custom_event' ||
+      (firstCustomEventComponents && firstCustomEventComponents.length > 0) ||
+      needsEventsTable(firstEventFilters);
+
+    const firstEventTable = useEventsFirst ? TABLE_NAMES.events : TABLE_NAMES.cohort_events_mv;
+    const firstIdentifiedFilter = useEventsFirst ? 'AND profile_id != device_id' : '';
+
+    const query = clix(this.client, timezone)
+      .select<{
+        event_day: string;
+        total_first: number;
+        conversions: number;
+        conversion_rate_percentage: number;
+      }>([
+        'cohort_interval AS event_day',
+        'uniqExact(userID) AS total_first',
+        `uniqExactIf(userID, dateDiff('day', cohort_interval, event_date) = ${retentionDay}) AS conversions`,
+        `round(100.0 * conversions / total_first, 2) AS conversion_rate_percentage`,
+      ])
+      .from(
+        clix.exp(`
+        (
+          WITH cohort_users AS (
+            SELECT
+              profile_id AS userID,
+              toDate(created_at, '${timezone}') AS cohort_interval
+            FROM ${firstEventTable}
+            WHERE ${conditionA}
+              AND project_id = ${sqlstring.escape(projectId)}
+              AND created_at BETWEEN toDate('${startDate}', '${timezone}') AND toDate('${endDate}', '${timezone}')
+              ${firstIdentifiedFilter}
+          ),
+          last_event AS (
+            SELECT
+              profile_id,
+              toDate(created_at, '${timezone}') AS event_date
+            FROM ${TABLE_NAMES.events}
+            WHERE ${conditionB}
+              AND project_id = ${sqlstring.escape(projectId)}
+              AND created_at BETWEEN toDate('${startDate}', '${timezone}') AND toDate('${endDate}', '${timezone}') + INTERVAL ${retentionDay + 7} DAY
+              AND profile_id != device_id
+            GROUP BY profile_id, event_date
+          )
+          SELECT
+            cohort_interval,
+            userID,
+            event_date
+          FROM cohort_users
+          LEFT JOIN last_event ON cohort_users.userID = last_event.profile_id
+        )
+        `)
+      )
+      .groupBy(['event_day'])
+      .orderBy('event_day');
+
+    const queries = [query.toSQL()];
+    const results = await query.execute();
+
+    const data = [
+      {
+        id: 'conversion',
+        breakdowns: [],
+        data: results.map((d, index) => {
+          const fullDateStr = `${d.event_day} 00:00:00`;
+          const timestamp = new Date(fullDateStr).getTime();
+          return {
+            date: fullDateStr,
+            total: Number(d.total_first),
+            conversions: Number(d.conversions),
+            rate: Number(d.conversion_rate_percentage),
+            timestamp,
+            serieIndex: 0,
+            index,
+            serie: {
+              id: 'conversion',
+              breakdowns: [],
+            },
+          };
+        }),
+      },
+    ];
 
     return {
       data,
