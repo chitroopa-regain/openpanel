@@ -28,7 +28,7 @@ export class ConversionService {
     timezone: string;
   }) {
     const funnelOptions = options?.type === 'funnel' ? options : undefined;
-    const funnelGroup = funnelOptions?.funnelGroup;
+    const funnelGroup = options?.funnelGroup;
     const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
     const defaultWindowByUnit: Record<string, number> = {
       second: 86400, minute: 1440, hour: 24, day: 1, week: 1, month: 1,
