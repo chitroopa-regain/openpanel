@@ -9,7 +9,7 @@ import {
   getSelectPropertyKey,
   getTraitBreakdownExpression,
 } from './chart.service';
-import { onlyReportEvents } from './reports.service';
+import { resolveSeriesForFunnel, funnelService } from './funnel.service';
 
 export class ConversionService {
   constructor(private client: typeof ch) {}
@@ -75,9 +75,9 @@ export class ConversionService {
       ) as profile ON profile.id = profile_id`;
     }
 
-    const events = onlyReportEvents(series);
+    const resolvedEvents = await resolveSeriesForFunnel(series, projectId);
 
-    if (events.length !== 2) {
+    if (resolvedEvents.length !== 2) {
       throw new Error('events must be an array of two events');
     }
 
@@ -85,14 +85,20 @@ export class ConversionService {
       throw new Error('startDate and endDate are required');
     }
 
-    const eventA = events[0]!;
-    const eventB = events[1]!;
-    const whereA = Object.values(
-      getEventFiltersWhereClause(eventA.filters, projectId),
-    ).join(' AND ');
-    const whereB = Object.values(
-      getEventFiltersWhereClause(eventB.filters, projectId),
-    ).join(' AND ');
+    const conditions = funnelService.getFunnelConditions(resolvedEvents, projectId);
+    const conditionA = conditions[0]!;
+    const conditionB = conditions[1]!;
+
+    const allEventNames = Array.from(
+      new Set(
+        resolvedEvents.flatMap((event) =>
+          event.customEventComponents
+            ? event.customEventComponents.map((c) => c.eventName)
+            : [event.name]
+        )
+      )
+    );
+    const escapedNames = allEventNames.map((name) => sqlstring.escape(name)).join(', ');
 
     const unitMultipliers: Record<string, number> = {
       second: 1,
@@ -104,14 +110,6 @@ export class ConversionService {
     };
     const funnelWindowSeconds =
       funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
-
-    // Build funnel conditions
-    const conditionA = whereA
-      ? `(name = '${eventA.name}' AND ${whereA})`
-      : `name = '${eventA.name}'`;
-    const conditionB = whereB
-      ? `(name = '${eventB.name}' AND ${whereB})`
-      : `name = '${eventB.name}'`;
 
     // Use windowFunnel approach - single scan, no JOIN
     const query = clix(this.client, timezone)
@@ -142,7 +140,7 @@ export class ConversionService {
         FROM ${TABLE_NAMES.events}
         ${profileJoin}
         WHERE project_id = '${projectId}'
-          AND name IN ('${eventA.name}', '${eventB.name}')
+          AND name IN (${escapedNames})
           AND created_at BETWEEN toDateTime('${startDate}') AND toDateTime('${endDate}')
         GROUP BY ${group}${breakdownExpressions.length ? `, ${breakdownExpressions.join(', ')}` : ''})
       `),
