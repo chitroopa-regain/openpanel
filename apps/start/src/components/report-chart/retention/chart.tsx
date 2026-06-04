@@ -18,16 +18,17 @@ import { useReportChartContext } from '../context';
 import { RetentionTooltip } from './tooltip';
 
 interface Props {
-  data: RouterOutputs['chart']['cohort'];
+  data: RouterOutputs['chart']['cohort']['data'];
 }
 
 export function Chart({ data }: Props) {
   const {
     report: { interval, unit },
     isEditMode,
-    options: { hideXAxis, hideYAxis },
+    options: { hideXAxis, hideYAxis, retentionLayout },
   } = useReportChartContext();
   const isPercentage = unit === '%';
+  const isDashboardLayout = retentionLayout === 'dashboard';
 
   const xAxisProps = useXAxisProps({ interval, hide: hideXAxis });
   const yAxisProps = useYAxisProps({
@@ -68,9 +69,22 @@ export function Chart({ data }: Props) {
 
   return (
     <>
-      <div className={cn('h-full w-full', isEditMode && 'card p-4')}>
+      <div
+        className={cn(
+          'h-full min-h-0 w-full',
+          isDashboardLayout && 'pt-2',
+          isEditMode && 'card p-4',
+        )}
+      >
         <ResponsiveContainer>
-          <ComposedChart data={rechartData}>
+          <ComposedChart
+            data={rechartData}
+            margin={
+              isDashboardLayout
+                ? { top: 8, right: 8, bottom: 4, left: 0 }
+                : undefined
+            }
+          >
             <CartesianGrid
               strokeDasharray="3 3"
               horizontal={true}
@@ -85,7 +99,7 @@ export function Chart({ data }: Props) {
               scale="linear"
               tickFormatter={(value) => value.toString()}
               tickCount={31}
-              interval={0}
+              interval={isDashboardLayout ? 'preserveStartEnd' : 0}
             />
             <Tooltip content={<RetentionTooltip />} />
             <defs>

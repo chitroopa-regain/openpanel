@@ -10,7 +10,7 @@ import CohortTable from './table';
 import { useTRPC } from '@/integrations/trpc/react';
 
 export function ReportRetentionChart() {
-  const { isLazyLoading, report, shareId } = useReportChartContext();
+  const { isLazyLoading, report, shareId, options } = useReportChartContext();
   const firstItem = report.series[0];
   const secondItem = report.series[1];
 
@@ -94,12 +94,20 @@ export function ReportRetentionChart() {
     return <Empty />;
   }
 
+  const isDashboardLayout = options.retentionLayout === 'dashboard';
+
   return (
-    <div className="col gap-4">
-      <AspectContainer>
+    <div className={isDashboardLayout ? 'h-full min-h-0 w-full' : 'col gap-4'}>
+      {isDashboardLayout ? (
         <Chart data={res.data.data} />
-      </AspectContainer>
-      <CohortTable data={res.data.data} />
+      ) : (
+        <>
+          <AspectContainer>
+            <Chart data={res.data.data} />
+          </AspectContainer>
+          <CohortTable data={res.data.data} />
+        </>
+      )}
     </div>
   );
 }

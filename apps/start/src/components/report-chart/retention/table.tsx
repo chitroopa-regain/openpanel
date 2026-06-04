@@ -4,7 +4,7 @@ import { cn } from '@/utils/cn';
 import { max, min } from '@openpanel/common';
 import { useReportChartContext } from '../context';
 
-type CohortData = RouterOutputs['chart']['cohort'];
+type CohortData = RouterOutputs['chart']['cohort']['data'];
 
 type CohortTableProps = {
   data: CohortData;
