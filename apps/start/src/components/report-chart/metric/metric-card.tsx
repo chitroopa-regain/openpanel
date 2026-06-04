@@ -21,6 +21,7 @@ import {
 } from '../common/previous-diff-indicator';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
+import { formatMetricDisplayValue } from './metric-value-format';
 
 interface MetricCardProps {
   serie: IChartData['series'][number];
@@ -86,14 +87,7 @@ export function MetricCard({
       return <>{fancyMinutes(value)}</>;
     }
 
-    const displayValue =
-      Math.abs(value) > 9999
-        ? new Intl.NumberFormat('en-US', {
-            notation: 'compact',
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          }).format(value)
-        : number.format(value);
+    const displayValue = formatMetricDisplayValue(value);
 
     return (
       <>
