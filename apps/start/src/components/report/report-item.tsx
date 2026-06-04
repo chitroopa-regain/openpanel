@@ -523,7 +523,7 @@ export function ReportItem({
       )}
       <div className="flex items-center justify-between border-border border-b p-4 leading-none hover:bg-muted/50 [&_svg]:hover:opacity-100">
         <div
-          className="-m-4 flex-1 cursor-grab p-4 active:cursor-grabbing"
+          className="-m-4 min-w-0 flex-1 cursor-grab p-4 active:cursor-grabbing"
           data-drag-handle
           data-drag-handle-primary
           onKeyUp={(e) => {
@@ -533,8 +533,9 @@ export function ReportItem({
           }}
           role="button"
           tabIndex={0}
+          title={report.name}
         >
-          <div className="font-medium">{report.name}</div>
+          <div className="truncate font-medium">{report.name}</div>
           {chartRange !== null && (
             <div className="mt-2 flex gap-2">
               <span
@@ -560,7 +561,7 @@ export function ReportItem({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <ReportCacheBadge reportId={report.id} />
           <DropdownMenu>
             <DropdownMenuTrigger className="flex h-8 w-8 items-center justify-center rounded hover:border">
@@ -688,8 +689,8 @@ export function ReportItemReadOnly({
   return (
     <div className="card flex h-full flex-col">
       <div className="flex items-center justify-between border-border border-b p-4 leading-none">
-        <div className="flex-1">
-          <div className="font-medium">{report.name}</div>
+        <div className="min-w-0 flex-1" title={report.name}>
+          <div className="truncate font-medium">{report.name}</div>
           {chartRange !== null && (
             <div className="mt-2 flex gap-2">
               <span
