@@ -605,6 +605,7 @@ export function ReportItem({
         <ReportChart
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
+            funnelLayout: report.chartType === 'funnel' ? 'dashboard' : undefined,
             metricLayout:
               report.chartType === 'metric' && report.breakdowns.length === 0
                 ? 'hero'
@@ -729,6 +730,7 @@ export function ReportItemReadOnly({
         <ReportChart
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
+            funnelLayout: report.chartType === 'funnel' ? 'dashboard' : undefined,
             metricLayout:
               report.chartType === 'metric' && report.breakdowns.length === 0
                 ? 'hero'

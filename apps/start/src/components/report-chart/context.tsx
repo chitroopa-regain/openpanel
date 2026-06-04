@@ -18,6 +18,7 @@ export type ReportChartContextType = {
     hideXAxis: boolean;
     hideYAxis: boolean;
     showFunnelPreviewLabels: boolean;
+    funnelLayout: 'default' | 'dashboard';
     metricLayout: 'compact' | 'hero';
     metricSurface: 'card' | 'plain';
     aspectRatio: number;

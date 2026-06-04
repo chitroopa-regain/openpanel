@@ -880,6 +880,7 @@ export function Chart({
   const showSingleFunnelLabels = !hasBreakdowns;
   const showBreakdownPreviewLabels =
     hasBreakdowns && options.showFunnelPreviewLabels === true;
+  const isDashboardLayout = options.funnelLayout === 'dashboard';
   const overallPercent = data.current[0]?.lastStep.percent;
   const steps = data.current[0]?.steps ?? [];
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1007,15 +1008,30 @@ export function Chart({
       hasPrevious={hasPrevious}
       visibleBreakdownIds={new Set(visibleBreakdowns.map((b) => b.id))}
     >
-      <div className="card w-full">
+      <div
+        className={cn(
+          'w-full',
+          isDashboardLayout ? 'flex h-full min-h-0 flex-col' : 'card'
+        )}
+      >
         {showSingleFunnelLabels && typeof overallPercent === 'number' && (
-          <div className="border-b border-border px-4 pt-3">
+          <div
+            className={cn(
+              'px-4 pt-3',
+              !isDashboardLayout && 'border-b border-border'
+            )}
+          >
             <FunnelOverallLegend percent={overallPercent} />
           </div>
         )}
         <div
           ref={containerRef}
-          className="relative aspect-video max-h-[250px] w-full overflow-x-auto overflow-y-hidden p-4 pb-1"
+          className={cn(
+            'relative w-full overflow-x-auto overflow-y-hidden',
+            isDashboardLayout
+              ? 'min-h-0 flex-1 px-2 pt-7 pb-0'
+              : 'aspect-video max-h-[250px] p-4 pb-1'
+          )}
         >
           <div
             className="relative h-full min-w-full"

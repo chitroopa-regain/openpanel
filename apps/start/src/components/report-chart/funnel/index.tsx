@@ -121,7 +121,7 @@ export function ReportFunnelChart() {
   const hasBreakdowns = res.data.current.length > 1;
 
   return (
-    <div className="col gap-4">
+    <div className="col h-full gap-4">
       {isEditMode && hasBreakdowns && <Summary data={res.data} />}
       <Chart data={res.data} visibleBreakdowns={visibleBreakdowns} />
       {isEditMode && (
