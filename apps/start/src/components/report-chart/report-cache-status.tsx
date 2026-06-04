@@ -24,16 +24,17 @@ export function ReportCacheBadge({
   // render a future "in X seconds".
   const updatedAt = Math.min(entry.cachedAt, Date.now());
 
+  const age = formatDistanceToNowStrict(updatedAt, { addSuffix: true });
+
   return (
     <div
       className={cn(
-        'flex items-center gap-1.5 text-muted-foreground text-xs',
+        'flex shrink-0 items-center gap-1 text-muted-foreground text-xs',
         className
       )}
+      title={`Updating chart. Last updated ${age}.`}
     >
-      <span>
-        Updated {formatDistanceToNowStrict(updatedAt, { addSuffix: true })}
-      </span>
+      <span>Updating</span>
       <RefreshCwIcon className="size-3.5 animate-spin" />
     </div>
   );
