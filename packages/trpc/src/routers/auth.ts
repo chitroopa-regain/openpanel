@@ -80,14 +80,11 @@ export const authRouter = createTRPCRouter({
   signInOAuth: publicProcedure
     .input(z.object({ provider: zProvider, inviteId: z.string().nullish() }))
     .mutation(async ({ input, ctx }) => {
-      const isRegistrationAllowed = await getIsRegistrationAllowed(
-        input.inviteId
-      );
-
-      if (!isRegistrationAllowed) {
-        throw TRPCAccessError('Registrations are not allowed');
-      }
-
+      // Invite-only is NOT enforced here: at the start of the OAuth flow we don't
+      // yet know whether this is a returning user (who must always be allowed to
+      // sign in) or a brand-new user. Gating on registration here would 401 every
+      // returning user signing in with Google. The new-account check is enforced
+      // in the OAuth callback (handleNewUser), where the identity is known.
       const { provider } = input;
 
       if (input.inviteId) {

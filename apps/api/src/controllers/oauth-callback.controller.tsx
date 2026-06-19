@@ -86,6 +86,23 @@ async function handleExistingUser({
   );
 }
 
+// Self-hosted invite-only: a brand-new account may be created via OAuth only if
+// registration is open, this is the first user, or a valid invite is present.
+// (signInOAuth no longer blocks upfront, so existing users can always sign in.)
+async function isNewAccountAllowed(
+  inviteId?: string | null
+): Promise<boolean> {
+  if (process.env.ALLOW_REGISTRATION === undefined) return true;
+  const count = await db.user.count();
+  if (count === 0) return true;
+  if (inviteId) {
+    if (process.env.ALLOW_INVITATION === 'false') return false;
+    const invite = await db.invite.findUnique({ where: { id: inviteId } });
+    return !!invite;
+  }
+  return process.env.ALLOW_REGISTRATION !== 'false';
+}
+
 async function handleNewUser({
   oauthUser,
   providerName,
@@ -110,6 +127,14 @@ async function handleNewUser({
         providerName,
       }
     );
+  }
+
+  const allowed = await isNewAccountAllowed(inviteId);
+  if (!allowed) {
+    throw new LogError('You need an invite to access this dashboard', {
+      oauthUser,
+      providerName,
+    });
   }
 
   const user = await db.user.create({
