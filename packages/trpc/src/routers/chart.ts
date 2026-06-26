@@ -219,6 +219,7 @@ export const chartRouter = createTRPCRouter({
     }),
 
   events: protectedProcedure
+    .use(cacheMiddleware(60 * 5))
     .input(
       z.object({
         projectId: z.string(),
@@ -343,6 +344,7 @@ export const chartRouter = createTRPCRouter({
     }),
 
   properties: protectedProcedure
+    .use(cacheMiddleware(60 * 5))
     .input(
       z.object({
         event: z.string().optional(),
