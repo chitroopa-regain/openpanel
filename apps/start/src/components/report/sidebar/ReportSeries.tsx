@@ -287,105 +287,103 @@ export function ReportSeries() {
                     </>
                   ) : (
                     <>
-                      <ComboboxEvents
-                        className="min-w-0 flex-1"
-                        searchable
-                        allowCreateCustomEvent
-                        multiple={isSelectManyEvents as false}
-                        value={
-                          (isSelectManyEvents
-                            ? ((
-                                event as IChartEventItem & {
-                                  type: 'event';
-                                }
-                              ).filters[0]?.value ?? [])
-                            : (
-                                event as IChartEventItem & {
-                                  type: 'event';
-                                }
-                              ).name) as any
-                        }
-                        onChange={(value) => {
-                          const selectedItem =
-                            !Array.isArray(value)
-                              ? eventNames.find((e) => e.name === value)
-                              : null;
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
+                        <ComboboxEvents
+                          className="w-full min-w-0 shrink justify-between"
+                          searchable
+                          allowCreateCustomEvent
+                          multiple={isSelectManyEvents as false}
+                          value={
+                            (isSelectManyEvents
+                              ? ((
+                                  event as IChartEventItem & {
+                                    type: 'event';
+                                  }
+                                ).filters[0]?.value ?? [])
+                              : (
+                                  event as IChartEventItem & {
+                                    type: 'event';
+                                  }
+                                ).name) as any
+                          }
+                          onChange={(value) => {
+                            const selectedItem =
+                              !Array.isArray(value)
+                                ? eventNames.find((e) => e.name === value)
+                                : null;
 
-                          dispatch(
-                            changeEvent(
-                              selectedItem &&
-                                'isCustomEvent' in selectedItem &&
-                                selectedItem.isCustomEvent &&
-                                'customEventId' in selectedItem &&
-                                selectedItem.customEventId
-                                ? {
-                                    id: event.id,
-                                    type: 'custom_event',
-                                    customEventId: selectedItem.customEventId,
-                                    segment: 'event',
-                                    displayName: selectedItem.name,
-                                    filters: [],
-                                  }
-                                : Array.isArray(value)
-                                ? {
-                                    id: event.id,
-                                    type: 'event',
-                                    segment: 'user',
-                                    filters: [
-                                      {
-                                        name: 'name',
-                                        operator: 'is',
-                                        value: value,
-                                      },
-                                    ],
-                                    name: '*',
-                                  }
-                                : {
-                                    ...event,
-                                    type: 'event',
-                                    name: value,
-                                    filters: [],
-                                  }
-                            )
-                          );
-                        }}
-                        onCreateCustomEvent={(customEvent) => {
-                          dispatch(
-                            changeEvent({
-                              id: event.id,
-                              type: 'custom_event',
-                              customEventId: customEvent.id,
-                              segment: 'event',
-                              displayName: customEvent.name,
-                              filters: [],
-                            })
-                          );
-                        }}
-                        items={eventNames}
-                        placeholder="Select event"
-                      />
-                      {showDisplayNameInput && (
-                        <Input
-                          className="min-w-0"
-                          placeholder={
-                            (event as IChartEventItem & { type: 'event' }).name
-                              ? `${(event as IChartEventItem & { type: 'event' }).name} (${alphabetIds[index]})`
-                              : 'Display name'
-                          }
-                          defaultValue={
-                            (event as IChartEventItem & { type: 'event' })
-                              .displayName
-                          }
-                          onChange={(e) => {
-                            dispatchChangeEvent({
-                              ...(event as IChartEventItem & {
-                                type: 'event';
-                              }),
-                              displayName: e.target.value,
-                            });
+                            dispatch(
+                              changeEvent(
+                                selectedItem &&
+                                  'isCustomEvent' in selectedItem &&
+                                  selectedItem.isCustomEvent &&
+                                  'customEventId' in selectedItem &&
+                                  selectedItem.customEventId
+                                  ? {
+                                      id: event.id,
+                                      type: 'custom_event',
+                                      customEventId: selectedItem.customEventId,
+                                      segment: 'event',
+                                      displayName: selectedItem.name,
+                                      filters: [],
+                                    }
+                                  : Array.isArray(value)
+                                  ? {
+                                      id: event.id,
+                                      type: 'event',
+                                      segment: 'user',
+                                      filters: [
+                                        {
+                                          name: 'name',
+                                          operator: 'is',
+                                          value: value,
+                                        },
+                                      ],
+                                      name: '*',
+                                    }
+                                  : {
+                                      ...event,
+                                      type: 'event',
+                                      name: value,
+                                      filters: [],
+                                    }
+                              )
+                            );
                           }}
+                          onCreateCustomEvent={(customEvent) => {
+                            dispatch(
+                              changeEvent({
+                                id: event.id,
+                                type: 'custom_event',
+                                customEventId: customEvent.id,
+                                segment: 'event',
+                                displayName: customEvent.name,
+                                filters: [],
+                              })
+                            );
+                          }}
+                          items={eventNames}
+                          placeholder="Select event"
                         />
-                      )}
+                        {showDisplayNameInput && (
+                          <Input
+                            className="min-w-0"
+                            placeholder={`Display name (${alphabetIds[index]})`}
+                            defaultValue={
+                              (event as IChartEventItem & { type: 'event' })
+                                .displayName
+                            }
+                            onChange={(e) => {
+                              dispatchChangeEvent({
+                                ...(event as IChartEventItem & {
+                                  type: 'event';
+                                }),
+                                displayName: e.target.value,
+                              });
+                            }}
+                          />
+                        )}
+                      </div>
                       <ReportEventMore onClick={handleMore(event)} firstTimeFilter={(event as IChartEventItem & { type: 'event' }).firstTimeFilter} />
                     </>
                   )}
