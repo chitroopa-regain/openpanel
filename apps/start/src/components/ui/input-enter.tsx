@@ -25,7 +25,7 @@ export function InputEnter({
   }, [value]);
 
   return (
-    <div className="relative w-full">
+    <div className="relative min-w-0 w-full">
       <Input
         {...props}
         value={internalValue}

@@ -240,13 +240,13 @@ export function ReportSeries() {
                 >
                   {isCustomEvent ? (
                     <>
-                      <div className="flex-1 flex items-center gap-2 px-3 py-2">
+                      <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2">
                         <LayersIcon className="h-4 w-4 flex-shrink-0 text-violet-500" />
-                        <span className="font-medium truncate">
+                        <span className="min-w-0 truncate font-medium">
                           {(event as IChartCustomEvent).displayName ??
                             'Custom Event'}
                         </span>
-                        <span className="text-xs text-violet-500 font-medium">
+                        <span className="shrink-0 text-xs font-medium text-violet-500">
                           Custom
                         </span>
                       </div>
@@ -258,7 +258,7 @@ export function ReportSeries() {
                     </>
                   ) : isFormula ? (
                     <>
-                      <div className="flex-1 flex flex-col gap-2">
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
                         <InputEnter
                           placeholder="eg: A+B"
                           value={event.formula}
@@ -271,6 +271,7 @@ export function ReportSeries() {
                         />
                         {showDisplayNameInput && (
                           <Input
+                            className="min-w-0"
                             placeholder={`Name: Formula (${alphabetIds[index]})`}
                             defaultValue={event.displayName}
                             onChange={(e) => {
@@ -287,7 +288,7 @@ export function ReportSeries() {
                   ) : (
                     <>
                       <ComboboxEvents
-                        className="flex-1"
+                        className="min-w-0 flex-1"
                         searchable
                         allowCreateCustomEvent
                         multiple={isSelectManyEvents as false}
@@ -365,6 +366,7 @@ export function ReportSeries() {
                       />
                       {showDisplayNameInput && (
                         <Input
+                          className="min-w-0"
                           placeholder={
                             (event as IChartEventItem & { type: 'event' }).name
                               ? `${(event as IChartEventItem & { type: 'event' }).name} (${alphabetIds[index]})`
@@ -391,9 +393,9 @@ export function ReportSeries() {
               );
             })}
 
-            <div className="flex gap-2">
+            <div className="flex min-w-0 gap-2">
               <ComboboxEvents
-                className="flex-1"
+                className="min-w-0 flex-1"
                 disabled={isAddEventDisabled || isSankeyEventLimitReached}
                 value={''}
                 searchable

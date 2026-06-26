@@ -166,7 +166,7 @@ export function ComboboxEvents<
             className
           )}
         >
-          <div className="flex min-w-0 items-center">
+          <div className="flex min-w-0 flex-1 items-center">
             {'isCustomEvent' in (current ?? {}) && current?.isCustomEvent ? (
               <LayersIcon className="mr-2 h-4 w-4 shrink-0 text-violet-500" />
             ) : current?.meta ? (

@@ -52,8 +52,8 @@ export function ReportBreakdowns() {
         {selectedBreakdowns.map((item, index) => {
           return (
             <div key={item.name} className="rounded-lg border bg-def-100">
-              <div className="flex items-center gap-2 p-2 px-4">
-                <ColorSquare>{index}</ColorSquare>
+              <div className="flex min-w-0 items-center gap-2 p-2 px-4">
+                <ColorSquare className="shrink-0">{index}</ColorSquare>
                 <PropertiesCombobox
                   {...scopedBreakdownProps}
                   onSelect={(action) => {
@@ -71,17 +71,19 @@ export function ReportBreakdowns() {
                       onClick={() => setOpen((prev) => !prev)}
                       size={'sm'}
                       autoHeight
-                      className="flex-1"
+                      className="min-w-0 flex-1"
                     >
-                      <div className="row w-full gap-2 items-center">
-                        <SplitIcon className="size-4" />
-                        {item.name}
+                      <div className="row min-w-0 flex-1 gap-2 items-center">
+                        <SplitIcon className="size-4 shrink-0" />
+                        <span className="min-w-0 truncate">{item.name}</span>
                       </div>
                       <ChevronsUpDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   )}
                 </PropertiesCombobox>
-                <ReportBreakdownMore onClick={handleMore(item)} />
+                <div className="shrink-0">
+                  <ReportBreakdownMore onClick={handleMore(item)} />
+                </div>
               </div>
             </div>
           );
@@ -103,11 +105,11 @@ export function ReportBreakdowns() {
               onClick={() => setOpen((prev) => !prev)}
               size={'sm'}
               autoHeight
-              className="flex-1"
+              className="min-w-0 flex-1"
             >
-              <div className="row w-full gap-2 items-center">
-                <SplitIcon className="size-4" />
-                Select breakdown
+              <div className="row min-w-0 flex-1 gap-2 items-center">
+                <SplitIcon className="size-4 shrink-0" />
+                <span className="min-w-0 truncate">Select breakdown</span>
               </div>
               <ChevronsUpDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>

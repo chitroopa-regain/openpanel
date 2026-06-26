@@ -151,18 +151,18 @@ export function PureFilterItem({
 
   return (
     <div className={className}>
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex min-w-0 items-center gap-2">
         <ColorSquare className="bg-emerald-500">
           <SlidersHorizontal size={10} />
         </ColorSquare>
-        <div className="flex flex-1 ">
+        <div className="flex min-w-0 flex-1">
           <RenderDots truncate>{filter.name}</RenderDots>
         </div>
-        <Button variant="ghost" size="sm" onClick={removeFilter}>
+        <Button className="shrink-0" variant="ghost" size="sm" onClick={removeFilter}>
           <Trash size={16} />
         </Button>
       </div>
-      <div className="flex gap-1">
+      <div className="flex min-w-0 gap-1">
         <FilterOperatorSelect
           value={filter.operator}
           onChange={changeFilterOperator}
@@ -171,7 +171,7 @@ export function PureFilterItem({
           <ComboboxAdvanced
             items={valuesCombobox}
             value={filter.value}
-            className="flex-1"
+            className="min-w-0 flex-1"
             onChange={changeFilterValue}
             placeholder="Select..."
           />
