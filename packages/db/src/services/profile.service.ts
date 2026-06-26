@@ -332,3 +332,12 @@ export function upsertProfile(
 
   return profileBuffer.add(profile, isFromEvent);
 }
+
+export async function getProfileTraitsKeys(projectId: string): Promise<string[]> {
+  const traitKeys = await chQuery<{ key: string }>(
+    `SELECT DISTINCT key FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} LIMIT 1000`
+  );
+  return traitKeys.map((t) => t.key);
+}
+
+export const getProfileTraitsKeysCached = cacheable(getProfileTraitsKeys, 60 * 60); // cache for 1 hour

@@ -16,6 +16,7 @@ import {
   getEventFiltersWhereClause,
   getEventMetasCached,
   getProfilesCached,
+  getProfileTraitsKeysCached,
   getReportById,
   getSelectPropertyKey,
   getSettingsForProject,
@@ -369,12 +370,10 @@ export const chartRouter = createTRPCRouter({
         ),
       ];
 
-      // Also fetch trait keys from profile_traits table
-      const traitKeys = await chQuery<{ key: string }>(
-        `SELECT DISTINCT key FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} LIMIT 1000`
-      );
+      // Also fetch trait keys from profile_traits table (cached)
+      const traitKeys = await getProfileTraitsKeysCached(projectId);
       const traitProperties = traitKeys.map(
-        (t) => `profile.properties.${t.key}`
+        (key) => `profile.properties.${key}`
       );
       profileProperties.push(...traitProperties);
 
