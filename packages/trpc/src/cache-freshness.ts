@@ -26,9 +26,10 @@ type FreshnessInput = {
 };
 
 // Short debounce for live data: show cache, then background-refresh on load.
-const LIVE = 30;
+const LIVE = Number(process.env.OP_QUERY_CACHE_LIVE_WINDOW) || 30;
 // Closed historical periods barely change — keep them fresh for a day.
-const STABLE = 60 * 60 * 24;
+const STABLE = Number(process.env.OP_QUERY_CACHE_STABLE_WINDOW) || 60 * 60 * 24;
+
 
 // Live widgets must never serve stale data.
 const LIVE_PATHS = new Set(['overview.liveData', 'overview.liveVisitors']);

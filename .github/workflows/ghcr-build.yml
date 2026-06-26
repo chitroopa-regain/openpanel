@@ -51,5 +51,7 @@ jobs:
           file: apps/${{ matrix.app }}/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:dashboard-plus
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:dashboard-plus
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:dashboard-plus-swr
           no-cache: true
