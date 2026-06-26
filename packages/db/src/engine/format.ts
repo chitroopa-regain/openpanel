@@ -19,7 +19,7 @@ export function format(
   concreteSeries: ConcreteSeries[],
   definitions: Array<{
     id?: string;
-    type: 'event' | 'formula';
+    type: 'event' | 'formula' | 'custom_event';
     displayName?: string;
     formula?: string;
     name?: string;

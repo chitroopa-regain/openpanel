@@ -33,7 +33,7 @@ export const rateLimitMiddleware = ({
 export async function createContext({ req, res }: CreateFastifyContextOptions) {
   const cookies = (req as any).cookies as Record<string, string | undefined>;
   const setCookie: ISetCookie = (key, value, options) => {
-    // @ts-expect-error
+    // @ts-ignore
     res.setCookie(key, value, {
       maxAge: options.maxAge,
       ...COOKIE_OPTIONS,

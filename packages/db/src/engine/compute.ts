@@ -11,7 +11,7 @@ import type { ConcreteSeries } from './types';
 export function compute(
   fetchedSeries: ConcreteSeries[],
   definitions: Array<{
-    type: 'event' | 'formula';
+    type: 'event' | 'formula' | 'custom_event';
     id?: string;
     formula?: string;
   }>,

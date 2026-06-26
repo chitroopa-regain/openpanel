@@ -308,7 +308,6 @@ export const zReportInput = z.object({
     .optional()
     .describe('Chart-specific options (funnel, retention, sankey)'),
   dateConfig: zDateConfig
-    .passthrough()
     .optional()
     .describe('Custom date mode config (fixed, last, since, period_to_date)'),
   // Optional display fields

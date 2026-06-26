@@ -140,10 +140,12 @@ function MixpanelImport({
         ? new Date(form.getValues('to'))
         : undefined,
       onChange: ({ startDate, endDate }) => {
-        form.setValue('from', format(startDate, 'yyyy-MM-dd'));
-        form.setValue('to', format(endDate, 'yyyy-MM-dd'));
-        form.trigger('from');
-        form.trigger('to');
+        if (startDate && endDate) {
+          form.setValue('from', format(startDate, 'yyyy-MM-dd'));
+          form.setValue('to', format(endDate, 'yyyy-MM-dd'));
+          form.trigger('from');
+          form.trigger('to');
+        }
       },
     });
   };

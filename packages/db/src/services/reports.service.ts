@@ -84,11 +84,13 @@ export function transformReport(
 ): IReport & {
   id: string;
   layout?: ReportLayout | null;
+  dashboardId: string;
 } {
   const options = report.options as IReportOptions | null | undefined;
 
   return {
     id: report.id,
+    dashboardId: report.dashboardId,
     projectId: report.projectId,
     name: report.name || 'Untitled',
     chartType: report.chartType,

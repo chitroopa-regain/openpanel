@@ -4,6 +4,7 @@ import { DateTime, stripLeadingAndTrailingSlashes } from '@openpanel/common';
 import type {
   IChartEventFilter,
   ICustomEventComponent,
+  IDateConfig,
   IReportInput,
   IChartRange,
   IGetChartDataInput,
@@ -1324,7 +1325,9 @@ export function getEventFiltersWhereClause(filters: IChartEventFilter[], project
 }
 
 export function getChartStartEndDate(
-  input: Pick<IReportInput, 'endDate' | 'startDate' | 'range' | 'dateConfig'>,
+  input: Pick<IReportInput, 'endDate' | 'startDate' | 'range'> & {
+    dateConfig?: IDateConfig | null;
+  },
   timezone: string
 ) {
   const { startDate, endDate, range, dateConfig } = input;

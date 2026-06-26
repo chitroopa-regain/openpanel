@@ -65,6 +65,8 @@ function makeAggregateInput(overrides: Record<string, any> = {}) {
     timezone: overrides.timezone ?? 'Asia/Calcutta',
     chartType: 'pie' as const,
     customEventComponents: overrides.customEventComponents,
+    previous: overrides.previous ?? false,
+    metric: overrides.metric ?? 'sum',
   };
 }
 
@@ -89,6 +91,8 @@ function makeTimeSeriesInput(overrides: Record<string, any> = {}) {
     timezone: overrides.timezone ?? 'Asia/Calcutta',
     chartType: 'linear' as const,
     customEventComponents: overrides.customEventComponents,
+    previous: overrides.previous ?? false,
+    metric: overrides.metric ?? 'sum',
   };
 }
 

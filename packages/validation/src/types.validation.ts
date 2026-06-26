@@ -96,7 +96,7 @@ export type IChartSerie = {
     breakdowns?: Record<string, string>;
   };
   metrics: Metrics;
-  serieType?: 'event' | 'formula';
+  serieType?: 'event' | 'formula' | 'custom_event';
   data: {
     date: string;
     count: number;

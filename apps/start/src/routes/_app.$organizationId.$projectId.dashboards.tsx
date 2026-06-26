@@ -21,6 +21,7 @@ import {
   PieChartIcon,
   PlusIcon,
   Trash,
+  TableIcon,
   TrendingUpIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -158,6 +159,7 @@ function Component() {
                         retention: ChartScatterIcon,
                         conversion: TrendingUpIcon,
                         sankey: GitBranchIcon,
+                        table: TableIcon,
                       }[report.chartType] ?? HashIcon;
 
                       return (

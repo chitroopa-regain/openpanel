@@ -18,6 +18,7 @@ export const Route = createFileRoute(
   },
   validateSearch: z.object({
     dashboardId: z.string().optional(),
+    draft: z.string().optional(),
   }),
 });
 

@@ -4,6 +4,7 @@ import { alphabetIds } from '@openpanel/constants';
 import type {
   FinalChart,
   IChartCustomEvent,
+  IChartEventFilter,
   IChartEventItem,
   ICustomEventComponent,
   IReportInput,
@@ -123,8 +124,7 @@ export async function executeAggregateChart(
     let customEventComponents: ICustomEventComponent[] | undefined;
     let eventName: string;
     let eventSegment: string;
-    let eventFilters: IChartEventItem extends { filters: infer F } ? F : never =
-      [] as any;
+    let eventFilters: IChartEventFilter[] = [];
     let eventDisplayName: string | undefined;
     let eventProperty: string | undefined;
 

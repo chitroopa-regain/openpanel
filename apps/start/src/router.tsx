@@ -25,6 +25,7 @@ export const getRouter = async () => {
       ...envs,
     },
     defaultPreload: 'intent',
+    // @ts-expect-error defaultSsr is not recognized by these Router types
     defaultSsr: !isDev,
     Wrap: (props: { children: React.ReactNode }) => {
       return (

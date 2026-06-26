@@ -313,8 +313,8 @@ function EventsTableToolbar({
           onClick={() => {
             pushModal('DateRangerPicker', {
               onChange: ({ startDate, endDate }) => {
-                setStartDate(startDate);
-                setEndDate(endDate);
+                setStartDate(startDate ?? null);
+                setEndDate(endDate ?? null);
               },
               startDate: startDate || undefined,
               endDate: endDate || undefined,

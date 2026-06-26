@@ -32,7 +32,7 @@ function parseSchemaForJsonTypes(schemaPath: string): JsonFieldMapping[] {
     // Look for Json fields with type comments
     if (line.includes('Json') && i > 0) {
       const prevLine = lines[i - 1]?.trim() || '';
-      const typeMatch = prevLine.match(/\/\/\/ \[([^\]]+)\]/);
+      const typeMatch = prevLine.match(/\/\/\/ \[(.+)\]/);
 
       if (typeMatch) {
         const fieldMatch = line.match(/(\w+)\s+Json/);
@@ -120,61 +120,14 @@ function replaceJsonValueInFileForModel(
     }
 
     // Pattern 2: runtime.InputJsonValue with optional JsonNullValueInput (for create/update inputs)
-    const inputJsonValueRegex = new RegExp(
-      `\\b${mapping.field}:\\s*(?:Prisma\\.JsonNullValueInput\\s*\\|\\s*)?runtime\\.InputJsonValue\\b`,
+    const fieldUnionJsonValueRegex = new RegExp(
+      `\\b${mapping.field}(\\??):\\s*((?:Prisma\\.[a-zA-Z]*JsonNullValueInput\\s*\\|\\s*)?)runtime\\.InputJsonValue\\b`,
       'g',
     );
-    if (inputJsonValueRegex.test(content)) {
+    if (fieldUnionJsonValueRegex.test(content)) {
       content = content.replace(
-        inputJsonValueRegex,
-        `${mapping.field}: PrismaJson.${mapping.type}`,
-      );
-      modified = true;
-    }
-
-    // Pattern 3: Optional runtime.InputJsonValue with optional JsonNullValueInput
-    const optionalInputJsonValueRegex = new RegExp(
-      `\\b${mapping.field}\\?:\\s*(?:Prisma\\.JsonNullValueInput\\s*\\|\\s*)?runtime\\.InputJsonValue\\b`,
-      'g',
-    );
-    if (optionalInputJsonValueRegex.test(content)) {
-      content = content.replace(
-        optionalInputJsonValueRegex,
-        `${mapping.field}?: PrismaJson.${mapping.type}`,
-      );
-      modified = true;
-    }
-
-    // Pattern 4: Union types with JsonNullValueInput | runtime.InputJsonValue
-    const unionJsonValueRegex =
-      /(Prisma\.JsonNullValueInput\s*\|\s*)runtime\.InputJsonValue/g;
-    if (unionJsonValueRegex.test(content)) {
-      content = content.replace(
-        unionJsonValueRegex,
-        `$1PrismaJson.${mapping.type}`,
-      );
-      modified = true;
-    }
-
-    // Pattern 5: Just runtime.InputJsonValue in unions
-    const simpleInputJsonValueRegex = /\|\s*runtime\.InputJsonValue/g;
-    if (simpleInputJsonValueRegex.test(content)) {
-      content = content.replace(
-        simpleInputJsonValueRegex,
-        `| PrismaJson.${mapping.type}`,
-      );
-      modified = true;
-    }
-
-    // Pattern 6: Optional union types with JsonNullValueInput | runtime.InputJsonValue
-    const optionalUnionJsonValueRegex = new RegExp(
-      `\\b${mapping.field}\\?:\\s*(?:Prisma\\.JsonNullValueInput\\s*\\|\\s*)?runtime\\.InputJsonValue\\b`,
-      'g',
-    );
-    if (optionalUnionJsonValueRegex.test(content)) {
-      content = content.replace(
-        optionalUnionJsonValueRegex,
-        `${mapping.field}?: PrismaJson.${mapping.type}`,
+        fieldUnionJsonValueRegex,
+        `${mapping.field}$1: $2PrismaJson.${mapping.type}`,
       );
       modified = true;
     }

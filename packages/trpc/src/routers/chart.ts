@@ -1056,17 +1056,10 @@ export const chartRouter = createTRPCRouter({
 
       const countCriteria = criteria === 'on_or_after' ? '>=' : '=';
 
-      const usersSelect = range(0, diffInterval + 1)
-        .map(
-          (index) =>
-            `groupUniqArrayIf(profile_id, x_after_cohort ${countCriteria} ${index}) AS interval_${index}_users`
-        )
-        .join(',\n');
-
       const countsSelect = range(0, diffInterval + 1)
         .map(
           (index) =>
-            `length(interval_${index}_users) AS interval_${index}_user_count`
+            `uniqExactIf(r.profile_id, r.x_after_cohort ${countCriteria} ${index}) AS interval_${index}_user_count`
         )
         .join(',\n');
 
@@ -1195,13 +1188,6 @@ export const chartRouter = createTRPCRouter({
           WHERE (l.event_date >= f.cohort_interval)
           AND (l.event_date <= (f.cohort_interval + INTERVAL ${diffInterval} ${sqlInterval}))
         ),
-        interval_users AS (
-          SELECT
-            cohort_interval,
-            ${usersSelect}
-          FROM retention_matrix
-          GROUP BY cohort_interval
-        ),
         cohort_sizes AS (
           SELECT
             cohort_interval,
@@ -1210,12 +1196,13 @@ export const chartRouter = createTRPCRouter({
           GROUP BY cohort_interval
         )
         SELECT
-          cohort_interval,
-          cohort_sizes.total_first_event_count,
+          cs.cohort_interval,
+          cs.total_first_event_count,
           ${countsSelect}
-        FROM interval_users
-        LEFT JOIN cohort_sizes AS cs ON cohort_interval = cs.cohort_interval
-        ORDER BY cohort_interval ASC
+        FROM cohort_sizes cs
+        LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval
+        GROUP BY cs.cohort_interval, cs.total_first_event_count
+        ORDER BY cs.cohort_interval ASC
       `;
 
       const cohortData = await chQuery<{
