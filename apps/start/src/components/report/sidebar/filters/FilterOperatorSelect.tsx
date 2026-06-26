@@ -16,19 +16,23 @@ export function FilterOperatorSelect({
   children,
 }: FilterOperatorSelectProps) {
   const trigger = children ?? (
-    <Button variant="outline" className="whitespace-nowrap">
+    <Button className="whitespace-nowrap" variant="outline">
       {operators[value]}
     </Button>
   );
 
   return (
     <DropdownMenuComposed
-      onChange={onChange}
+      contentProps={{
+        collisionPadding: 8,
+        side: 'bottom',
+      }}
       items={mapKeys(operators).map((key) => ({
         value: key,
         label: operators[key],
       }))}
       label="Operator"
+      onChange={onChange}
     >
       {trigger}
     </DropdownMenuComposed>

@@ -189,6 +189,9 @@ interface DropdownProps<Value> {
     value: Value;
   }[];
   onChange?: (value: Value) => void;
+  contentProps?: React.ComponentPropsWithoutRef<
+    typeof DropdownMenuPrimitive.Content
+  >;
 }
 
 export function DropdownMenuComposed<Value extends string>({
@@ -196,11 +199,21 @@ export function DropdownMenuComposed<Value extends string>({
   label,
   items,
   onChange,
+  contentProps,
 }: DropdownProps<Value>) {
+  const { className, ...restContentProps } = contentProps ?? {};
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
-      <DropdownMenuContent className="w-56" align="start">
+      <DropdownMenuContent
+        className={cn(
+          'w-56 max-h-[min(var(--radix-dropdown-menu-content-available-height),24rem)] overflow-y-auto',
+          className,
+        )}
+        align="start"
+        {...restContentProps}
+      >
         {label && (
           <>
             <DropdownMenuLabel>{label}</DropdownMenuLabel>
