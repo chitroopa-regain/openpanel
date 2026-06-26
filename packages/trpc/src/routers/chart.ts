@@ -1075,11 +1075,9 @@ export const chartRouter = createTRPCRouter({
         );
 
       const useEventsFirst =
-        !!firstEventCustomWhere ||
         needsEventsTable(firstEventFilters) ||
         needsEventsTable(firstComponentFilters);
       const useEventsSecond =
-        !!secondEventCustomWhere ||
         needsEventsTable(secondEventFilters) ||
         needsEventsTable(secondComponentFilters);
       const firstEventTable = useEventsFirst
