@@ -18,6 +18,8 @@ import {
   LayoutPanelTopIcon,
   LineChartIcon,
   Pencil,
+  PinIcon,
+  PinOffIcon,
   PieChartIcon,
   PlusIcon,
   Trash,
@@ -90,6 +92,20 @@ function Component() {
       },
     }),
   );
+  const pinning = useMutation(
+    trpc.dashboard.pin.mutationOptions({
+      onSuccess(_, variables) {
+        queryClient.invalidateQueries(trpc.dashboard.list.pathFilter());
+        query.refetch();
+        toast('Success', {
+          description: variables.pinned
+            ? 'Dashboard pinned.'
+            : 'Dashboard unpinned.',
+        });
+      },
+      onError: handleErrorToastOptions({}),
+    }),
+  );
 
   if (dashboards.length === 0) {
     return (
@@ -134,7 +150,18 @@ function Component() {
                   className="flex flex-col p-4 @container"
                 >
                   <div className="col gap-2">
-                    <div className="font-medium">{item.name}</div>
+                    <div className="row min-w-0 items-center gap-2 pr-8 font-medium">
+                      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                        {item.name}
+                      </span>
+                      {item.pinnedAt && (
+                        <PinIcon
+                          size={16}
+                          className="shrink-0 text-primary"
+                          aria-label="Pinned dashboard"
+                        />
+                      )}
+                    </div>
                     <div className="text-sm text-muted-foreground">
                       {format(item.updatedAt, 'HH:mm · MMM d')}
                     </div>
@@ -193,6 +220,25 @@ function Component() {
               </div>
 
               <CardActions>
+                <CardActionsItem className="w-full" asChild>
+                  <button
+                    type="button"
+                    disabled={pinning.isPending}
+                    onClick={() => {
+                      pinning.mutate({
+                        id: item.id,
+                        pinned: !item.pinnedAt,
+                      });
+                    }}
+                  >
+                    {item.pinnedAt ? (
+                      <PinOffIcon size={16} />
+                    ) : (
+                      <PinIcon size={16} />
+                    )}
+                    {item.pinnedAt ? 'Unpin' : 'Pin'}
+                  </button>
+                </CardActionsItem>
                 <CardActionsItem className="w-full" asChild>
                   <button
                     type="button"

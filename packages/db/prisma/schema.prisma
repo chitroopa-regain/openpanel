@@ -304,6 +304,7 @@ model Dashboard {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
+  pinnedAt  DateTime?
 
   @@map("dashboards")
 }

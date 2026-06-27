@@ -113,6 +113,38 @@ export const dashboardRouter = createTRPCRouter({
         },
       });
     }),
+  pin: protectedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        pinned: z.boolean(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const dashboard = await db.dashboard.findUniqueOrThrow({
+        where: {
+          id: input.id,
+        },
+      });
+
+      const access = await getProjectAccess({
+        projectId: dashboard.projectId,
+        userId: ctx.session.userId,
+      });
+
+      if (!access) {
+        throw TRPCAccessError('You do not have access to this dashboard');
+      }
+
+      return db.dashboard.update({
+        where: {
+          id: input.id,
+        },
+        data: {
+          pinnedAt: input.pinned ? new Date() : null,
+        },
+      });
+    }),
   delete: protectedProcedure
     .input(
       z.object({
