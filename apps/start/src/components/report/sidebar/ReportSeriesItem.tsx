@@ -114,7 +114,7 @@ export function ReportSeriesItem({
               {(setOpen) => (
                 <SmallButton
                   aria-label="Add filter"
-                  className="opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
+                  className="text-muted-foreground hover:text-foreground"
                   icon={FilterIcon}
                   onClick={() => setOpen((p) => !p)}
                   title="Add filter"
@@ -198,7 +198,7 @@ export function ReportSeriesItem({
               {(setOpen) => (
                 <SmallButton
                   aria-label="Add filter"
-                  className="opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
+                  className="text-muted-foreground hover:text-foreground"
                   icon={FilterIcon}
                   onClick={() => setOpen((p) => !p)}
                   title="Add filter"
