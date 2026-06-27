@@ -1,4 +1,3 @@
-import { shortId } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import type {
   IChartCustomEvent,
@@ -8,7 +7,6 @@ import type {
 import {
   ClockIcon,
   DatabaseIcon,
-  FilterIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { ReportSegment } from '../ReportSegment';
@@ -75,55 +73,22 @@ export function ReportSeriesItem({
         </div>
       )}
 
-      {/* Segment and Filter buttons - only for events */}
-      {chartEvent && (showSegment || showAddFilter) && (
+      {/* Segment and Property picker - only for events */}
+      {chartEvent && showSegment && (
         <div className="flex gap-2 p-2 pt-0">
-          {showSegment && (
-            <ReportSegment
-              onChange={(segment) => {
-                dispatch(
-                  changeEvent({
-                    ...chartEvent,
-                    segment,
-                  })
-                );
-              }}
-              value={chartEvent.segment}
-            />
-          )}
-          {showAddFilter && (
-            <PropertiesCombobox
-              event={chartEvent}
-              onSelect={(action) => {
-                dispatch(
-                  changeEvent({
-                    ...chartEvent,
-                    filters: [
-                      ...chartEvent.filters,
-                      {
-                        id: shortId(),
-                        name: action.value,
-                        operator: 'is',
-                        value: [],
-                      },
-                    ],
-                  })
-                );
-              }}
-            >
-              {(setOpen) => (
-                <SmallButton
-                  aria-label="Add filter"
-                  className="text-muted-foreground hover:text-foreground"
-                  icon={FilterIcon}
-                  onClick={() => setOpen((p) => !p)}
-                  title="Add filter"
-                />
-              )}
-            </PropertiesCombobox>
-          )}
+          <ReportSegment
+            onChange={(segment) => {
+              dispatch(
+                changeEvent({
+                  ...chartEvent,
+                  segment,
+                })
+              );
+            }}
+            value={chartEvent.segment}
+          />
 
-          {showSegment && chartEvent.segment.startsWith('property_') && (
+          {chartEvent.segment.startsWith('property_') && (
             <PropertiesCombobox
               event={chartEvent}
               onSelect={(item) => {
@@ -159,54 +124,21 @@ export function ReportSeriesItem({
         />
       )}
 
-      {/* Segment, Filter, and Property picker for custom events */}
-      {isCustomEvent && (showSegment || showAddFilter) && (
+      {/* Segment and Property picker for custom events */}
+      {isCustomEvent && showSegment && (
         <div className="flex flex-wrap gap-2 p-2 pt-0">
-          {showSegment && (
-            <ReportSegment
-              onChange={(segment) => {
-                dispatch(
-                  changeEvent({
-                    ...customEvent!,
-                    segment,
-                  })
-                );
-              }}
-              value={customEvent!.segment}
-            />
-          )}
-          {showAddFilter && (
-            <PropertiesCombobox
-              customEventId={customEvent!.customEventId}
-              onSelect={(action) => {
-                dispatch(
-                  changeEvent({
-                    ...customEvent!,
-                    filters: [
-                      ...(customEvent!.filters ?? []),
-                      {
-                        id: shortId(),
-                        name: action.value,
-                        operator: 'is',
-                        value: [],
-                      },
-                    ],
-                  })
-                );
-              }}
-            >
-              {(setOpen) => (
-                <SmallButton
-                  aria-label="Add filter"
-                  className="text-muted-foreground hover:text-foreground"
-                  icon={FilterIcon}
-                  onClick={() => setOpen((p) => !p)}
-                  title="Add filter"
-                />
-              )}
-            </PropertiesCombobox>
-          )}
-          {showSegment && customEvent!.segment.startsWith('property_') && (
+          <ReportSegment
+            onChange={(segment) => {
+              dispatch(
+                changeEvent({
+                  ...customEvent!,
+                  segment,
+                })
+              );
+            }}
+            value={customEvent!.segment}
+          />
+          {customEvent!.segment.startsWith('property_') && (
             <PropertiesCombobox
               customEventId={customEvent!.customEventId}
               onSelect={(item) => {

@@ -16,6 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { shortId } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import type {
   IChartCustomEvent,
@@ -24,7 +25,13 @@ import type {
   IChartFormula,
 } from '@openpanel/validation';
 import { useQuery } from '@tanstack/react-query';
-import { HandIcon, LayersIcon, PiIcon, PlusIcon } from 'lucide-react';
+import {
+  FilterIcon,
+  HandIcon,
+  LayersIcon,
+  PiIcon,
+  PlusIcon,
+} from 'lucide-react';
 import * as React from 'react';
 import {
   addSerie,
@@ -35,6 +42,7 @@ import {
 } from '../reportSlice';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
+import { PropertiesCombobox } from './PropertiesCombobox';
 import {
   ReportSeriesItem,
   type ReportSeriesItemProps,
@@ -88,6 +96,91 @@ function SortableReportSeriesItem({
         {...props}
       />
     </div>
+  );
+}
+
+function AddFilterAction({
+  event,
+}: {
+  event: IChartEventItem | IChartEvent | IChartCustomEvent;
+}) {
+  const dispatch = useDispatch();
+
+  if ('type' in event && event.type === 'custom_event') {
+    return (
+      <PropertiesCombobox
+        customEventId={event.customEventId}
+        onSelect={(action) => {
+          dispatch(
+            changeEvent({
+              ...event,
+              filters: [
+                ...(event.filters ?? []),
+                {
+                  id: shortId(),
+                  name: action.value,
+                  operator: 'is',
+                  value: [],
+                },
+              ],
+            })
+          );
+        }}
+      >
+        {(setOpen) => (
+          <Button
+            aria-label="Add filter"
+            className="text-muted-foreground hover:text-foreground"
+            icon={FilterIcon}
+            onClick={() => setOpen((p) => !p)}
+            size="icon"
+            title="Add filter"
+            variant="ghost"
+          />
+        )}
+      </PropertiesCombobox>
+    );
+  }
+
+  const chartEvent =
+    'type' in event ? event : { ...event, type: 'event' as const };
+
+  if (chartEvent.type !== 'event') {
+    return null;
+  }
+
+  return (
+    <PropertiesCombobox
+      event={chartEvent}
+      onSelect={(action) => {
+        dispatch(
+          changeEvent({
+            ...chartEvent,
+            filters: [
+              ...chartEvent.filters,
+              {
+                id: shortId(),
+                name: action.value,
+                operator: 'is',
+                value: [],
+              },
+            ],
+          })
+        );
+      }}
+    >
+      {(setOpen) => (
+        <Button
+          aria-label="Add filter"
+          className="text-muted-foreground hover:text-foreground"
+          icon={FilterIcon}
+          onClick={() => setOpen((p) => !p)}
+          size="icon"
+          title="Add filter"
+          variant="ghost"
+        />
+      )}
+    </PropertiesCombobox>
   );
 }
 
@@ -255,6 +348,7 @@ export function ReportSeries() {
                           Custom
                         </span>
                       </div>
+                      {showAddFilter && <AddFilterAction event={event} />}
                       <ReportEventMore
                         displayName={(event as IChartCustomEvent).displayName}
                         displayNamePlaceholder={`Display name (${alphabetIds[index]})`}
@@ -378,6 +472,7 @@ export function ReportSeries() {
                           }
                         />
                       </div>
+                      {showAddFilter && <AddFilterAction event={event} />}
                       <ReportEventMore
                         displayName={
                           (event as IChartEventItem & { type: 'event' })
