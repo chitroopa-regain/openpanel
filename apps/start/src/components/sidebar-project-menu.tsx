@@ -46,12 +46,17 @@ export default function SidebarProjectMenu({
       <div className="mb-2 font-medium text-muted-foreground text-sm lg:hidden">
         Analytics
       </div>
-      <SidebarLink compact={compact} href={'/'} icon={WallpaperIcon} label="Overview" />
       <SidebarLink
         compact={compact}
         href={'/dashboards'}
         icon={LayoutPanelTopIcon}
         label="Dashboards"
+      />
+      <SidebarLink
+        compact={compact}
+        href={'/overview'}
+        icon={WallpaperIcon}
+        label="Overview"
       />
       <SidebarLink
         compact={compact}
