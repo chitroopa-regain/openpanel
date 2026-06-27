@@ -85,6 +85,7 @@ jobs:
       #   run: pnpm test
 
   build-and-push-api:
+    if: github.ref == 'refs/heads/main'
     permissions:
       packages: write
       contents: write
@@ -145,6 +146,7 @@ jobs:
           echo "Pushed tag: api"
 
   build-and-push-worker:
+    if: github.ref == 'refs/heads/main'
     permissions:
       packages: write
       contents: write
@@ -205,6 +207,7 @@ jobs:
           echo "Pushed tag: worker"
 
   build-and-push-dashboard:
+    if: github.ref == 'refs/heads/main'
     permissions:
       packages: write
       contents: write
