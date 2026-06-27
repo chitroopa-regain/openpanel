@@ -122,8 +122,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
   const aggregateRes = useQuery(
     trpc.chart.aggregate.queryOptions(input, {
       ...queryOpts,
-      enabled:
-        queryOpts.enabled && ['bar', 'pie', 'table'].includes(chartType),
+      enabled: queryOpts.enabled && ['bar', 'pie', 'table'].includes(chartType),
     })
   );
   const funnelRes = useQuery(
@@ -149,6 +148,8 @@ function ReportSqlContent({ active }: { active: boolean }) {
         endDate: report.endDate,
         dateConfig: report.dateConfig,
         criteria: retentionOptions?.criteria,
+        metric: retentionOptions?.metric,
+        property: retentionOptions?.property,
         interval: report.interval,
         id: 'id' in report ? report.id : undefined,
       },

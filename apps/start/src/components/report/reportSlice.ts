@@ -1,6 +1,3 @@
-import type { PayloadAction } from '@reduxjs/toolkit';
-import { createSlice } from '@reduxjs/toolkit';
-
 import { shortId } from '@openpanel/common';
 import {
   getDefaultIntervalByDates,
@@ -21,6 +18,8 @@ import type {
   UnionOmit,
   zCriteria,
 } from '@openpanel/validation';
+import type { PayloadAction } from '@reduxjs/toolkit';
+import { createSlice } from '@reduxjs/toolkit';
 import type { z } from 'zod';
 
 type InitialState = IReport & {
@@ -109,7 +108,7 @@ export const reportSlice = createSlice({
     // Series (Events and Formulas)
     addSerie: (
       state,
-      action: PayloadAction<UnionOmit<IChartEventItem, 'id'>>,
+      action: PayloadAction<UnionOmit<IChartEventItem, 'id'>>
     ) => {
       state.dirty = true;
       state.series.push({
@@ -139,7 +138,7 @@ export const reportSlice = createSlice({
       state,
       action: PayloadAction<{
         id?: string;
-      }>,
+      }>
     ) => {
       state.dirty = true;
       state.series = state.series.filter((event) => {
@@ -174,7 +173,7 @@ export const reportSlice = createSlice({
     // Breakdowns
     addBreakdown: (
       state,
-      action: PayloadAction<Omit<IChartBreakdown, 'id'>>,
+      action: PayloadAction<Omit<IChartBreakdown, 'id'>>
     ) => {
       state.dirty = true;
       state.breakdowns.push({
@@ -186,11 +185,11 @@ export const reportSlice = createSlice({
       state,
       action: PayloadAction<{
         id?: string;
-      }>,
+      }>
     ) => {
       state.dirty = true;
       state.breakdowns = state.breakdowns.filter(
-        (event) => event.id !== action.payload.id,
+        (event) => event.id !== action.payload.id
       );
       // Reset breakdownStep when all breakdowns are removed
       if (
@@ -260,7 +259,7 @@ export const reportSlice = createSlice({
 
       const interval = getDefaultIntervalByDates(
         state.startDate,
-        state.endDate,
+        state.endDate
       );
       if (interval) {
         state.interval = interval;
@@ -274,7 +273,7 @@ export const reportSlice = createSlice({
 
       const interval = getDefaultIntervalByDates(
         state.startDate,
-        state.endDate,
+        state.endDate
       );
       if (interval) {
         state.interval = interval;
@@ -314,6 +313,51 @@ export const reportSlice = createSlice({
       state.dirty = true;
       state.unit = action.payload || undefined;
     },
+    changeRetentionMetric(
+      state,
+      action: PayloadAction<
+        | 'retention_rate'
+        | 'unique_users'
+        | 'property_sum'
+        | 'property_average'
+        | undefined
+      >
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          type: 'retention',
+          metric: action.payload,
+        };
+      } else {
+        state.options.metric = action.payload;
+        if (
+          action.payload !== 'property_sum' &&
+          action.payload !== 'property_average'
+        ) {
+          state.options.property = undefined;
+        }
+      }
+    },
+
+    changeRetentionProperty(state, action: PayloadAction<string | undefined>) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          type: 'retention',
+          metric: action.payload ? 'property_average' : undefined,
+          property: action.payload,
+        };
+      } else {
+        const currentMetric = state.options.metric;
+        state.options.metric = action.payload
+          ? currentMetric === 'property_sum'
+            ? 'property_sum'
+            : 'property_average'
+          : currentMetric;
+        state.options.property = action.payload;
+      }
+    },
 
     changeFunnelGroup(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
@@ -341,10 +385,7 @@ export const reportSlice = createSlice({
       }
     },
 
-    changeFunnelWindowUnit(
-      state,
-      action: PayloadAction<string | undefined>,
-    ) {
+    changeFunnelWindowUnit(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
@@ -358,10 +399,7 @@ export const reportSlice = createSlice({
       }
     },
 
-    changeFunnelTopN(
-      state,
-      action: PayloadAction<number | undefined>,
-    ) {
+    changeFunnelTopN(state, action: PayloadAction<number | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
@@ -375,10 +413,7 @@ export const reportSlice = createSlice({
       }
     },
 
-    changeFunnelProperty(
-      state,
-      action: PayloadAction<string | undefined>,
-    ) {
+    changeFunnelProperty(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
@@ -390,10 +425,7 @@ export const reportSlice = createSlice({
       }
     },
 
-    changeFunnelHiddenBreakdowns(
-      state,
-      action: PayloadAction<string[]>,
-    ) {
+    changeFunnelHiddenBreakdowns(state, action: PayloadAction<string[]>) {
       state.dirty = true;
       const next = action.payload.length > 0 ? action.payload : undefined;
       if (!state.options || state.options.type !== 'funnel') {
@@ -406,10 +438,7 @@ export const reportSlice = createSlice({
       }
     },
 
-    changeDateConfig(
-      state,
-      action: PayloadAction<IDateConfig | undefined>,
-    ) {
+    changeDateConfig(state, action: PayloadAction<IDateConfig | undefined>) {
       state.dirty = true;
       state.dateConfig = action.payload;
       // Clear concrete dates for relative modes — they resolve from dateConfig at query time
@@ -421,7 +450,7 @@ export const reportSlice = createSlice({
 
     changeFunnelBreakdownStep(
       state,
-      action: PayloadAction<number | undefined>,
+      action: PayloadAction<number | undefined>
     ) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
@@ -441,7 +470,7 @@ export const reportSlice = createSlice({
     },
     changeSankeyMode(
       state,
-      action: PayloadAction<'between' | 'after' | 'before'>,
+      action: PayloadAction<'between' | 'after' | 'before'>
     ) {
       state.dirty = true;
       if (!state.options) {
@@ -508,7 +537,7 @@ export const reportSlice = createSlice({
     },
     reorderEvents(
       state,
-      action: PayloadAction<{ fromIndex: number; toIndex: number }>,
+      action: PayloadAction<{ fromIndex: number; toIndex: number }>
     ) {
       state.dirty = true;
       const { fromIndex, toIndex } = action.payload;
@@ -545,6 +574,8 @@ export const {
   changePrevious,
   changeCriteria,
   changeUnit,
+  changeRetentionMetric,
+  changeRetentionProperty,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,

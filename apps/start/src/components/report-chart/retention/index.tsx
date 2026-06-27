@@ -41,14 +41,17 @@ export function ReportRetentionChart() {
       : secondItem?.type === 'custom_event'
         ? (secondItem.filters ?? [])
         : [];
-  const isEnabled =
-    (firstEvent.length > 0 || !!firstCustomEventId) &&
-    (secondEvent.length > 0 || !!secondCustomEventId) &&
-    !isLazyLoading;
-
   const retentionOptions =
     report.options?.type === 'retention' ? report.options : undefined;
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
+  const metric = retentionOptions?.metric;
+  const property = retentionOptions?.property;
+  const isEnabled =
+    (firstEvent.length > 0 || !!firstCustomEventId) &&
+    (secondEvent.length > 0 || !!secondCustomEventId) &&
+    ((metric !== 'property_average' && metric !== 'property_sum') ||
+      !!property) &&
+    !isLazyLoading;
 
   const trpc = useTRPC();
   const cohortInput = {
@@ -64,6 +67,8 @@ export function ReportRetentionChart() {
     endDate: report.endDate,
     dateConfig: report.dateConfig,
     criteria,
+    metric,
+    property,
     interval: report.interval,
     shareId,
     id: 'id' in report ? report.id : undefined,

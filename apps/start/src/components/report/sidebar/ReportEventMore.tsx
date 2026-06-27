@@ -1,13 +1,3 @@
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   CheckIcon,
   ClockIcon,
@@ -17,6 +7,18 @@ import {
   TrashIcon,
 } from 'lucide-react';
 import * as React from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 
 export interface ReportEventMoreProps {
   onClick: (
@@ -24,6 +26,9 @@ export interface ReportEventMoreProps {
   ) => void;
   firstTimeFilter?: boolean;
   hideFirstTimeFilter?: boolean;
+  displayName?: string;
+  displayNamePlaceholder?: string;
+  onDisplayNameChange?: (value: string) => void;
   showEditCustomEvent?: boolean;
 }
 
@@ -31,18 +36,39 @@ export function ReportEventMore({
   onClick,
   firstTimeFilter,
   hideFirstTimeFilter,
+  displayName,
+  displayNamePlaceholder,
+  onDisplayNameChange,
   showEditCustomEvent,
 }: ReportEventMoreProps) {
   const [open, setOpen] = React.useState(false);
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu onOpenChange={setOpen} open={open}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm">
+        <Button size="sm" variant="ghost">
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[200px]">
+      <DropdownMenuContent align="end" className="w-[240px]">
+        {onDisplayNameChange && (
+          <>
+            <DropdownMenuLabel className="text-muted-foreground text-xs">
+              Display name
+            </DropdownMenuLabel>
+            <div className="px-2 pb-2">
+              <Input
+                className="h-8"
+                defaultValue={displayName}
+                onChange={(event) => onDisplayNameChange(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                placeholder={displayNamePlaceholder ?? 'Optional display name'}
+              />
+            </div>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuGroup>
           {!hideFirstTimeFilter && (
             <>

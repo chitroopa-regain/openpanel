@@ -157,6 +157,12 @@ export const zMetric = z.enum(objectToZodEnums(metrics));
 export const zRange = z.enum(objectToZodEnums(timeWindows));
 
 export const zCriteria = z.enum(['on_or_after', 'on']);
+export const zRetentionMeasure = z.enum([
+  'retention_rate',
+  'unique_users',
+  'property_sum',
+  'property_average',
+]);
 
 // Report Options - Discriminated union based on chart type
 export const zFunnelWindowUnit = z.enum([
@@ -188,6 +194,8 @@ export const zRetentionOptions = z.object({
   criteria: zCriteria.optional(),
   funnelGroup: z.string().optional(),
   day: z.number().optional(),
+  metric: zRetentionMeasure.optional(),
+  property: z.string().optional(),
 });
 
 export const zSankeyOptions = z.object({

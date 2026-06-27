@@ -1,22 +1,11 @@
 // cache-bust: force rebuild for retention filter fix
-import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
-import { ColorSquare } from '@/components/color-square';
-import { Button } from '@/components/ui/button';
-import { ComboboxEvents } from '@/components/ui/combobox-events';
-import { Input } from '@/components/ui/input';
-import { InputEnter } from '@/components/ui/input-enter';
-import { useAppParams } from '@/hooks/use-app-params';
-import { useDebounceFn } from '@/hooks/use-debounce-fn';
-import { useEventNames } from '@/hooks/use-event-names';
-import { useTRPC } from '@/integrations/trpc/react';
-import { useDispatch, useSelector } from '@/redux';
-import { useQuery } from '@tanstack/react-query';
+
 import {
+  closestCenter,
   DndContext,
   type DragEndEvent,
   KeyboardSensor,
   PointerSensor,
-  closestCenter,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -34,6 +23,7 @@ import type {
   IChartEventItem,
   IChartFormula,
 } from '@openpanel/validation';
+import { useQuery } from '@tanstack/react-query';
 import { HandIcon, LayersIcon, PiIcon, PlusIcon } from 'lucide-react';
 import * as React from 'react';
 import {
@@ -49,6 +39,16 @@ import {
   ReportSeriesItem,
   type ReportSeriesItemProps,
 } from './ReportSeriesItem';
+import { ColorSquare } from '@/components/color-square';
+import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
+import { Button } from '@/components/ui/button';
+import { ComboboxEvents } from '@/components/ui/combobox-events';
+import { InputEnter } from '@/components/ui/input-enter';
+import { useAppParams } from '@/hooks/use-app-params';
+import { useDebounceFn } from '@/hooks/use-debounce-fn';
+import { useEventNames } from '@/hooks/use-event-names';
+import { useTRPC } from '@/integrations/trpc/react';
+import { useDispatch, useSelector } from '@/redux';
 
 function SortableReportSeriesItem({
   event,
@@ -72,19 +72,19 @@ function SortableReportSeriesItem({
       <ReportSeriesItem
         event={event}
         index={index}
-        showSegment={showSegment}
-        showAddFilter={showAddFilter}
         isSelectManyEvents={isSelectManyEvents}
         renderDragHandle={(index) => (
           <button className="cursor-grab active:cursor-grabbing" {...listeners}>
             <ColorSquare className="relative">
-              <HandIcon className="size-3 opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100 transition-all absolute inset-1" />
-              <span className="block group-hover:opacity-0 group-hover:scale-0 transition-all">
+              <HandIcon className="absolute inset-1 size-3 scale-50 opacity-0 transition-all group-hover:scale-100 group-hover:opacity-100" />
+              <span className="block transition-all group-hover:scale-0 group-hover:opacity-0">
                 {alphabetIds[index]}
               </span>
             </ColorSquare>
           </button>
         )}
+        showAddFilter={showAddFilter}
+        showSegment={showSegment}
         {...props}
       />
     </div>
@@ -100,15 +100,19 @@ export function ReportSeries() {
   const eventNames = useEventNames({
     projectId,
   });
-  const customEvents = useQuery(
+  const customEvents = (useQuery(
     trpc.customEvent.list.queryOptions({ projectId })
-  ).data ?? [];
+  ).data ?? []) as Array<{ id: string; name: string; components?: unknown }>;
   const [editingCustomEvent, setEditingCustomEvent] =
     React.useState<IChartCustomEvent | null>(null);
 
-  const showSegment = !['retention', 'funnel', 'funnel_metric', 'sankey'].includes(chartType);
+  const showSegment = ![
+    'retention',
+    'funnel',
+    'funnel_metric',
+    'sankey',
+  ].includes(chartType);
   const showAddFilter = !['sankey'].includes(chartType);
-  const showDisplayNameInput = !['retention', 'sankey'].includes(chartType);
   const options = useSelector((state) => state.report.options);
   const isSankey = chartType === 'sankey';
   const isAddEventDisabled =
@@ -162,9 +166,10 @@ export function ReportSeries() {
           return dispatch(duplicateEvent(normalized));
         }
         case 'firstTimeFilter': {
-          const currentFirstTime = 'firstTimeFilter' in event
-            ? !!(event as any).firstTimeFilter
-            : false;
+          const currentFirstTime =
+            'firstTimeFilter' in event
+              ? !!(event as any).firstTimeFilter
+              : false;
           const normalized =
             'type' in event ? event : { ...event, type: 'event' as const };
           return dispatch(
@@ -213,9 +218,9 @@ export function ReportSeries() {
     <div>
       <h3 className="mb-2 font-medium">Metrics</h3>
       <DndContext
-        sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={handleDragEnd}
+        sensors={sensors}
       >
         <SortableContext
           items={selectedSeries.map((e) => ({
@@ -230,13 +235,13 @@ export function ReportSeries() {
 
               return (
                 <SortableReportSeriesItem
-                  key={event.id}
+                  className="rounded-lg border bg-def-100"
                   event={event}
                   index={index}
-                  showSegment={showSegment}
-                  showAddFilter={showAddFilter}
                   isSelectManyEvents={isSelectManyEvents}
-                  className="rounded-lg border bg-def-100"
+                  key={event.id}
+                  showAddFilter={showAddFilter}
+                  showSegment={showSegment}
                 >
                   {isCustomEvent ? (
                     <>
@@ -246,13 +251,23 @@ export function ReportSeries() {
                           {(event as IChartCustomEvent).displayName ??
                             'Custom Event'}
                         </span>
-                        <span className="shrink-0 text-xs font-medium text-violet-500">
+                        <span className="shrink-0 font-medium text-violet-500 text-xs">
                           Custom
                         </span>
                       </div>
                       <ReportEventMore
+                        displayName={(event as IChartCustomEvent).displayName}
+                        displayNamePlaceholder={`Display name (${alphabetIds[index]})`}
+                        firstTimeFilter={
+                          (event as IChartCustomEvent).firstTimeFilter
+                        }
                         onClick={handleMore(event)}
-                        firstTimeFilter={(event as IChartCustomEvent).firstTimeFilter}
+                        onDisplayNameChange={(value) => {
+                          dispatchChangeEvent({
+                            ...(event as IChartCustomEvent),
+                            displayName: value,
+                          } as IChartEventItem);
+                        }}
                         showEditCustomEvent
                       />
                     </>
@@ -260,57 +275,41 @@ export function ReportSeries() {
                     <>
                       <div className="flex min-w-0 flex-1 flex-col gap-2">
                         <InputEnter
-                          placeholder="eg: A+B"
-                          value={event.formula}
                           onChangeValue={(value) => {
                             dispatchChangeFormula({
                               ...event,
                               formula: value,
                             });
                           }}
+                          placeholder="eg: A+B"
+                          value={event.formula}
                         />
-                        {showDisplayNameInput && (
-                          <Input
-                            className="min-w-0"
-                            placeholder={`Name: Formula (${alphabetIds[index]})`}
-                            defaultValue={event.displayName}
-                            onChange={(e) => {
-                              dispatchChangeFormula({
-                                ...event,
-                                displayName: e.target.value,
-                              });
-                            }}
-                          />
-                        )}
                       </div>
-                      <ReportEventMore onClick={handleMore(event)} hideFirstTimeFilter />
+                      <ReportEventMore
+                        displayName={event.displayName}
+                        displayNamePlaceholder={`Display name (${alphabetIds[index]})`}
+                        hideFirstTimeFilter
+                        onClick={handleMore(event)}
+                        onDisplayNameChange={(value) => {
+                          dispatchChangeFormula({
+                            ...event,
+                            displayName: value,
+                          });
+                        }}
+                      />
                     </>
                   ) : (
                     <>
                       <div className="flex min-w-0 flex-1 flex-col gap-2">
                         <ComboboxEvents
-                          className="w-full min-w-0 shrink justify-between"
-                          searchable
                           allowCreateCustomEvent
+                          className="w-full min-w-0 shrink justify-between"
+                          items={eventNames}
                           multiple={isSelectManyEvents as false}
-                          value={
-                            (isSelectManyEvents
-                              ? ((
-                                  event as IChartEventItem & {
-                                    type: 'event';
-                                  }
-                                ).filters[0]?.value ?? [])
-                              : (
-                                  event as IChartEventItem & {
-                                    type: 'event';
-                                  }
-                                ).name) as any
-                          }
                           onChange={(value) => {
-                            const selectedItem =
-                              !Array.isArray(value)
-                                ? eventNames.find((e) => e.name === value)
-                                : null;
+                            const selectedItem = Array.isArray(value)
+                              ? null
+                              : eventNames.find((e) => e.name === value);
 
                             dispatch(
                               changeEvent(
@@ -328,25 +327,25 @@ export function ReportSeries() {
                                       filters: [],
                                     }
                                   : Array.isArray(value)
-                                  ? {
-                                      id: event.id,
-                                      type: 'event',
-                                      segment: 'user',
-                                      filters: [
-                                        {
-                                          name: 'name',
-                                          operator: 'is',
-                                          value: value,
-                                        },
-                                      ],
-                                      name: '*',
-                                    }
-                                  : {
-                                      ...event,
-                                      type: 'event',
-                                      name: value,
-                                      filters: [],
-                                    }
+                                    ? {
+                                        id: event.id,
+                                        type: 'event',
+                                        segment: 'user',
+                                        filters: [
+                                          {
+                                            name: 'name',
+                                            operator: 'is',
+                                            value,
+                                          },
+                                        ],
+                                        name: '*',
+                                      }
+                                    : {
+                                        ...event,
+                                        type: 'event',
+                                        name: value,
+                                        filters: [],
+                                      }
                               )
                             );
                           }}
@@ -362,29 +361,41 @@ export function ReportSeries() {
                               })
                             );
                           }}
-                          items={eventNames}
                           placeholder="Select event"
+                          searchable
+                          value={
+                            (isSelectManyEvents
+                              ? ((
+                                  event as IChartEventItem & {
+                                    type: 'event';
+                                  }
+                                ).filters[0]?.value ?? [])
+                              : (
+                                  event as IChartEventItem & {
+                                    type: 'event';
+                                  }
+                                ).name) as any
+                          }
                         />
-                        {showDisplayNameInput && (
-                          <Input
-                            className="min-w-0"
-                            placeholder={`Display name (${alphabetIds[index]})`}
-                            defaultValue={
-                              (event as IChartEventItem & { type: 'event' })
-                                .displayName
-                            }
-                            onChange={(e) => {
-                              dispatchChangeEvent({
-                                ...(event as IChartEventItem & {
-                                  type: 'event';
-                                }),
-                                displayName: e.target.value,
-                              });
-                            }}
-                          />
-                        )}
                       </div>
-                      <ReportEventMore onClick={handleMore(event)} firstTimeFilter={(event as IChartEventItem & { type: 'event' }).firstTimeFilter} />
+                      <ReportEventMore
+                        displayName={
+                          (event as IChartEventItem & { type: 'event' })
+                            .displayName
+                        }
+                        displayNamePlaceholder={`Display name (${alphabetIds[index]})`}
+                        firstTimeFilter={
+                          (event as IChartEventItem & { type: 'event' })
+                            .firstTimeFilter
+                        }
+                        onClick={handleMore(event)}
+                        onDisplayNameChange={(value) => {
+                          dispatchChangeEvent({
+                            ...(event as IChartEventItem & { type: 'event' }),
+                            displayName: value,
+                          });
+                        }}
+                      />
                     </>
                   )}
                 </SortableReportSeriesItem>
@@ -393,11 +404,10 @@ export function ReportSeries() {
 
             <div className="flex min-w-0 gap-2">
               <ComboboxEvents
+                allowCreateCustomEvent
                 className="min-w-0 flex-1"
                 disabled={isAddEventDisabled || isSankeyEventLimitReached}
-                value={''}
-                searchable
-                allowCreateCustomEvent
+                items={eventNames}
                 onChange={(value) => {
                   const selectedItem = eventNames.find((e) => e.name === value);
                   if (
@@ -444,14 +454,13 @@ export function ReportSeries() {
                 }}
                 onCreateCustomEvent={addCustomEventSerie}
                 placeholder="Select event"
-                items={eventNames}
+                searchable
+                value={''}
               />
               {showFormula && (
                 <Button
-                  type="button"
-                  variant="outline"
+                  className="flex-1 justify-start px-4 text-left"
                   icon={PiIcon}
-                  className="flex-1 justify-start text-left px-4"
                   onClick={() => {
                     dispatch(
                       addSerie({
@@ -461,9 +470,11 @@ export function ReportSeries() {
                       })
                     );
                   }}
+                  type="button"
+                  variant="outline"
                 >
                   Add Formula
-                  <PlusIcon className="size-4 ml-auto text-muted-foreground" />
+                  <PlusIcon className="ml-auto size-4 text-muted-foreground" />
                 </Button>
               )}
             </div>
@@ -471,12 +482,6 @@ export function ReportSeries() {
         </SortableContext>
       </DndContext>
       <CreateCustomEventDialog
-        open={!!editingCustomEvent}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditingCustomEvent(null);
-          }
-        }}
         initialValue={
           editingCustomEvent
             ? {
@@ -484,7 +489,9 @@ export function ReportSeries() {
                 name:
                   customEvents.find(
                     (item) => item.id === editingCustomEvent.customEventId
-                  )?.name ?? editingCustomEvent.displayName ?? 'Custom Event',
+                  )?.name ??
+                  editingCustomEvent.displayName ??
+                  'Custom Event',
                 components:
                   (customEvents.find(
                     (item) => item.id === editingCustomEvent.customEventId
@@ -492,8 +499,15 @@ export function ReportSeries() {
               }
             : null
         }
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingCustomEvent(null);
+          }
+        }}
         onSaved={(customEvent) => {
-          if (!editingCustomEvent) return;
+          if (!editingCustomEvent) {
+            return;
+          }
           dispatch(
             changeEvent({
               ...editingCustomEvent,
@@ -502,6 +516,7 @@ export function ReportSeries() {
           );
           setEditingCustomEvent(null);
         }}
+        open={!!editingCustomEvent}
       />
     </div>
   );

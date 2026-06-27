@@ -40,6 +40,7 @@ import {
   zDateConfig,
   zRange,
   zReportInput,
+  zRetentionMeasure,
   zTimeInterval,
 } from '@openpanel/validation';
 import {
@@ -61,8 +62,11 @@ import {
   publicProcedure,
 } from '../trpc';
 import {
+  buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
+  getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
+  isRetentionPropertyMeasure,
 } from './chart-retention.utils';
 
 function utc(date: string | Date) {
@@ -890,6 +894,8 @@ export const chartRouter = createTRPCRouter({
         firstEventFilters: z.array(zChartEventFilter).default([]),
         secondEventFilters: z.array(zChartEventFilter).default([]),
         criteria: zCriteria.default('on_or_after'),
+        metric: zRetentionMeasure.optional(),
+        property: z.string().optional(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         interval: zTimeInterval.default('day'),
@@ -907,6 +913,8 @@ export const chartRouter = createTRPCRouter({
       let firstEventFilters: IChartEventFilter[] = input.firstEventFilters;
       let secondEventFilters: IChartEventFilter[] = input.secondEventFilters;
       let criteria = input.criteria;
+      let retentionMetric = input.metric ?? 'unique_users';
+      let retentionProperty = input.property;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
         : input.range;
@@ -938,6 +946,8 @@ export const chartRouter = createTRPCRouter({
             ? ctx.report.options
             : undefined;
         criteria = retentionOptions?.criteria ?? criteria;
+        retentionMetric = retentionOptions?.metric ?? retentionMetric;
+        retentionProperty = retentionOptions?.property ?? retentionProperty;
 
         const firstItem = ctx.report.series[0];
         const secondItem = ctx.report.series[1];
@@ -1056,11 +1066,19 @@ export const chartRouter = createTRPCRouter({
       };
 
       const countCriteria = criteria === 'on_or_after' ? '>=' : '=';
+      const retentionPropertyExpr = getRetentionMeasurePropertyExpression(
+        retentionMetric,
+        retentionProperty
+      );
 
       const countsSelect = range(0, diffInterval + 1)
-        .map(
-          (index) =>
-            `uniqExactIf(r.profile_id, r.x_after_cohort ${countCriteria} ${index}) AS interval_${index}_user_count`
+        .map((index) =>
+          buildRetentionMeasureIntervalSelect({
+            index,
+            criteria: countCriteria,
+            measure: retentionMetric,
+            propertyExpression: retentionPropertyExpr,
+          })
         )
         .join(',\n');
 
@@ -1071,13 +1089,17 @@ export const chartRouter = createTRPCRouter({
       // Custom events with component filters also need the events table.
       const needsEventsTable = (filters: IChartEventFilter[]) =>
         filters.some(
-          (f) => !f.name.startsWith('profile.') && f.name !== 'has_profile' && f.name !== 'name'
+          (f) =>
+            !f.name.startsWith('profile.') &&
+            f.name !== 'has_profile' &&
+            f.name !== 'name'
         );
 
       const useEventsFirst =
         needsEventsTable(firstEventFilters) ||
         needsEventsTable(firstComponentFilters);
       const useEventsSecond =
+        isRetentionPropertyMeasure(retentionMetric) ||
         needsEventsTable(secondEventFilters) ||
         needsEventsTable(secondComponentFilters);
       const firstEventTable = useEventsFirst
@@ -1168,6 +1190,7 @@ export const chartRouter = createTRPCRouter({
                 profile_id,
                 project_id,
                 toDate(created_at, '${timezone}') AS event_date
+                ${retentionPropertyExpr ? `, ${retentionPropertyExpr} AS retention_property_value` : ''}
             FROM ${secondEventTable}
             ${secondEventJoin}
             WHERE ${secondWhereClause}
@@ -1181,6 +1204,7 @@ export const chartRouter = createTRPCRouter({
           SELECT
               f.cohort_interval,
               l.profile_id,
+              ${retentionPropertyExpr ? 'l.retention_property_value,' : ''}
               dateDiff('${sqlInterval}', f.cohort_interval, ${toStartOfInterval('l.event_date')}) AS x_after_cohort
           FROM cohort_users AS f
           INNER JOIN last_event AS l ON f.userID = l.profile_id

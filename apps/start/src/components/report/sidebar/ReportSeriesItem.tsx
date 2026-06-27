@@ -1,5 +1,3 @@
-import { ColorSquare } from '@/components/color-square';
-import { useDispatch } from '@/redux';
 import { shortId } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import type {
@@ -7,11 +5,19 @@ import type {
   IChartEvent,
   IChartEventItem,
 } from '@openpanel/validation';
-import { ClockIcon, DatabaseIcon, FilterIcon, type LucideIcon } from 'lucide-react';
+import {
+  ClockIcon,
+  DatabaseIcon,
+  FilterIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { ReportSegment } from '../ReportSegment';
 import { changeEvent } from '../reportSlice';
-import { PropertiesCombobox } from './PropertiesCombobox';
 import { FiltersList } from './filters/FiltersList';
+import { PropertiesCombobox } from './PropertiesCombobox';
+import { ColorSquare } from '@/components/color-square';
+import { useDispatch } from '@/redux';
+import { cn } from '@/utils/cn';
 
 export interface ReportSeriesItemProps
   extends React.HTMLAttributes<HTMLDivElement> {
@@ -50,7 +56,7 @@ export function ReportSeriesItem({
 
   return (
     <div {...props}>
-      <div className="flex items-center gap-2 p-2 group">
+      <div className="group flex items-center gap-2 p-2">
         {renderDragHandle ? (
           renderDragHandle(index)
         ) : (
@@ -63,7 +69,7 @@ export function ReportSeriesItem({
 
       {/* First time ever badge */}
       {(chartEvent?.firstTimeFilter || customEvent?.firstTimeFilter) && (
-        <div className="flex items-center gap-1 px-2 pb-1 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1 px-2 pb-1 text-muted-foreground text-xs">
           <ClockIcon className="h-3 w-3 shrink-0" />
           <span>First time ever</span>
         </div>
@@ -74,7 +80,6 @@ export function ReportSeriesItem({
         <div className="flex gap-2 p-2 pt-0">
           {showSegment && (
             <ReportSegment
-              value={chartEvent.segment}
               onChange={(segment) => {
                 dispatch(
                   changeEvent({
@@ -83,6 +88,7 @@ export function ReportSeriesItem({
                   })
                 );
               }}
+              value={chartEvent.segment}
             />
           )}
           {showAddFilter && (
@@ -107,11 +113,12 @@ export function ReportSeriesItem({
             >
               {(setOpen) => (
                 <SmallButton
-                  onClick={() => setOpen((p) => !p)}
+                  aria-label="Add filter"
+                  className="opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
                   icon={FilterIcon}
-                >
-                  Add filter
-                </SmallButton>
+                  onClick={() => setOpen((p) => !p)}
+                  title="Add filter"
+                />
               )}
             </PropertiesCombobox>
           )}
@@ -154,10 +161,9 @@ export function ReportSeriesItem({
 
       {/* Segment, Filter, and Property picker for custom events */}
       {isCustomEvent && (showSegment || showAddFilter) && (
-        <div className="flex gap-2 p-2 pt-0 flex-wrap">
+        <div className="flex flex-wrap gap-2 p-2 pt-0">
           {showSegment && (
             <ReportSegment
-              value={customEvent!.segment}
               onChange={(segment) => {
                 dispatch(
                   changeEvent({
@@ -166,6 +172,7 @@ export function ReportSeriesItem({
                   })
                 );
               }}
+              value={customEvent!.segment}
             />
           )}
           {showAddFilter && (
@@ -190,11 +197,12 @@ export function ReportSeriesItem({
             >
               {(setOpen) => (
                 <SmallButton
-                  onClick={() => setOpen((p) => !p)}
+                  aria-label="Add filter"
+                  className="opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
                   icon={FilterIcon}
-                >
-                  Add filter
-                </SmallButton>
+                  onClick={() => setOpen((p) => !p)}
+                  title="Add filter"
+                />
               )}
             </PropertiesCombobox>
           )}
@@ -239,19 +247,24 @@ export function ReportSeriesItem({
 function SmallButton({
   children,
   icon: Icon,
+  className,
   ...props
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   icon: LucideIcon;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
+      className={cn(
+        'flex min-w-0 items-center gap-1 rounded-md border border-border bg-card p-1 px-2 text-left font-medium text-sm leading-none',
+        !children && 'aspect-square justify-center px-1',
+        className
+      )}
       type="button"
-      className="flex items-center gap-1 rounded-md border border-border bg-card p-1 px-2 text-sm font-medium leading-none text-left min-w-0"
       {...props}
     >
-      <Icon size={12} className="shrink-0" />
-      <span className="truncate">{children}</span>
+      <Icon className="shrink-0" size={12} />
+      {children && <span className="truncate">{children}</span>}
     </button>
   );
 }

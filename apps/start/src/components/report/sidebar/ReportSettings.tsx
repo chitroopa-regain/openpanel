@@ -1,14 +1,4 @@
-import { Combobox } from '@/components/ui/combobox';
-import { useDispatch, useSelector } from '@/redux';
-
-import { ComboboxEvents } from '@/components/ui/combobox-events';
-import { InputEnter } from '@/components/ui/input-enter';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { useAppParams } from '@/hooks/use-app-params';
-import { useEventNames } from '@/hooks/use-event-names';
 import { useMemo } from 'react';
-import { useEventProperties } from '@/hooks/use-event-properties';
 import {
   changeCriteria,
   changeFunnelBreakdownStep,
@@ -17,6 +7,8 @@ import {
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changePrevious,
+  changeRetentionMetric,
+  changeRetentionProperty,
   changeSankeyExclude,
   changeSankeyInclude,
   changeSankeyMode,
@@ -24,6 +16,15 @@ import {
   changeStacked,
   changeUnit,
 } from '../reportSlice';
+import { Combobox } from '@/components/ui/combobox';
+import { ComboboxEvents } from '@/components/ui/combobox-events';
+import { InputEnter } from '@/components/ui/input-enter';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { useAppParams } from '@/hooks/use-app-params';
+import { useEventNames } from '@/hooks/use-event-names';
+import { useEventProperties } from '@/hooks/use-event-properties';
+import { useDispatch, useSelector } from '@/redux';
 
 export function ReportSettings() {
   const chartType = useSelector((state) => state.report.chartType);
@@ -33,6 +34,10 @@ export function ReportSettings() {
 
   const retentionOptions = options?.type === 'retention' ? options : undefined;
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
+  const retentionMetric =
+    retentionOptions?.metric ??
+    (unit === '%' ? 'retention_rate' : 'unique_users');
+  const retentionProperty = retentionOptions?.property;
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
   const funnelGroup = funnelOptions?.funnelGroup;
@@ -50,20 +55,46 @@ export function ReportSettings() {
   const eventNames = useEventNames({ projectId });
   // For funnel_metric, scope properties to the last funnel step event
   const series = useSelector((state) => state.report.series);
-  const lastSeriesEvent = series.length > 0 ? series[series.length - 1] : null;
-  const lastEventName = lastSeriesEvent && 'name' in lastSeriesEvent ? lastSeriesEvent.name : undefined;
-  const lastCustomEventId = lastSeriesEvent && 'customEventId' in lastSeriesEvent ? lastSeriesEvent.customEventId : undefined;
-  const hasLastStep = !!(lastEventName || lastCustomEventId);
+  const propertySourceEvent =
+    chartType === 'retention'
+      ? series[1]
+      : series.length > 0
+        ? series[series.length - 1]
+        : null;
+  const propertySourceEventName =
+    propertySourceEvent && 'name' in propertySourceEvent
+      ? chartType === 'retention'
+        ? String(
+            propertySourceEvent.filters?.[0]?.value?.[0] ??
+              propertySourceEvent.name
+          )
+        : propertySourceEvent.name
+      : undefined;
+  const propertySourceCustomEventId =
+    propertySourceEvent && 'customEventId' in propertySourceEvent
+      ? propertySourceEvent.customEventId
+      : undefined;
+  const hasPropertySource = !!(
+    propertySourceEventName || propertySourceCustomEventId
+  );
   const eventProperties = useEventProperties(
-    { projectId, event: lastEventName, customEventId: lastCustomEventId },
-    { enabled: chartType === 'funnel_metric' && hasLastStep },
+    {
+      projectId,
+      event: propertySourceEventName,
+      customEventId: propertySourceCustomEventId,
+    },
+    {
+      enabled:
+        (chartType === 'funnel_metric' || chartType === 'retention') &&
+        hasPropertySource,
+    }
   );
   const propertyItems = useMemo(
     () =>
       eventProperties
         .filter((p) => p.startsWith('properties.'))
         .map((p) => ({ label: p.replace('properties.', ''), value: p })),
-    [eventProperties],
+    [eventProperties]
   );
 
   const fields = useMemo(() => {
@@ -75,10 +106,16 @@ export function ReportSettings() {
 
     if (chartType === 'retention') {
       fields.push('criteria');
+      fields.push('retentionMetric');
+      fields.push('retentionProperty');
       fields.push('unit');
     }
 
-    if (chartType === 'funnel' || chartType === 'funnel_metric' || chartType === 'conversion') {
+    if (
+      chartType === 'funnel' ||
+      chartType === 'funnel_metric' ||
+      chartType === 'conversion'
+    ) {
       fields.push('funnelGroup');
       fields.push('funnelWindow');
     }
@@ -112,9 +149,9 @@ export function ReportSettings() {
   return (
     <div>
       <h3 className="mb-2 font-medium">Settings</h3>
-      <div className="col rounded-lg border bg-card p-4 gap-4">
+      <div className="col gap-4 rounded-lg border bg-card p-4">
         {fields.includes('previous') && (
-          <Label className="flex items-center justify-between mb-0">
+          <Label className="mb-0 flex items-center justify-between">
             <span className="whitespace-nowrap">
               Compare to previous period
             </span>
@@ -126,14 +163,11 @@ export function ReportSettings() {
         )}
         {fields.includes('criteria') && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">
+            <Label className="mb-0 whitespace-nowrap font-medium">
               Criteria
             </Label>
             <Combobox
               align="end"
-              placeholder="Select criteria"
-              value={criteria}
-              onChange={(val) => dispatch(changeCriteria(val))}
               items={[
                 {
                   label: 'On or After',
@@ -144,19 +178,69 @@ export function ReportSettings() {
                   value: 'on',
                 },
               ]}
+              onChange={(val) => dispatch(changeCriteria(val))}
+              placeholder="Select criteria"
+              value={criteria}
             />
           </div>
         )}
-        {fields.includes('unit') && (
+        {fields.includes('retentionMetric') && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">Unit</Label>
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              Measure
+            </Label>
             <Combobox
               align="end"
-              placeholder="Unit"
-              value={unit || 'count'}
+              items={[
+                { label: 'Retention Rate', value: 'retention_rate' },
+                { label: 'Unique Users', value: 'unique_users' },
+                { label: 'Property Sum', value: 'property_sum' },
+                { label: 'Property Average', value: 'property_average' },
+              ]}
               onChange={(val) => {
-                dispatch(changeUnit(val === 'count' ? undefined : val));
+                const metric = val as
+                  | 'retention_rate'
+                  | 'unique_users'
+                  | 'property_sum'
+                  | 'property_average';
+                dispatch(changeRetentionMetric(metric));
+                if (metric === 'retention_rate') {
+                  dispatch(changeUnit('%'));
+                } else if (metric === 'unique_users') {
+                  dispatch(changeUnit(undefined));
+                }
               }}
+              placeholder="Measure"
+              value={retentionMetric}
+            />
+          </div>
+        )}
+        {fields.includes('retentionProperty') &&
+          (retentionMetric === 'property_sum' ||
+            retentionMetric === 'property_average') && (
+            <div className="flex items-center justify-between gap-4">
+              <Label className="mb-0 whitespace-nowrap font-medium">
+                {retentionMetric === 'property_sum'
+                  ? 'Sum Property'
+                  : 'Average Property'}
+              </Label>
+              <Combobox
+                align="end"
+                items={propertyItems}
+                onChange={(val) => {
+                  dispatch(changeRetentionProperty(val || undefined));
+                }}
+                placeholder="Select property"
+                searchable
+                value={retentionProperty || ''}
+              />
+            </div>
+          )}
+        {fields.includes('unit') && retentionMetric === 'unique_users' && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">Unit</Label>
+            <Combobox
+              align="end"
               items={[
                 {
                   label: 'Count',
@@ -167,23 +251,21 @@ export function ReportSettings() {
                   value: '%',
                 },
               ]}
+              onChange={(val) => {
+                dispatch(changeUnit(val === 'count' ? undefined : val));
+              }}
+              placeholder="Unit"
+              value={unit || 'count'}
             />
           </div>
         )}
         {fields.includes('funnelGroup') && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">
+            <Label className="mb-0 whitespace-nowrap font-medium">
               Funnel Group
             </Label>
             <Combobox
               align="end"
-              placeholder="Default: Profile"
-              value={funnelGroup || 'profile_id'}
-              onChange={(val) => {
-                dispatch(
-                  changeFunnelGroup(val === 'profile_id' ? undefined : val),
-                );
-              }}
               items={[
                 {
                   label: 'Session',
@@ -194,19 +276,32 @@ export function ReportSettings() {
                   value: 'profile_id',
                 },
               ]}
+              onChange={(val) => {
+                dispatch(
+                  changeFunnelGroup(val === 'profile_id' ? undefined : val)
+                );
+              }}
+              placeholder="Default: Profile"
+              value={funnelGroup || 'profile_id'}
             />
           </div>
         )}
         {fields.includes('funnelWindow') && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">
+            <Label className="mb-0 whitespace-nowrap font-medium">
               Funnel Window
             </Label>
             <div className="flex items-center gap-2">
               <InputEnter
-                type="number"
                 className="w-20"
-                value={funnelWindow ? String(funnelWindow) : ''}
+                onChangeValue={(value) => {
+                  const parsed = Number.parseFloat(value);
+                  if (Number.isNaN(parsed)) {
+                    dispatch(changeFunnelWindow(undefined));
+                  } else {
+                    dispatch(changeFunnelWindow(parsed));
+                  }
+                }}
                 placeholder={
                   {
                     second: '86400',
@@ -217,26 +312,11 @@ export function ReportSettings() {
                     month: '1',
                   }[funnelWindowUnit] ?? '24'
                 }
-                onChangeValue={(value) => {
-                  const parsed = Number.parseFloat(value);
-                  if (Number.isNaN(parsed)) {
-                    dispatch(changeFunnelWindow(undefined));
-                  } else {
-                    dispatch(changeFunnelWindow(parsed));
-                  }
-                }}
+                type="number"
+                value={funnelWindow ? String(funnelWindow) : ''}
               />
               <Combobox
                 align="end"
-                placeholder="hours"
-                value={funnelWindowUnit}
-                onChange={(val) => {
-                  dispatch(
-                    changeFunnelWindowUnit(
-                      val === 'hour' ? undefined : val,
-                    ),
-                  );
-                }}
                 items={[
                   { label: 'seconds', value: 'second' },
                   { label: 'minutes', value: 'minute' },
@@ -245,28 +325,24 @@ export function ReportSettings() {
                   { label: 'weeks', value: 'week' },
                   { label: 'months', value: 'month' },
                 ]}
+                onChange={(val) => {
+                  dispatch(
+                    changeFunnelWindowUnit(val === 'hour' ? undefined : val)
+                  );
+                }}
+                placeholder="hours"
+                value={funnelWindowUnit}
               />
             </div>
           </div>
         )}
         {fields.includes('breakdownStep') && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">
+            <Label className="mb-0 whitespace-nowrap font-medium">
               Breakdown Step
             </Label>
             <Combobox
               align="end"
-              placeholder="All steps"
-              value={
-                breakdownStep !== undefined ? String(breakdownStep) : 'all'
-              }
-              onChange={(val) => {
-                dispatch(
-                  changeFunnelBreakdownStep(
-                    val === 'all' ? undefined : Number(val),
-                  ),
-                );
-              }}
               items={[
                 { label: 'All steps', value: 'all' },
                 ...Array.from({ length: seriesCount }, (_, i) => ({
@@ -274,38 +350,42 @@ export function ReportSettings() {
                   value: String(i),
                 })),
               ]}
+              onChange={(val) => {
+                dispatch(
+                  changeFunnelBreakdownStep(
+                    val === 'all' ? undefined : Number(val)
+                  )
+                );
+              }}
+              placeholder="All steps"
+              value={
+                breakdownStep !== undefined ? String(breakdownStep) : 'all'
+              }
             />
           </div>
         )}
         {fields.includes('funnelProperty') && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">
+            <Label className="mb-0 whitespace-nowrap font-medium">
               Sum Property
             </Label>
             <Combobox
               align="end"
-              searchable
-              placeholder="Select property"
-              value={funnelProperty || ''}
+              items={propertyItems}
               onChange={(val) => {
                 dispatch(changeFunnelProperty(val || undefined));
               }}
-              items={propertyItems}
+              placeholder="Select property"
+              searchable
+              value={funnelProperty || ''}
             />
           </div>
         )}
         {fields.includes('sankeyMode') && options?.type === 'sankey' && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">Mode</Label>
+            <Label className="mb-0 whitespace-nowrap font-medium">Mode</Label>
             <Combobox
               align="end"
-              placeholder="Select mode"
-              value={options?.mode || 'after'}
-              onChange={(val) => {
-                dispatch(
-                  changeSankeyMode(val as 'between' | 'after' | 'before'),
-                );
-              }}
               items={[
                 {
                   label: 'After',
@@ -320,16 +400,20 @@ export function ReportSettings() {
                   value: 'between',
                 },
               ]}
+              onChange={(val) => {
+                dispatch(
+                  changeSankeyMode(val as 'between' | 'after' | 'before')
+                );
+              }}
+              placeholder="Select mode"
+              value={options?.mode || 'after'}
             />
           </div>
         )}
         {fields.includes('sankeySteps') && options?.type === 'sankey' && (
           <div className="flex items-center justify-between gap-4">
-            <Label className="whitespace-nowrap font-medium mb-0">Steps</Label>
+            <Label className="mb-0 whitespace-nowrap font-medium">Steps</Label>
             <InputEnter
-              type="number"
-              value={options?.steps ? String(options.steps) : '5'}
-              placeholder="Default: 5"
               onChangeValue={(value) => {
                 const parsed = Number.parseInt(value, 10);
                 if (Number.isNaN(parsed) || parsed < 2 || parsed > 10) {
@@ -338,6 +422,9 @@ export function ReportSettings() {
                   dispatch(changeSankeySteps(parsed));
                 }
               }}
+              placeholder="Default: 5"
+              type="number"
+              value={options?.steps ? String(options.steps) : '5'}
             />
           </div>
         )}
@@ -347,14 +434,14 @@ export function ReportSettings() {
               Exclude Events
             </Label>
             <ComboboxEvents
+              items={eventNames.filter((item) => item.name !== '*')}
               multiple
-              searchable
-              value={options?.exclude || []}
               onChange={(value) => {
                 dispatch(changeSankeyExclude(value));
               }}
-              items={eventNames.filter((item) => item.name !== '*')}
               placeholder="Select events to exclude"
+              searchable
+              value={options?.exclude || []}
             />
           </div>
         )}
@@ -364,21 +451,21 @@ export function ReportSettings() {
               Include events
             </Label>
             <ComboboxEvents
+              items={eventNames.filter((item) => item.name !== '*')}
               multiple
-              searchable
-              value={options?.include || []}
               onChange={(value) => {
                 dispatch(
-                  changeSankeyInclude(value.length > 0 ? value : undefined),
+                  changeSankeyInclude(value.length > 0 ? value : undefined)
                 );
               }}
-              items={eventNames.filter((item) => item.name !== '*')}
               placeholder="Leave empty to include all"
+              searchable
+              value={options?.include || []}
             />
           </div>
         )}
         {fields.includes('stacked') && (
-          <Label className="flex items-center justify-between mb-0">
+          <Label className="mb-0 flex items-center justify-between">
             <span className="whitespace-nowrap">Stack series</span>
             <Switch
               checked={stacked}
