@@ -65,6 +65,10 @@ export function getFunnelBreakdownStickyLayout() {
   };
 }
 
+export function getFunnelBreakdownTableScrollGutterWidth() {
+  return 96;
+}
+
 // Sticky cell styles. Widths include horizontal padding; the left offsets must
 // match the rendered widths or the pinned Total Conv. column can overlap/crop
 // percentage values on narrow mobile viewports. Keep these literal Tailwind
@@ -82,6 +86,11 @@ const stickyHeaderLeft1 =
   'sticky top-0 left-[40px] z-30 bg-card w-[200px] min-w-[200px] max-w-[200px]';
 const stickyHeaderLeft2 =
   'sticky top-0 left-[240px] z-30 bg-card border-r border-border w-[112px] min-w-[112px]';
+const scrollGutterWidth = getFunnelBreakdownTableScrollGutterWidth();
+const scrollGutterStyle = {
+  width: scrollGutterWidth,
+  minWidth: scrollGutterWidth,
+};
 
 export function BreakdownList({
   data,
@@ -285,6 +294,11 @@ export function BreakdownList({
                 </th>
               );
             })}
+            <th
+              aria-hidden="true"
+              className={`px-0 py-2 ${stickyHeader}`}
+              style={scrollGutterStyle}
+            />
           </tr>
           {/* Row 2: sub-column labels (sortable) */}
           <tr
@@ -327,6 +341,11 @@ export function BreakdownList({
                 </Fragment>
               );
             })}
+            <th
+              aria-hidden="true"
+              className={`px-0 py-1 ${stickyHeader}`}
+              style={{ ...scrollGutterStyle, top: 37 }}
+            />
           </tr>
         </thead>
         <tbody>
@@ -406,6 +425,11 @@ export function BreakdownList({
                     </Fragment>
                   );
                 })}
+                <td
+                  aria-hidden="true"
+                  className="px-0 py-2"
+                  style={scrollGutterStyle}
+                />
               </tr>
             );
           })}

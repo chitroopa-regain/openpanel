@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { getFunnelBreakdownStickyLayout } from './breakdown-list';
+import {
+  getFunnelBreakdownStickyLayout,
+  getFunnelBreakdownTableScrollGutterWidth,
+} from './breakdown-list';
 
 describe('getFunnelBreakdownStickyLayout', () => {
   it('keeps sticky funnel breakdown columns aligned to their rendered widths', () => {
@@ -22,5 +25,11 @@ describe('getFunnelBreakdownStickyLayout', () => {
 
     expect(layout.totalConversion.width).toBeGreaterThanOrEqual(112);
     expect(pinnedWidth).toBeLessThanOrEqual(360);
+  });
+
+  it('keeps enough trailing scroll room to reveal the final metric column', () => {
+    expect(getFunnelBreakdownTableScrollGutterWidth()).toBeGreaterThanOrEqual(
+      96
+    );
   });
 });
