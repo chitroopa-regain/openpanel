@@ -72,7 +72,7 @@ describe('chart retention utils', () => {
     );
   });
 
-  it('builds property average interval aggregation', () => {
+  it('builds property average as property sum divided by cohort users', () => {
     expect(
       buildRetentionMeasureIntervalSelect({
         index: 2,
@@ -82,7 +82,7 @@ describe('chart retention utils', () => {
           "toFloat64OrNull(toString(properties['value_inr']))",
       })
     ).toBe(
-      'round(avgIf(r.retention_property_value, r.x_after_cohort = 2), 2) AS interval_2_user_count'
+      'round(sumIf(r.retention_property_value, r.x_after_cohort = 2) / nullIf(any(cs.total_first_event_count), 0), 2) AS interval_2_user_count'
     );
   });
 

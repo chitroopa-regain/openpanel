@@ -58,7 +58,7 @@ export function buildRetentionMeasureIntervalSelect({
   const predicate = `r.x_after_cohort ${criteria} ${index}`;
 
   if (measure === 'property_average' && propertyExpression) {
-    return `round(avgIf(r.retention_property_value, ${predicate}), 2) AS interval_${index}_user_count`;
+    return `round(sumIf(r.retention_property_value, ${predicate}) / nullIf(any(cs.total_first_event_count), 0), 2) AS interval_${index}_user_count`;
   }
 
   if (measure === 'property_sum' && propertyExpression) {
