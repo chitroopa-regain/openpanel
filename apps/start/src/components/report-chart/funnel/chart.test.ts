@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getFunnelBarSize, getFunnelLabelLayout } from './chart';
+import {
+  getFunnelBarSize,
+  getFunnelLabelLayout,
+  getFunnelPreviewSummaryItems,
+} from './chart';
 
 describe('funnel chart adaptive layout', () => {
   it('uses thinner dashboard bars when many breakdowns are visible', () => {
@@ -59,5 +63,45 @@ describe('funnel chart adaptive layout', () => {
     });
 
     expect(label.labelY).toBeGreaterThanOrEqual(4);
+  });
+
+  it('builds a compact preview summary with final conversion by breakdown', () => {
+    const summary = getFunnelPreviewSummaryItems({
+      breakdowns: [
+        {
+          breakdowns: ['46.2.1392'],
+          id: 'version-a',
+          lastStep: { percent: 0 },
+        },
+        {
+          breakdowns: ['43.1.1330'],
+          colorIndex: 4,
+          id: 'version-b',
+          lastStep: { percent: 16.67 },
+        },
+        {
+          breakdowns: ['45.0.1374'],
+          id: 'version-c',
+          lastStep: { percent: 89.57 },
+        },
+      ],
+      maxItems: 2,
+    });
+
+    expect(summary.items).toEqual([
+      {
+        colorIndex: 0,
+        id: 'version-a',
+        label: '46.2.1392',
+        percentText: '0%',
+      },
+      {
+        colorIndex: 4,
+        id: 'version-b',
+        label: '43.1.1330',
+        percentText: '16.67%',
+      },
+    ]);
+    expect(summary.remainingCount).toBe(1);
   });
 });

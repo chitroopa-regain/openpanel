@@ -478,7 +478,7 @@ function FunnelOverallLegend({ percent }: { percent: number }) {
   const number = useNumber();
 
   return (
-    <div className="mb-2 flex items-center justify-center gap-2 text-sm">
+    <div className="flex items-center justify-center gap-2 text-sm">
       <div
         className="size-2.5 rounded-[3px] shrink-0"
         style={{ backgroundColor: getChartColor(0) }}
@@ -486,6 +486,85 @@ function FunnelOverallLegend({ percent }: { percent: number }) {
       <span className="font-medium text-foreground">
         Overall • {number.formatWithUnit(percent / 100, '%')}
       </span>
+    </div>
+  );
+}
+
+export function getFunnelPreviewSummaryItems({
+  breakdowns,
+  maxItems,
+}: {
+  breakdowns: Array<{
+    breakdowns?: string[] | null;
+    colorIndex?: number;
+    id: string;
+    lastStep: { percent: number };
+  }>;
+  maxItems: number;
+}) {
+  return {
+    items: breakdowns.slice(0, maxItems).map((breakdown, index) => ({
+      colorIndex: breakdown.colorIndex ?? index,
+      id: breakdown.id,
+      label:
+        breakdown.breakdowns && breakdown.breakdowns.length > 0
+          ? breakdown.breakdowns.join(' > ')
+          : 'Overall',
+      percentText: formatFunnelPercent(breakdown.lastStep.percent),
+    })),
+    remainingCount: Math.max(0, breakdowns.length - maxItems),
+  };
+}
+
+function FunnelPreviewSummary({
+  allBreakdowns,
+  breakdowns,
+  maxItems,
+}: {
+  allBreakdowns: RouterOutputs['chart']['funnel']['current'];
+  breakdowns: RouterOutputs['chart']['funnel']['current'];
+  maxItems: number;
+}) {
+  const { items, remainingCount } = getFunnelPreviewSummaryItems({
+    breakdowns: breakdowns.map((breakdown, index) => {
+      const stableIndex = allBreakdowns.findIndex((b) => b.id === breakdown.id);
+
+      return {
+        ...breakdown,
+        colorIndex: stableIndex >= 0 ? stableIndex : index,
+      };
+    }),
+    maxItems,
+  });
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="overflow-x-auto overflow-y-hidden px-4 py-2">
+      <div className="flex min-w-max items-center justify-center gap-x-5 gap-y-1 text-xs whitespace-nowrap">
+        {items.map((item) => (
+          <div
+            className="inline-flex max-w-[160px] shrink-0 items-center gap-1.5 font-medium"
+            key={item.id}
+            title={`${item.label} • ${item.percentText}`}
+          >
+            <div
+              className="size-2.5 shrink-0 rounded-[3px]"
+              style={{ backgroundColor: getChartColor(item.colorIndex) }}
+            />
+            <span className="truncate text-foreground/90">{item.label}</span>
+            <span className="text-muted-foreground">•</span>
+            <span className="font-mono text-foreground/90">{item.percentText}</span>
+          </div>
+        ))}
+        {remainingCount > 0 && (
+          <div className="shrink-0 font-medium text-foreground/90">
+            +{remainingCount} More
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1013,46 +1092,6 @@ export function Chart({
     dashboardLayout: isDashboardLayout,
   });
 
-  const CustomLegend = useCallback(() => {
-    if (!hasVisibleBreakdowns) {
-      return null;
-    }
-    return (
-      <div className="mt-4 -mb-2 overflow-x-auto overflow-y-hidden pb-3">
-        <div className="flex min-w-max items-center justify-start gap-6 px-4 py-1 text-xs whitespace-nowrap">
-          {visibleBreakdowns.map((breakdown, idx) => {
-            const stableIndex = data.current.findIndex(
-              (b) => b.id === breakdown.id
-            );
-            const colorIndex = stableIndex >= 0 ? stableIndex : idx;
-            const label =
-              breakdown.breakdowns && breakdown.breakdowns.length > 0
-                ? breakdown.breakdowns.join(' > ')
-                : 'Funnel';
-            return (
-              <div
-                className="inline-flex items-center gap-1.5 shrink-0"
-                key={breakdown.id}
-                title={label}
-              >
-                <div
-                  className="size-2.5 rounded-sm shrink-0"
-                  style={{ backgroundColor: getChartColor(colorIndex) }}
-                />
-                <span
-                  className="font-medium max-w-[120px] truncate"
-                  style={{ color: getChartColor(colorIndex) }}
-                >
-                  {label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }, [visibleBreakdowns, hasVisibleBreakdowns]);
-
   const PreviousLegend = useCallback(() => {
     if (!showPreviousBars) {
       return null;
@@ -1107,11 +1146,20 @@ export function Chart({
         {showSingleFunnelLabels && typeof overallPercent === 'number' && (
           <div
             className={cn(
-              'px-4 pt-3',
+              'px-4 py-2',
               !isDashboardLayout && 'border-b border-border'
             )}
           >
             <FunnelOverallLegend percent={overallPercent} />
+          </div>
+        )}
+        {hasVisibleBreakdowns && (
+          <div className={cn(!isDashboardLayout && 'border-b border-border')}>
+            <FunnelPreviewSummary
+              allBreakdowns={data.current}
+              breakdowns={visibleBreakdowns}
+              maxItems={isDashboardLayout ? 5 : 7}
+            />
           </div>
         )}
         <div
@@ -1217,7 +1265,6 @@ export function Chart({
                     ))}
                   </Bar>
                 )}
-                {hasVisibleBreakdowns && <Legend content={<CustomLegend />} />}
                 {showPreviousBars && <Legend content={<PreviousLegend />} />}
                 <Tooltip shared={!hasBreakdowns} />
               </BarChart>
