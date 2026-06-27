@@ -153,7 +153,7 @@ export function Tables({
   const handleInspectStep = (
     step: (typeof steps)[0],
     stepIndex: number,
-    breakdownValues?: string[],
+    breakdownValues?: string[]
   ) => {
     if (!projectId) {
       return;
@@ -339,7 +339,9 @@ export function Tables({
               </div>
             );
           }}
-          keyExtractor={(item) => item.event.id ?? `step-${steps.indexOf(item)}`}
+          keyExtractor={(item) =>
+            item.event.id ?? `step-${steps.indexOf(item)}`
+          }
         />
       </div>
     </div>
@@ -472,11 +474,7 @@ const StripedBarShape = (props: any) => {
   );
 };
 
-function FunnelOverallLegend({
-  percent,
-}: {
-  percent: number;
-}) {
+function FunnelOverallLegend({ percent }: { percent: number }) {
   const number = useNumber();
 
   return (
@@ -499,6 +497,94 @@ function formatFunnelPercent(percent: number) {
 
 function formatFunnelCount(count: number) {
   return new Intl.NumberFormat('en-US').format(count);
+}
+
+const FUNNEL_LABEL_FONT_SIZE = 11;
+const FUNNEL_LABEL_COMPACT_FONT_SIZE = 10;
+
+function getFunnelLabelTextWidth(text: string, fontSize: number) {
+  // SVG labels use the mono font. This estimate intentionally errs slightly
+  // wide so the dark label chip is related to the value text instead of being
+  // a fixed, fat 56px box for every tiny value.
+  return text.length * fontSize * 0.62;
+}
+
+export function getFunnelBarSize({
+  breakdownCount,
+  stepCount,
+  dashboardLayout,
+}: {
+  breakdownCount: number;
+  stepCount: number;
+  dashboardLayout: boolean;
+}) {
+  if (breakdownCount <= 1) {
+    return dashboardLayout ? 56 : 72;
+  }
+
+  if (breakdownCount >= 5) {
+    return dashboardLayout ? 18 : 24;
+  }
+
+  if (breakdownCount >= 4) {
+    return dashboardLayout ? 28 : 34;
+  }
+
+  if (breakdownCount === 3) {
+    return dashboardLayout || stepCount >= 3 ? 34 : 42;
+  }
+
+  return dashboardLayout || stepCount >= 4 ? 42 : 48;
+}
+
+export function getFunnelLabelLayout({
+  x,
+  y,
+  width,
+  value,
+  percentText,
+  countText,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  value?: number | string | null;
+  percentText: string;
+  countText: string;
+}) {
+  const { effectiveY } = getFunnelBarGeometry({ y, height: 0, value });
+  const compact = width < 42;
+  const fontSize = compact
+    ? FUNNEL_LABEL_COMPACT_FONT_SIZE
+    : FUNNEL_LABEL_FONT_SIZE;
+  const textWidth = Math.max(
+    getFunnelLabelTextWidth(percentText, fontSize),
+    getFunnelLabelTextWidth(countText, fontSize)
+  );
+  const labelWidth = Math.ceil(
+    Math.min(68, Math.max(compact ? 38 : 42, textWidth + 12))
+  );
+  const labelHeight = compact ? 28 : 32;
+  const labelX = x + width / 2;
+  const labelRectX = labelX - labelWidth / 2;
+
+  // Mixpanel-style: keep labels outside/above the bar when there is headroom,
+  // but don't let 100% bars shove values into the chart legend/title area. In
+  // that case, pull the chip just inside the bar top. This keeps values readable
+  // without trying to squeeze raw text inside the colored funnel itself.
+  const outsideY = effectiveY - labelHeight + 4;
+  const minReadableY = 4;
+  const labelY = outsideY < minReadableY ? effectiveY + 4 : outsideY;
+
+  return {
+    compact,
+    fontSize,
+    labelHeight,
+    labelRectX,
+    labelWidth,
+    labelX,
+    labelY,
+  };
 }
 
 function truncateFunnelLabel(label: string, maxChars: number) {
@@ -562,58 +648,55 @@ function FunnelBarLabel({
       ? (payload as any).stepIndex
       : 0;
   const prevStepCount: number | undefined =
-    stepIndex > 0
-      ? currentVariant.steps?.[stepIndex - 1]?.count
-      : undefined;
+    stepIndex > 0 ? currentVariant.steps?.[stepIndex - 1]?.count : undefined;
   const fromPrevPercent =
     stepIndex === 0
       ? 100
       : prevStepCount && prevStepCount > 0
         ? (currentVariant.step.count / prevStepCount) * 100
         : 0;
-  const { effectiveY } = getFunnelBarGeometry({
+  const percentText = formatFunnelPercent(fromPrevPercent);
+  const countText = formatFunnelCount(currentVariant.step.count);
+  const label = getFunnelLabelLayout({
+    x,
     y,
-    height,
+    width,
     value,
+    percentText,
+    countText,
   });
-
-  const labelWidth = 56;
-  const labelHeight = 32;
-  const labelRectX = x + width / 2 - labelWidth / 2;
-  const labelY = effectiveY - labelHeight + 4;
-  const labelX = x + width / 2;
 
   return (
     <g>
       <rect
-        x={labelRectX}
-        y={labelY}
-        width={labelWidth}
-        height={labelHeight}
+        x={label.labelRectX}
+        y={label.labelY}
+        width={label.labelWidth}
+        height={label.labelHeight}
         rx={4}
         fill="rgba(23, 23, 23, 0.96)"
         stroke="rgba(255, 255, 255, 0.18)"
       />
       <text
-        x={labelX}
-        y={labelY + 12}
+        x={label.labelX}
+        y={label.labelY + (label.compact ? 11 : 12)}
         textAnchor="middle"
         fill="rgba(255, 255, 255, 0.98)"
         fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
-        fontSize={11}
+        fontSize={label.fontSize}
         fontWeight={600}
       >
-        {formatFunnelPercent(fromPrevPercent)}
+        {percentText}
       </text>
       <text
-        x={labelX}
-        y={labelY + 26}
+        x={label.labelX}
+        y={label.labelY + (label.compact ? 23 : 26)}
         textAnchor="middle"
         fill="rgba(255, 255, 255, 0.7)"
         fontFamily="var(--font-mono), ui-monospace, SFMono-Regular, monospace"
-        fontSize={11}
+        fontSize={label.fontSize}
       >
-        {formatFunnelCount(currentVariant.step.count)}
+        {countText}
       </text>
     </g>
   );
@@ -679,11 +762,7 @@ function FunnelBarShape(props: FunnelBarShapeProps) {
 
   return (
     <g>
-      <path
-        d={topRoundedPath}
-        stroke="none"
-        fill={resolvedFill}
-      />
+      <path d={topRoundedPath} stroke="none" fill={resolvedFill} />
       <FunnelBarLabel {...props} />
     </g>
   );
@@ -757,7 +836,9 @@ function FunnelXAxisTick({
     return null;
   }
 
-  const index = steps.findIndex((step) => (step?.event.id ?? '') === payload.value);
+  const index = steps.findIndex(
+    (step) => (step?.event.id ?? '') === payload.value
+  );
   const displayName = index >= 0 ? (steps[index]?.event.displayName ?? '') : '';
   const truncatedName = truncateFunnelLabel(
     displayName,
@@ -771,7 +852,7 @@ function FunnelXAxisTick({
         ? 14
         : totalSteps === 3
           ? 18
-          : 24,
+          : 24
   );
 
   // Show the full label on hover when the visible text was truncated.
@@ -812,7 +893,7 @@ function FunnelXAxisTick({
             >
               {displayName}
             </div>,
-            document.body,
+            document.body
           )
         : null}
     </>
@@ -838,7 +919,11 @@ function getFunnelChartWidth({
   // Labels are already truncated by `truncateFunnelLabel`, so step width
   // doesn't need to fit the full label text.
   const MIN_STEP_WIDTH = 80;
-  const breakdownBarWidth = 44;
+  const breakdownBarWidth = getFunnelBarSize({
+    breakdownCount,
+    stepCount,
+    dashboardLayout: true,
+  });
   const breakdownGapWidth = 8;
   // When showing multiple breakdowns per step, the step must be wide enough
   // to fit them side-by-side. Otherwise just enforce the per-step minimum.
@@ -848,7 +933,7 @@ function getFunnelChartWidth({
           MIN_STEP_WIDTH,
           breakdownCount * breakdownBarWidth +
             Math.max(0, breakdownCount - 1) * breakdownGapWidth +
-            36,
+            36
         )
       : MIN_STEP_WIDTH;
   const horizontalPadding = 24;
@@ -920,8 +1005,13 @@ export function Chart({
         breakdownCount: visibleBreakdowns.length,
         stepLabels: steps.map((step) => step?.event.displayName ?? ''),
       }),
-    [containerWidth, steps, visibleBreakdowns.length],
+    [containerWidth, steps, visibleBreakdowns.length]
   );
+  const funnelBarSize = getFunnelBarSize({
+    breakdownCount: visibleBreakdowns.length,
+    stepCount: steps.length,
+    dashboardLayout: isDashboardLayout,
+  });
 
   const CustomLegend = useCallback(() => {
     if (!hasVisibleBreakdowns) {
@@ -932,7 +1022,7 @@ export function Chart({
         <div className="flex min-w-max items-center justify-start gap-6 px-4 py-1 text-xs whitespace-nowrap">
           {visibleBreakdowns.map((breakdown, idx) => {
             const stableIndex = data.current.findIndex(
-              (b) => b.id === breakdown.id,
+              (b) => b.id === breakdown.id
             );
             const colorIndex = stableIndex >= 0 ? stableIndex : idx;
             const label =
@@ -1071,12 +1161,13 @@ export function Chart({
                 {hasBreakdowns &&
                   visibleBreakdowns.map((item, breakdownIndex) => {
                     const stableIndex = data.current.findIndex(
-                      (b) => b.id === item.id,
+                      (b) => b.id === item.id
                     );
                     const colorIndex =
                       stableIndex >= 0 ? stableIndex : breakdownIndex;
                     return (
                       <Bar
+                        barSize={funnelBarSize}
                         dataKey={`step:percent:${breakdownIndex}`}
                         key={`step:percent:${item.id}`}
                         shape={
@@ -1098,6 +1189,7 @@ export function Chart({
                   })}
                 {!hasBreakdowns && (
                   <Bar
+                    barSize={funnelBarSize}
                     dataKey="step:percent:0"
                     shape={<FunnelBarShape />}
                   >
@@ -1111,7 +1203,11 @@ export function Chart({
                   </Bar>
                 )}
                 {showPreviousBars && (
-                  <Bar dataKey="prev_step:percent:0" shape={<StripedBarShape />}>
+                  <Bar
+                    barSize={funnelBarSize}
+                    dataKey="prev_step:percent:0"
+                    shape={<StripedBarShape />}
+                  >
                     {rechartData.map((item, index) => (
                       <Cell
                         fill={getChartTranslucentColor(index)}
@@ -1156,9 +1252,8 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
   // In breakdown mode with shared={false}, Recharts sends only the hovered
   // bar's payload item. Extract the breakdown index from its dataKey.
   const hoveredDataKey = items[0]?.dataKey as string | undefined;
-  const hoveredBreakdownIndex = hoveredDataKey?.match(
-    /^step:percent:(\d+)$/
-  )?.[1];
+  const hoveredBreakdownIndex =
+    hoveredDataKey?.match(/^step:percent:(\d+)$/)?.[1];
 
   // Filter variants to only show visible breakdowns
   const visibleVariants = variants.filter((key) => {
