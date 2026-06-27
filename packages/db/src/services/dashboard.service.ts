@@ -36,6 +36,9 @@ export function getDashboardsByProjectId(projectId: string) {
       project: true,
       reports: true,
     },
-    orderBy: [{ pinnedAt: 'desc' }, { updatedAt: 'desc' }],
+    orderBy: [
+      { pinnedAt: { sort: 'desc', nulls: 'last' } },
+      { updatedAt: 'desc' },
+    ],
   });
 }
