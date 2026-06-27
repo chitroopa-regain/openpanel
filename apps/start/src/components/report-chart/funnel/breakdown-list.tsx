@@ -12,10 +12,7 @@ interface BreakdownListProps {
   data: RouterOutputs['chart']['funnel'];
   visibleSeriesIds: string[];
   onToggleVisibility: (id: string) => void;
-  onInspectStep?: (
-    stepIndex: number,
-    breakdownValues?: string[],
-  ) => void;
+  onInspectStep?: (stepIndex: number, breakdownValues?: string[]) => void;
   savedTopN?: number;
   onTopNChange?: (n: number | undefined) => void;
 }
@@ -47,21 +44,44 @@ function getSortValue(item: FunnelSeries, key: SortKey): number | string {
   return 0;
 }
 
-// Sticky cell styles
-const stickyLeft0 =
-  'sticky left-0 z-10 bg-card';
+export function getFunnelBreakdownStickyLayout() {
+  const selectionWidth = 40;
+  const breakdownWidth = 200;
+  const totalConversionWidth = 112;
+
+  return {
+    selection: {
+      width: selectionWidth,
+      left: 0,
+    },
+    breakdown: {
+      width: breakdownWidth,
+      left: selectionWidth,
+    },
+    totalConversion: {
+      width: totalConversionWidth,
+      left: selectionWidth + breakdownWidth,
+    },
+  };
+}
+
+// Sticky cell styles. Widths include horizontal padding; the left offsets must
+// match the rendered widths or the pinned Total Conv. column can overlap/crop
+// percentage values on narrow mobile viewports. Keep these literal Tailwind
+// classes in sync with getFunnelBreakdownStickyLayout() so the generated CSS
+// includes them.
+const stickyLeft0 = 'sticky left-0 z-10 bg-card w-[40px] min-w-[40px]';
 const stickyLeft1 =
-  'sticky left-[32px] z-10 bg-card';
+  'sticky left-[40px] z-10 bg-card w-[200px] min-w-[200px] max-w-[200px]';
 const stickyLeft2 =
-  'sticky left-[232px] z-10 bg-card border-r border-border';
-const stickyHeader =
-  'sticky top-0 z-20 bg-card';
+  'sticky left-[240px] z-10 bg-card border-r border-border w-[112px] min-w-[112px]';
+const stickyHeader = 'sticky top-0 z-20 bg-card';
 const stickyHeaderLeft0 =
-  'sticky top-0 left-0 z-30 bg-card';
+  'sticky top-0 left-0 z-30 bg-card w-[40px] min-w-[40px]';
 const stickyHeaderLeft1 =
-  'sticky top-0 left-[32px] z-30 bg-card';
+  'sticky top-0 left-[40px] z-30 bg-card w-[200px] min-w-[200px] max-w-[200px]';
 const stickyHeaderLeft2 =
-  'sticky top-0 left-[232px] z-30 bg-card border-r border-border';
+  'sticky top-0 left-[240px] z-30 bg-card border-r border-border w-[112px] min-w-[112px]';
 
 export function BreakdownList({
   data,
@@ -116,7 +136,7 @@ export function BreakdownList({
       setShowTopNMenu(false);
       onTopNChange?.(n === 10 ? undefined : n);
     },
-    [onTopNChange],
+    [onTopNChange]
   );
 
   if (allBreakdowns.length === 0) {
@@ -134,11 +154,7 @@ export function BreakdownList({
     );
   };
 
-  const sortableHeader = (
-    key: SortKey,
-    label: string,
-    className?: string,
-  ) => (
+  const sortableHeader = (key: SortKey, label: string, className?: string) => (
     <th
       className={`px-3 py-1 text-right font-normal cursor-pointer hover:text-foreground select-none whitespace-nowrap ${className ?? ''}`}
       onClick={() => handleSort(key)}
@@ -200,7 +216,10 @@ export function BreakdownList({
                     onKeyDown={(e) => {
                       e.stopPropagation();
                       if (e.key === 'Enter') {
-                        const v = Math.min(Math.max(topNDraft, 1), allBreakdowns.length);
+                        const v = Math.min(
+                          Math.max(topNDraft, 1),
+                          allBreakdowns.length
+                        );
                         applyTopN(v);
                       } else if (e.key === 'Escape') {
                         setTopNDraft(displayedTopN);
@@ -208,7 +227,10 @@ export function BreakdownList({
                       }
                     }}
                     onBlur={() => {
-                      const v = Math.min(Math.max(topNDraft, 1), allBreakdowns.length);
+                      const v = Math.min(
+                        Math.max(topNDraft, 1),
+                        allBreakdowns.length
+                      );
                       setTopNDraft(v);
                     }}
                     className="w-16 rounded border border-border bg-transparent px-2 py-1 text-sm"
@@ -254,17 +276,33 @@ export function BreakdownList({
                   colSpan={colSpan}
                   className={`px-3 py-2 text-center border-l border-border whitespace-nowrap ${stickyHeader}`}
                 >
-                  <span className="text-muted-foreground font-normal">{i + 1}</span>{' '}
-                  <span className="font-semibold">{step.event.displayName}</span>
+                  <span className="text-muted-foreground font-normal">
+                    {i + 1}
+                  </span>{' '}
+                  <span className="font-semibold">
+                    {step.event.displayName}
+                  </span>
                 </th>
               );
             })}
           </tr>
           {/* Row 2: sub-column labels (sortable) */}
-          <tr className={`border-b border-border ${stickyHeader}`} style={{ top: 37 }}>
-            <th className={`px-2 py-1 ${stickyHeaderLeft0}`} style={{ top: 37 }} />
-            <th className={`px-3 py-1 ${stickyHeaderLeft1}`} style={{ top: 37 }} />
-            <th className={`px-3 py-1 ${stickyHeaderLeft2}`} style={{ top: 37 }} />
+          <tr
+            className={`border-b border-border ${stickyHeader}`}
+            style={{ top: 37 }}
+          >
+            <th
+              className={`px-2 py-1 ${stickyHeaderLeft0}`}
+              style={{ top: 37 }}
+            />
+            <th
+              className={`px-3 py-1 ${stickyHeaderLeft1}`}
+              style={{ top: 37 }}
+            />
+            <th
+              className={`px-3 py-1 ${stickyHeaderLeft2}`}
+              style={{ top: 37 }}
+            />
             {steps.map((step, i) => {
               if (i === 0) {
                 return (
@@ -272,7 +310,7 @@ export function BreakdownList({
                     {sortableHeader(
                       `step:${i}:count`,
                       '#',
-                      `border-l border-border ${stickyHeader}`,
+                      `border-l border-border ${stickyHeader}`
                     )}
                   </Fragment>
                 );
@@ -282,7 +320,7 @@ export function BreakdownList({
                   {sortableHeader(
                     `step:${i}:time`,
                     'Time',
-                    `border-l border-border ${stickyHeader}`,
+                    `border-l border-border ${stickyHeader}`
                   )}
                   {sortableHeader(`step:${i}:conv`, 'Conv %', stickyHeader)}
                   {sortableHeader(`step:${i}:count`, '#', stickyHeader)}
@@ -294,9 +332,7 @@ export function BreakdownList({
         <tbody>
           {sortedBreakdowns.map((item) => {
             const isVisible = visibleSeriesIds.includes(item.id);
-            const colorIndex = allBreakdowns.findIndex(
-              (b) => b.id === item.id,
-            );
+            const colorIndex = allBreakdowns.findIndex((b) => b.id === item.id);
             const color =
               colorIndex >= 0 ? getChartColor(colorIndex) : undefined;
             const label =
@@ -327,11 +363,10 @@ export function BreakdownList({
                 >
                   {label}
                 </td>
-                <td className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${stickyLeft2}`}>
-                  {number.formatWithUnit(
-                    item.lastStep.percent / 100,
-                    '%',
-                  )}
+                <td
+                  className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${stickyLeft2}`}
+                >
+                  {number.formatWithUnit(item.lastStep.percent / 100, '%')}
                 </td>
                 {item.steps.map((step, stepIdx) => {
                   if (stepIdx === 0) {
@@ -357,7 +392,7 @@ export function BreakdownList({
                       <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
                         {number.formatWithUnit(
                           step.stepConversionPercent / 100,
-                          '%',
+                          '%'
                         )}
                       </td>
                       <td
