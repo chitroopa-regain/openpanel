@@ -140,6 +140,43 @@ function Component() {
     IDateConfig | undefined
   >(undefined);
 
+  const savedDashboardFilter = useMemo(
+    () => ({
+      range:
+        (dashboard?.dashboardRange as IChartRange | null | undefined) ?? null,
+      startDate: dashboard?.dashboardStartDate ?? null,
+      endDate: dashboard?.dashboardEndDate ?? null,
+      dateConfig:
+        (dashboard?.dashboardDateConfig as IDateConfig | null | undefined) ??
+        undefined,
+    }),
+    [dashboard]
+  );
+
+  useEffect(() => {
+    if (!dashboard) return;
+    setDashboardRange(savedDashboardFilter.range);
+    setDashboardStartDate(savedDashboardFilter.startDate);
+    setDashboardEndDate(savedDashboardFilter.endDate);
+    setDashboardDateConfig(savedDashboardFilter.dateConfig);
+  }, [dashboard?.id, savedDashboardFilter]);
+
+  const isDashboardFilterDirty = useMemo(
+    () =>
+      dashboardRange !== savedDashboardFilter.range ||
+      dashboardStartDate !== savedDashboardFilter.startDate ||
+      dashboardEndDate !== savedDashboardFilter.endDate ||
+      JSON.stringify(dashboardDateConfig ?? null) !==
+        JSON.stringify(savedDashboardFilter.dateConfig ?? null),
+    [
+      dashboardDateConfig,
+      dashboardEndDate,
+      dashboardRange,
+      dashboardStartDate,
+      savedDashboardFilter,
+    ]
+  );
+
   const handleDashboardRangeChange = useCallback((value: IChartRange) => {
     setDashboardRange(value);
     if (value !== 'custom') {
@@ -218,6 +255,34 @@ function Component() {
       },
     })
   );
+
+  const dashboardUpdate = useMutation(
+    trpc.dashboard.update.mutationOptions({
+      onError: handleErrorToastOptions({}),
+      onSuccess() {
+        toast('Dashboard filters updated');
+        queryClient.invalidateQueries(trpc.dashboard.list.pathFilter());
+        dashboardQuery.refetch();
+      },
+    })
+  );
+
+  const saveDashboardFilters = useCallback(() => {
+    dashboardUpdate.mutate({
+      id: dashboardId,
+      dashboardRange,
+      dashboardStartDate,
+      dashboardEndDate,
+      dashboardDateConfig: dashboardDateConfig ?? null,
+    });
+  }, [
+    dashboardDateConfig,
+    dashboardEndDate,
+    dashboardId,
+    dashboardRange,
+    dashboardStartDate,
+    dashboardUpdate,
+  ]);
 
   // Convert reports to grid layout format for all breakpoints.
   // Driven by orderedReports so drag-to-reorder is reflected immediately.
@@ -603,6 +668,15 @@ function Component() {
           defaultLabel="Default"
           className="max-w-[240px]"
         />
+        {isDashboardFilterDirty && (
+          <Button
+            onClick={saveDashboardFilters}
+            loading={dashboardUpdate.isPending}
+            disabled={dashboardUpdate.isPending}
+          >
+            Update
+          </Button>
+        )}
         {dashboardRange !== null && (
           <Button variant="ghost" onClick={resetDashboardFilters}>
             Reset to report defaults

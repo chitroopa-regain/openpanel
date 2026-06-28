@@ -19,7 +19,7 @@ export const dashboardRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
-      }),
+      })
     )
     .query(({ input }) => {
       return getDashboardsByProjectId(input.projectId);
@@ -29,7 +29,7 @@ export const dashboardRouter = createTRPCRouter({
       z.object({
         id: z.string(),
         projectId: z.string(),
-      }),
+      })
     )
     .query(async ({ input, ctx }) => {
       const access = await getProjectAccess({
@@ -54,7 +54,7 @@ export const dashboardRouter = createTRPCRouter({
       z.object({
         name: z.string(),
         projectId: z.string(),
-      }),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       const access = await getProjectAccess({
@@ -85,8 +85,12 @@ export const dashboardRouter = createTRPCRouter({
     .input(
       z.object({
         id: z.string(),
-        name: z.string(),
-      }),
+        name: z.string().optional(),
+        dashboardRange: z.string().nullable().optional(),
+        dashboardStartDate: z.string().nullable().optional(),
+        dashboardEndDate: z.string().nullable().optional(),
+        dashboardDateConfig: z.unknown().nullable().optional(),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       const dashboard = await db.dashboard.findUniqueOrThrow({
@@ -109,7 +113,22 @@ export const dashboardRouter = createTRPCRouter({
           id: input.id,
         },
         data: {
-          name: input.name,
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.dashboardRange !== undefined
+            ? { dashboardRange: input.dashboardRange }
+            : {}),
+          ...(input.dashboardStartDate !== undefined
+            ? { dashboardStartDate: input.dashboardStartDate }
+            : {}),
+          ...(input.dashboardEndDate !== undefined
+            ? { dashboardEndDate: input.dashboardEndDate }
+            : {}),
+          ...(input.dashboardDateConfig !== undefined
+            ? {
+                dashboardDateConfig:
+                  input.dashboardDateConfig as Prisma.InputJsonValue,
+              }
+            : {}),
         },
       });
     }),
@@ -118,7 +137,7 @@ export const dashboardRouter = createTRPCRouter({
       z.object({
         id: z.string(),
         pinned: z.boolean(),
-      }),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       const dashboard = await db.dashboard.findUniqueOrThrow({
@@ -150,7 +169,7 @@ export const dashboardRouter = createTRPCRouter({
       z.object({
         id: z.string(),
         forceDelete: z.boolean().optional(),
-      }),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       const dashboard = await db.dashboard.findUniqueOrThrow({
@@ -189,7 +208,7 @@ export const dashboardRouter = createTRPCRouter({
           switch (error.code) {
             case PrismaError.ForeignConstraintViolation:
               throw new Error(
-                'Cannot delete dashboard with associated reports',
+                'Cannot delete dashboard with associated reports'
               );
             default:
               throw new Error('Unknown error deleting dashboard');

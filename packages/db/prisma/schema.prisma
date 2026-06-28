@@ -302,6 +302,12 @@ model Dashboard {
   reports        Report[]
   share          ShareDashboard?
 
+  dashboardRange      String?
+  dashboardStartDate  String?
+  dashboardEndDate    String?
+  /// [IDateConfig]
+  dashboardDateConfig Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
   pinnedAt  DateTime?
