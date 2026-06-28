@@ -28,6 +28,7 @@ import {
 import { PageContainer } from '@/components/page-container';
 import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 import { PageHeader } from '@/components/page-header';
+import { TimeWindowPicker } from '@/components/time-window-picker';
 import {
   ReportItem,
   ReportItemSkeleton,
@@ -37,10 +38,11 @@ import { handleErrorToastOptions, useTRPC } from '@/integrations/trpc/react';
 import { pushModal, showConfirm } from '@/modals';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
+import type { IChartRange, IDateConfig } from '@openpanel/validation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export const Route = createFileRoute(
-  '/_app/$organizationId/$projectId/dashboards_/$dashboardId',
+  '/_app/$organizationId/$projectId/dashboards_/$dashboardId'
 )({
   component: Component,
   head: () => {
@@ -58,23 +60,23 @@ export const Route = createFileRoute(
         context.trpc.dashboard.byId.queryOptions({
           id: params.dashboardId,
           projectId: params.projectId,
-        }),
+        })
       ),
       context.queryClient.prefetchQuery(
         context.trpc.report.list.queryOptions({
           dashboardId: params.dashboardId,
           projectId: params.projectId,
-        }),
+        })
       ),
       context.queryClient.prefetchQuery(
         context.trpc.project.getProjectWithClients.queryOptions({
           projectId: params.projectId,
-        }),
+        })
       ),
       context.queryClient.prefetchQuery(
         context.trpc.organization.get.queryOptions({
           organizationId: params.organizationId,
-        }),
+        })
       ),
     ]);
   },
@@ -90,19 +92,19 @@ function Component() {
     trpc.dashboard.byId.queryOptions({
       id: dashboardId,
       projectId,
-    }),
+    })
   );
 
   const reportsQuery = useQuery(
     trpc.report.list.queryOptions({
       dashboardId,
       projectId,
-    }),
+    })
   );
   const projectQuery = useQuery(
     trpc.project.getProjectWithClients.queryOptions({
       projectId,
-    }),
+    })
   );
 
   const dashboardDeletion = useMutation(
@@ -119,7 +121,7 @@ function Component() {
           },
         });
       },
-    }),
+    })
   );
 
   const reports = reportsQuery.data ?? [];
@@ -127,6 +129,32 @@ function Component() {
   const project = projectQuery.data;
   const [isGridReady, setIsGridReady] = useState(false);
   const [enableTransitions, setEnableTransitions] = useState(false);
+  const [dashboardRange, setDashboardRange] = useState<IChartRange | null>(
+    null
+  );
+  const [dashboardStartDate, setDashboardStartDate] = useState<string | null>(
+    null
+  );
+  const [dashboardEndDate, setDashboardEndDate] = useState<string | null>(null);
+  const [dashboardDateConfig, setDashboardDateConfig] = useState<
+    IDateConfig | undefined
+  >(undefined);
+
+  const handleDashboardRangeChange = useCallback((value: IChartRange) => {
+    setDashboardRange(value);
+    if (value !== 'custom') {
+      setDashboardStartDate(null);
+      setDashboardEndDate(null);
+      setDashboardDateConfig(undefined);
+    }
+  }, []);
+
+  const resetDashboardFilters = useCallback(() => {
+    setDashboardRange(null);
+    setDashboardStartDate(null);
+    setDashboardEndDate(null);
+    setDashboardDateConfig(undefined);
+  }, []);
 
   // Local order state for instant feedback during drag-to-reorder. Re-syncs
   // from the server whenever the underlying reports list changes (refetch).
@@ -156,7 +184,7 @@ function Component() {
         reportsQuery.refetch();
         toast('Report deleted');
       },
-    }),
+    })
   );
 
   const reportDuplicate = useMutation(
@@ -167,7 +195,7 @@ function Component() {
         reportsQuery.refetch();
         toast('Report duplicated');
       },
-    }),
+    })
   );
 
   const updateLayout = useMutation(
@@ -178,7 +206,7 @@ function Component() {
       // the optimistic `orderedReports` and corrupts the grid. The optimistic
       // state is authoritative for the session; the DB is updated in the
       // background and re-read on the next full load.
-    }),
+    })
   );
 
   const resetLayout = useMutation(
@@ -188,7 +216,7 @@ function Component() {
         toast('Layout reset to default');
         reportsQuery.refetch();
       },
-    }),
+    })
   );
 
   // Convert reports to grid layout format for all breakpoints.
@@ -290,12 +318,12 @@ function Component() {
         next.sort((a, b) => {
           const la = (a as any).layout;
           const lb = (b as any).layout;
-          return (la?.y - lb?.y) || (la?.x - lb?.x);
+          return la?.y - lb?.y || la?.x - lb?.x;
         });
         return next;
       });
     },
-    [updateLayout],
+    [updateLayout]
   );
 
   // Track which row the cursor is currently over so the entire row (cards
@@ -308,7 +336,7 @@ function Component() {
         return current === rowIdx ? null : current;
       });
     },
-    [],
+    []
   );
 
   // Per-card row position lookup so the floating "+" buttons can render at
@@ -346,7 +374,7 @@ function Component() {
             side,
             baselineIds: orderedReports.map((r) => r.id),
             createdAt: Date.now(),
-          }),
+          })
         );
       } catch {
         // sessionStorage may fail in private mode — fall through to navigate.
@@ -364,7 +392,7 @@ function Component() {
       organizationId,
       projectId,
       dashboardId,
-    ],
+    ]
   );
 
   // After a "Create report" round-trip, place the newly-created report at
@@ -390,8 +418,7 @@ function Component() {
       if (!newReport) return; // not yet refetched
       const rows = deriveRowsFromReports(reports);
       const row = rows[intent.rowIdx];
-      const colIdx =
-        intent.side === 'start' ? 0 : row ? row.length : 0;
+      const colIdx = intent.side === 'start' ? 0 : row ? row.length : 0;
       handleDrop(newReport.id, {
         kind: 'inRow',
         rowIdx: intent.rowIdx,
@@ -436,7 +463,7 @@ function Component() {
         }
       });
     },
-    [reports, updateLayout],
+    [reports, updateLayout]
   );
 
   const handleResizeStop = useCallback(
@@ -469,7 +496,7 @@ function Component() {
         }
       });
     },
-    [reports, updateLayout],
+    [reports, updateLayout]
   );
 
   if (!dashboard) {
@@ -560,6 +587,29 @@ function Component() {
         }
       />
 
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2">
+        <span className="px-2 font-medium text-muted-foreground text-sm">
+          Dashboard filters
+        </span>
+        <TimeWindowPicker
+          value={dashboardRange}
+          onChange={handleDashboardRangeChange}
+          startDate={dashboardStartDate}
+          endDate={dashboardEndDate}
+          onStartDateChange={setDashboardStartDate}
+          onEndDateChange={setDashboardEndDate}
+          dateConfig={dashboardDateConfig}
+          onDateConfigChange={setDashboardDateConfig}
+          defaultLabel="Default"
+          className="max-w-[240px]"
+        />
+        {dashboardRange !== null && (
+          <Button variant="ghost" onClick={resetDashboardFilters}>
+            Reset to report defaults
+          </Button>
+        )}
+      </div>
+
       {reports.length === 0 ? (
         <FullPageEmptyState title="No reports" icon={LayoutPanelTopIcon}>
           <p>You can visualize your data with a report</p>
@@ -601,10 +651,11 @@ function Component() {
                   organizationId={organizationId}
                   projectId={projectId}
                   dashboardId={dashboardId}
-                  range={null}
-                  startDate={null}
-                  endDate={null}
+                  range={dashboardRange}
+                  startDate={dashboardStartDate}
+                  endDate={dashboardEndDate}
                   interval={null}
+                  dateConfig={dashboardDateConfig}
                   onDelete={(reportId) => {
                     reportDeletion.mutate({ reportId });
                   }}
@@ -616,8 +667,7 @@ function Component() {
                   isFirstInRow={info?.isFirst}
                   isLastInRow={info?.isLast}
                   isRowHovered={
-                    info?.rowIdx !== undefined &&
-                    hoveredRowIdx === info.rowIdx
+                    info?.rowIdx !== undefined && hoveredRowIdx === info.rowIdx
                   }
                   onAddAt={handleAddAt}
                   onRowHoverChange={handleRowHoverChange}

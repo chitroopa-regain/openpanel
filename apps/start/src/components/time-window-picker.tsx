@@ -22,7 +22,7 @@ import type { DateRangerPickerPayload } from '@/modals/date-ranger-picker';
 import { endOfDay, format, isSameDay, parseISO, startOfDay } from 'date-fns';
 
 type Props = {
-  value: IChartRange;
+  value: IChartRange | null;
   onChange: (value: IChartRange) => void;
   onStartDateChange: (date: string) => void;
   onEndDateChange: (date: string) => void;
@@ -31,6 +31,7 @@ type Props = {
   className?: string;
   dateConfig?: IDateConfig;
   onDateConfigChange?: (config: IDateConfig) => void;
+  defaultLabel?: string;
 };
 export function TimeWindowPicker({
   value,
@@ -42,30 +43,43 @@ export function TimeWindowPicker({
   className,
   dateConfig,
   onDateConfigChange,
+  defaultLabel,
 }: Props) {
   const isDateRangerPickerOpen = useRef(false);
   useOnPushModal('DateRangerPicker', (open) => {
     isDateRangerPickerOpen.current = open;
   });
-  const timeWindow = timeWindows[value ?? '30d'];
+  const timeWindow = value ? timeWindows[value] : null;
 
   const handleCustom = useCallback(() => {
     pushModal('DateRangerPicker', {
-      onChange: ({ startDate, endDate, dateMode, fixedStartDate, fixedEndDate, lastAmount, lastUnit, lastEndingDaysAgo, sinceDate, periodToDateUnit, enableTimeRanges }: DateRangerPickerPayload) => {
+      onChange: ({
+        startDate,
+        endDate,
+        dateMode,
+        fixedStartDate,
+        fixedEndDate,
+        lastAmount,
+        lastUnit,
+        lastEndingDaysAgo,
+        sinceDate,
+        periodToDateUnit,
+        enableTimeRanges,
+      }: DateRangerPickerPayload) => {
         // Only set concrete startDate/endDate for fixed mode.
         // Relative modes (last/since/period_to_date) resolve from dateConfig at query time.
         if (startDate && endDate) {
           onStartDateChange(
             format(
               enableTimeRanges ? startDate : startOfDay(startDate),
-              'yyyy-MM-dd HH:mm:ss',
-            ),
+              'yyyy-MM-dd HH:mm:ss'
+            )
           );
           onEndDateChange(
             format(
               enableTimeRanges ? endDate : endOfDay(endDate),
-              'yyyy-MM-dd HH:mm:ss',
-            ),
+              'yyyy-MM-dd HH:mm:ss'
+            )
           );
         }
         onChange('custom');
@@ -108,7 +122,7 @@ export function TimeWindowPicker({
         }
 
         const match = Object.values(timeWindows).find(
-          (tw) => event.key === tw.shortcut.toLowerCase(),
+          (tw) => event.key === tw.shortcut.toLowerCase()
         );
         if (match?.key === 'custom') {
           handleCustom();
@@ -129,13 +143,16 @@ export function TimeWindowPicker({
         >
           <span className="truncate">
             {value === 'custom' && dateConfig
-              ? dateConfig.dateMode === 'fixed' && dateConfig.fixedStartDate && dateConfig.fixedEndDate
+              ? dateConfig.dateMode === 'fixed' &&
+                dateConfig.fixedStartDate &&
+                dateConfig.fixedEndDate
                 ? dateConfig.enableTimeRanges
                   ? `${format(parseISO(dateConfig.fixedStartDate), 'MMM d, h:mm a')} – ${format(parseISO(dateConfig.fixedEndDate), 'MMM d, h:mm a')}`
                   : `${format(parseISO(dateConfig.fixedStartDate), 'MMM d')} – ${format(parseISO(dateConfig.fixedEndDate), 'MMM d')}`
                 : dateConfig.dateMode === 'last' && dateConfig.lastAmount
                   ? `Last ${dateConfig.lastAmount} ${dateConfig.lastUnit === 'week' ? 'weeks' : dateConfig.lastUnit === 'month' ? 'months' : 'days'}`
-                  : dateConfig.dateMode === 'period_to_date' && dateConfig.periodToDateUnit
+                  : dateConfig.dateMode === 'period_to_date' &&
+                      dateConfig.periodToDateUnit
                     ? `${dateConfig.periodToDateUnit.charAt(0).toUpperCase()}${dateConfig.periodToDateUnit.slice(1)} to date`
                     : dateConfig.dateMode === 'since' && dateConfig.sinceDate
                       ? `Since ${format(parseISO(dateConfig.sinceDate), "MMM d,''yy")}`
@@ -144,7 +161,7 @@ export function TimeWindowPicker({
                         : 'Custom'
               : value === 'custom' && startDate
                 ? `Since ${format(new Date(startDate), "MMM d,''yy")}`
-                : (timeWindow?.label ?? 'Select date')}
+                : (timeWindow?.label ?? defaultLabel ?? 'Select date')}
           </span>
         </Button>
       </DropdownMenuTrigger>

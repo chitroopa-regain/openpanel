@@ -402,7 +402,7 @@ function AddToRowButton({
               'opacity-0 group-hover/row:opacity-100',
               'hover:text-foreground hover:bg-muted',
               open && '!opacity-100 text-foreground bg-muted',
-              positionCls,
+              positionCls
             )}
           >
             <PlusIcon className="size-4" />
@@ -437,6 +437,7 @@ export function ReportItem({
   startDate,
   endDate,
   interval,
+  dateConfig,
   onDelete,
   onDuplicate,
   onDrop,
@@ -455,6 +456,7 @@ export function ReportItem({
   startDate: any;
   endDate: any;
   interval: any;
+  dateConfig?: any;
   onDelete: (reportId: string) => void;
   onDuplicate: (reportId: string) => void;
   onDrop?: (fromId: string, target: DropTarget) => void;
@@ -605,15 +607,19 @@ export function ReportItem({
         <ReportChart
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
-            funnelLayout: report.chartType === 'funnel' ? 'dashboard' : undefined,
-            retentionLayout: report.chartType === 'retention' ? 'dashboard' : undefined,
+            funnelLayout:
+              report.chartType === 'funnel' ? 'dashboard' : undefined,
+            retentionLayout:
+              report.chartType === 'retention' ? 'dashboard' : undefined,
             metricLayout:
               report.chartType === 'metric' && report.breakdowns.length === 0
                 ? 'hero'
                 : 'compact',
             metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
-            maxHeight: report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
-            minHeight: report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
+            maxHeight:
+              report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
+            minHeight:
+              report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
           }}
           report={{
             ...report,
@@ -624,6 +630,7 @@ export function ReportItem({
             startDate: startDate ?? null,
             endDate: endDate ?? null,
             interval: interval ?? report.interval,
+            dateConfig: dateConfig ?? report.dateConfig,
           }}
         />
       </div>
@@ -731,15 +738,19 @@ export function ReportItemReadOnly({
         <ReportChart
           options={{
             showFunnelPreviewLabels: report.chartType === 'funnel',
-            funnelLayout: report.chartType === 'funnel' ? 'dashboard' : undefined,
-            retentionLayout: report.chartType === 'retention' ? 'dashboard' : undefined,
+            funnelLayout:
+              report.chartType === 'funnel' ? 'dashboard' : undefined,
+            retentionLayout:
+              report.chartType === 'retention' ? 'dashboard' : undefined,
             metricLayout:
               report.chartType === 'metric' && report.breakdowns.length === 0
                 ? 'hero'
                 : 'compact',
             metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
-            maxHeight: report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
-            minHeight: report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
+            maxHeight:
+              report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
+            minHeight:
+              report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
           }}
           report={{
             ...report,
