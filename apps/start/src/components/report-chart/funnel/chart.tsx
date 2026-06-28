@@ -520,10 +520,12 @@ function FunnelPreviewSummary({
   allBreakdowns,
   breakdowns,
   maxItems,
+  compact = false,
 }: {
   allBreakdowns: RouterOutputs['chart']['funnel']['current'];
   breakdowns: RouterOutputs['chart']['funnel']['current'];
   maxItems: number;
+  compact?: boolean;
 }) {
   const { items, remainingCount } = getFunnelPreviewSummaryItems({
     breakdowns: breakdowns.map((breakdown, index) => {
@@ -542,11 +544,25 @@ function FunnelPreviewSummary({
   }
 
   return (
-    <div className="overflow-x-auto overflow-y-hidden px-4 py-2">
-      <div className="flex min-w-max items-center justify-center gap-x-5 gap-y-1 text-xs whitespace-nowrap">
+    <div
+      className={cn(
+        compact
+          ? 'max-w-full overflow-hidden rounded-full bg-background/80 px-2 py-2 backdrop-blur-sm'
+          : 'overflow-x-auto overflow-y-hidden px-4 py-2'
+      )}
+    >
+      <div
+        className={cn(
+          'flex items-center justify-center gap-y-1 text-xs whitespace-nowrap',
+          compact ? 'max-w-full gap-x-3' : 'min-w-max gap-x-5'
+        )}
+      >
         {items.map((item) => (
           <div
-            className="inline-flex max-w-[160px] shrink-0 items-center gap-1.5 font-medium"
+            className={cn(
+              'inline-flex items-center gap-1.5 font-medium',
+              compact ? 'min-w-0 max-w-[140px] shrink' : 'max-w-[160px] shrink-0'
+            )}
             key={item.id}
             title={`${item.label} • ${item.percentText}`}
           >
@@ -555,8 +571,10 @@ function FunnelPreviewSummary({
               style={{ backgroundColor: getChartColor(item.colorIndex) }}
             />
             <span className="truncate text-foreground/90">{item.label}</span>
-            <span className="text-muted-foreground">•</span>
-            <span className="font-mono text-foreground/90">{item.percentText}</span>
+            <span className="shrink-0 text-muted-foreground">•</span>
+            <span className="shrink-0 font-mono text-foreground/90">
+              {item.percentText}
+            </span>
           </div>
         ))}
         {remainingCount > 0 && (
@@ -1227,11 +1245,12 @@ export function Chart({
           )}
         >
           {hasVisibleBreakdowns && isDashboardLayout && (
-            <div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-full bg-background/80 px-3 backdrop-blur-sm">
+            <div className="pointer-events-none absolute top-2 right-2 left-2 z-10 flex justify-center">
               <FunnelPreviewSummary
                 allBreakdowns={data.current}
                 breakdowns={visibleBreakdowns}
-                maxItems={5}
+                compact={true}
+                maxItems={2}
               />
             </div>
           )}

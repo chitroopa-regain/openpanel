@@ -155,4 +155,23 @@ describe('funnel chart adaptive layout', () => {
     ]);
     expect(summary.remainingCount).toBe(1);
   });
+
+  it('summarizes dashboard previews as two visible values plus remaining count', () => {
+    const summary = getFunnelPreviewSummaryItems({
+      breakdowns: [
+        { breakdowns: ['VARIANT_A'], id: 'a', lastStep: { percent: 3.15 } },
+        { breakdowns: ['BASELINE'], id: 'b', lastStep: { percent: 2.1 } },
+        { breakdowns: ['DEFAULT_REMOTE'], id: 'c', lastStep: { percent: 1.2 } },
+        { breakdowns: ['DEFAULT_LOCAL'], id: 'd', lastStep: { percent: 0.9 } },
+        { breakdowns: ['CONTROL'], id: 'e', lastStep: { percent: 0.7 } },
+      ],
+      maxItems: 2,
+    });
+
+    expect(summary.items.map((item) => item.label)).toEqual([
+      'VARIANT_A',
+      'BASELINE',
+    ]);
+    expect(summary.remainingCount).toBe(3);
+  });
 });
