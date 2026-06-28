@@ -381,6 +381,37 @@ export default function ReportEditor({
     )
   );
 
+  const createReportFromName = useMutation(
+    trpc.report.create.mutationOptions({
+      onSuccess(res) {
+        toast('Success', {
+          description: 'Report created.',
+        });
+        queryClient.invalidateQueries(
+          trpc.report.list.queryFilter({
+            dashboardId: res.dashboardId,
+            projectId: res.projectId,
+          })
+        );
+        queryClient.invalidateQueries(trpc.dashboard.list.pathFilter());
+        router
+          .navigate({
+            to: '/$organizationId/$projectId/reports/$reportId',
+            params: {
+              organizationId,
+              projectId,
+              reportId: res.id,
+            },
+            search: search?.dashboardId
+              ? { dashboardId: search.dashboardId }
+              : undefined,
+          })
+          .catch(handleError);
+      },
+      onError: handleError,
+    })
+  );
+
   const updateReportName = useMutation(
     trpc.report.update.mutationOptions({
       onSuccess(res) {
@@ -424,7 +455,22 @@ export default function ReportEditor({
 
   const handleReportNameSubmit = useCallback(
     (name: string) => {
-      if (!(reportId && organizationId && projectId && report.ready)) {
+      if (!(organizationId && projectId && report.ready)) {
+        return;
+      }
+
+      if (!reportId) {
+        if (!search?.dashboardId) {
+          return;
+        }
+
+        createReportFromName.mutate({
+          dashboardId: search.dashboardId,
+          report: {
+            ...report,
+            name,
+          },
+        });
         return;
       }
 
@@ -436,7 +482,16 @@ export default function ReportEditor({
         },
       });
     },
-    [organizationId, projectId, report, report.ready, reportId, updateReportName]
+    [
+      createReportFromName,
+      organizationId,
+      projectId,
+      report,
+      report.ready,
+      reportId,
+      search?.dashboardId,
+      updateReportName,
+    ]
   );
 
   // Set report if reportId exists
