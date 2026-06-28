@@ -73,16 +73,17 @@ const EditReportName = ({ onSubmit: onSubmitName }: Props) => {
 
   return (
     <button
-      className="group flex h-8 cursor-pointer select-none items-center gap-2 font-medium text-xl"
+      className="group flex h-8 max-w-full min-w-0 cursor-pointer select-none items-center gap-2 font-medium text-xl"
       onClick={() => {
         submitGuardRef.current = false;
         setIsEditing(true);
       }}
+      title={newName || 'Unnamed Report'}
       type="button"
     >
-      {newName || 'Unnamed Report'}
+      <span className="min-w-0 truncate">{newName || 'Unnamed Report'}</span>
       <PencilIcon
-        className="opacity-0 transition-opacity group-hover:opacity-100"
+        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
         size={16}
       />
     </button>
