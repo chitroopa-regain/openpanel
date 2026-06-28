@@ -45,7 +45,22 @@ describe('funnel chart adaptive layout', () => {
     });
 
     expect(responsiveSize).toBeGreaterThan(fixedSize);
-    expect(responsiveSize).toBeLessThanOrEqual(128);
+    expect(responsiveSize).toBeGreaterThan(180);
+  });
+
+  it('uses nearly the full step band for two-step, two-breakdown dashboard funnels', () => {
+    const responsiveSize = getFunnelResponsiveBarSize({
+      containerWidth: 3200,
+      chartWidth: 3200,
+      breakdownCount: 2,
+      stepCount: 2,
+      dashboardLayout: true,
+    });
+
+    // 2 bars at ~739px plus an 8px bar gap leaves only a small Mixpanel-like
+    // gap between the two step groups instead of a large empty category band.
+    expect(responsiveSize).toBeGreaterThanOrEqual(700);
+    expect(responsiveSize).toBeLessThanOrEqual(720);
   });
 
   it('keeps responsive bars compact when there is no spare width', () => {

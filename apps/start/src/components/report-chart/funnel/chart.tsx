@@ -1047,36 +1047,29 @@ export function getFunnelResponsiveBarSize({
   }
 
   // Recharts centers each step in a category band. A fixed barSize leaves the
-  // group tiny in wide dashboard cards (the Mixpanel screenshot instead grows
-  // the bars to consume the available band). Estimate the drawable band and use
-  // more of it as more breakdown bars are present, while keeping sane caps for
-  // compact cards and single-series funnels.
-  const estimatedAxisAndMargins = dashboardLayout ? 64 : 72;
+  // group tiny in wide dashboard cards. Mixpanel uses almost the full category
+  // band, leaving just a small breathing gap between step groups, so calculate
+  // the bar width from the available band instead of applying a small cap.
+  const estimatedAxisAndMargins = dashboardLayout ? 56 : 64;
   const plotWidth =
     Math.max(containerWidth, chartWidth) - estimatedAxisAndMargins;
   const stepBandWidth = Math.max(0, plotWidth / stepCount);
   const groupOccupancy =
     breakdownCount <= 1
-      ? 0.46
+      ? 0.72
       : breakdownCount === 2
-        ? 0.64
+        ? 0.94
         : breakdownCount === 3
-          ? 0.72
+          ? 0.92
           : breakdownCount === 4
-            ? 0.82
-            : 0.92;
+            ? 0.9
+            : 0.88;
   const barGap = breakdownCount > 1 ? 8 : 0;
   const availableGroupWidth = stepBandWidth * groupOccupancy;
   const targetSize =
     (availableGroupWidth - Math.max(0, breakdownCount - 1) * barGap) /
     breakdownCount;
-  const maxSize = dashboardLayout
-    ? breakdownCount >= 5
-      ? 160
-      : 128
-    : breakdownCount >= 5
-      ? 180
-      : 144;
+  const maxSize = dashboardLayout ? 720 : 560;
 
   return Math.round(
     Math.max(baseSize, Math.min(maxSize, targetSize || baseSize))
@@ -1215,12 +1208,12 @@ export function Chart({
             <FunnelOverallLegend percent={overallPercent} />
           </div>
         )}
-        {hasVisibleBreakdowns && (
-          <div className={cn(!isDashboardLayout && 'border-b border-border')}>
+        {hasVisibleBreakdowns && !isDashboardLayout && (
+          <div className="border-b border-border">
             <FunnelPreviewSummary
               allBreakdowns={data.current}
               breakdowns={visibleBreakdowns}
-              maxItems={isDashboardLayout ? 5 : 7}
+              maxItems={7}
             />
           </div>
         )}
@@ -1229,18 +1222,29 @@ export function Chart({
           className={cn(
             'relative w-full overflow-x-auto overflow-y-hidden',
             isDashboardLayout
-              ? 'min-h-0 flex-1 px-2 pt-7 pb-0'
+              ? 'min-h-0 flex-1 px-1 pt-4 pb-0'
               : 'aspect-video max-h-[250px] p-4 pb-1'
           )}
         >
+          {hasVisibleBreakdowns && isDashboardLayout && (
+            <div className="pointer-events-none absolute top-0 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background/80 px-3 backdrop-blur-sm">
+              <FunnelPreviewSummary
+                allBreakdowns={data.current}
+                breakdowns={visibleBreakdowns}
+                maxItems={5}
+              />
+            </div>
+          )}
           <div
             className="relative h-full min-w-full"
             style={{ width: chartWidth > 0 ? `${chartWidth}px` : '100%' }}
           >
             <ResponsiveContainer>
               <BarChart
+                barCategoryGap="3%"
+                barGap={8}
                 data={rechartData}
-                margin={{ top: 24, right: 8, left: 0, bottom: 18 }}
+                margin={{ top: 24, right: 4, left: 0, bottom: 18 }}
               >
                 <CartesianGrid
                   className="stroke-border"
