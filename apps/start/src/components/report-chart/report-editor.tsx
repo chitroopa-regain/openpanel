@@ -42,14 +42,6 @@ import {
 } from '@/components/report-chart/report-draft';
 import { TimeWindowPicker } from '@/components/time-window-picker';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppParams } from '@/hooks/use-app-params';
@@ -268,30 +260,6 @@ function ReportSqlContent({ active }: { active: boolean }) {
         </div>
       )}
     </>
-  );
-}
-
-function ShowQueryButton() {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger asChild>
-        <Button icon={CodeIcon} variant="outline">
-          SQL
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[80vh] max-w-3xl overflow-auto">
-        <DialogHeader>
-          <DialogTitle>ClickHouse Query</DialogTitle>
-          <DialogDescription>
-            Inspect the SQL generated for the current chart and copy it for
-            ClickHouse Play if needed.
-          </DialogDescription>
-        </DialogHeader>
-        <ReportSqlContent active={open} />
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -708,7 +676,6 @@ export default function ReportEditor({
                 : 'col-start-2 row-start-1 flex items-center justify-end gap-2 md:col-start-6'
             }
           >
-            {!isAboveLg && <ShowQueryButton />}
             <ReportSaveButton />
           </div>
         </div>
