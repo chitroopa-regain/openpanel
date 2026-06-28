@@ -1227,7 +1227,7 @@ export function Chart({
           )}
         >
           {hasVisibleBreakdowns && isDashboardLayout && (
-            <div className="pointer-events-none absolute top-0 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background/80 px-3 backdrop-blur-sm">
+            <div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-full bg-background/80 px-3 backdrop-blur-sm">
               <FunnelPreviewSummary
                 allBreakdowns={data.current}
                 breakdowns={visibleBreakdowns}
