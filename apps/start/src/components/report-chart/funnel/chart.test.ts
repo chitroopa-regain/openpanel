@@ -3,6 +3,7 @@ import {
   getFunnelBarSize,
   getFunnelLabelLayout,
   getFunnelPreviewSummaryItems,
+  getFunnelResponsiveBarSize,
 } from './chart';
 
 describe('funnel chart adaptive layout', () => {
@@ -27,6 +28,41 @@ describe('funnel chart adaptive layout', () => {
         dashboardLayout: true,
       })
     );
+  });
+
+  it('expands breakdown bars when the dashboard card has spare width', () => {
+    const fixedSize = getFunnelBarSize({
+      breakdownCount: 2,
+      stepCount: 2,
+      dashboardLayout: true,
+    });
+    const responsiveSize = getFunnelResponsiveBarSize({
+      containerWidth: 1000,
+      chartWidth: 1000,
+      breakdownCount: 2,
+      stepCount: 2,
+      dashboardLayout: true,
+    });
+
+    expect(responsiveSize).toBeGreaterThan(fixedSize);
+    expect(responsiveSize).toBeLessThanOrEqual(128);
+  });
+
+  it('keeps responsive bars compact when there is no spare width', () => {
+    const fixedSize = getFunnelBarSize({
+      breakdownCount: 5,
+      stepCount: 4,
+      dashboardLayout: true,
+    });
+    const responsiveSize = getFunnelResponsiveBarSize({
+      containerWidth: 360,
+      chartWidth: 360,
+      breakdownCount: 5,
+      stepCount: 4,
+      dashboardLayout: true,
+    });
+
+    expect(responsiveSize).toBe(fixedSize);
   });
 
   it('sizes value chips from the value text instead of a fixed fat width', () => {

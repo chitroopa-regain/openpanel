@@ -979,7 +979,7 @@ function FunnelXAxisTick({
   );
 }
 
-function getFunnelChartWidth({
+export function getFunnelChartWidth({
   containerWidth,
   stepCount,
   breakdownCount,
@@ -1021,6 +1021,66 @@ function getFunnelChartWidth({
   // Fit to container when possible (no horizontal scroll); fall back to
   // scrolling only if the container is genuinely too narrow for the floor.
   return Math.max(containerWidth, minRequiredWidth);
+}
+
+export function getFunnelResponsiveBarSize({
+  containerWidth,
+  chartWidth,
+  stepCount,
+  breakdownCount,
+  dashboardLayout,
+}: {
+  containerWidth: number;
+  chartWidth: number;
+  stepCount: number;
+  breakdownCount: number;
+  dashboardLayout: boolean;
+}) {
+  const baseSize = getFunnelBarSize({
+    breakdownCount,
+    stepCount,
+    dashboardLayout,
+  });
+
+  if (stepCount <= 0 || breakdownCount <= 0) {
+    return baseSize;
+  }
+
+  // Recharts centers each step in a category band. A fixed barSize leaves the
+  // group tiny in wide dashboard cards (the Mixpanel screenshot instead grows
+  // the bars to consume the available band). Estimate the drawable band and use
+  // more of it as more breakdown bars are present, while keeping sane caps for
+  // compact cards and single-series funnels.
+  const estimatedAxisAndMargins = dashboardLayout ? 64 : 72;
+  const plotWidth =
+    Math.max(containerWidth, chartWidth) - estimatedAxisAndMargins;
+  const stepBandWidth = Math.max(0, plotWidth / stepCount);
+  const groupOccupancy =
+    breakdownCount <= 1
+      ? 0.46
+      : breakdownCount === 2
+        ? 0.64
+        : breakdownCount === 3
+          ? 0.72
+          : breakdownCount === 4
+            ? 0.82
+            : 0.92;
+  const barGap = breakdownCount > 1 ? 8 : 0;
+  const availableGroupWidth = stepBandWidth * groupOccupancy;
+  const targetSize =
+    (availableGroupWidth - Math.max(0, breakdownCount - 1) * barGap) /
+    breakdownCount;
+  const maxSize = dashboardLayout
+    ? breakdownCount >= 5
+      ? 160
+      : 128
+    : breakdownCount >= 5
+      ? 180
+      : 144;
+
+  return Math.round(
+    Math.max(baseSize, Math.min(maxSize, targetSize || baseSize))
+  );
 }
 
 export function Chart({
@@ -1086,7 +1146,9 @@ export function Chart({
       }),
     [containerWidth, steps, visibleBreakdowns.length]
   );
-  const funnelBarSize = getFunnelBarSize({
+  const funnelBarSize = getFunnelResponsiveBarSize({
+    containerWidth,
+    chartWidth,
     breakdownCount: visibleBreakdowns.length,
     stepCount: steps.length,
     dashboardLayout: isDashboardLayout,
