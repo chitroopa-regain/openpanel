@@ -1,35 +1,47 @@
-import { useDispatch, useSelector } from '@/redux';
 import { PencilIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '../ui/input';
 import { setName } from './reportSlice';
+import { useDispatch, useSelector } from '@/redux';
 
-type Props = {
-  name?: string;
-};
+interface Props {
+  onSubmit?: (name: string) => void;
+}
 
-const EditReportName = ({ name }: Props) => {
+const EditReportName = ({ onSubmit: onSubmitName }: Props) => {
   const reportName = useSelector((state) => state.report.name);
   const dispatch = useDispatch();
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(reportName);
   const inputRef = useRef<HTMLInputElement>(null);
+  const submitGuardRef = useRef(false);
 
   useEffect(() => {
     setNewName(reportName);
   }, [reportName]);
 
   const onSubmit = () => {
-    if (newName === name) {
+    if (submitGuardRef.current) {
+      return;
+    }
+
+    submitGuardRef.current = true;
+    const nextName = newName.trim();
+
+    if (!nextName) {
+      setNewName(reportName);
       return setIsEditing(false);
     }
 
-    if (!newName) {
-      setNewName(reportName);
+    if (nextName === reportName) {
+      setNewName(nextName);
+      return setIsEditing(false);
     }
 
+    setNewName(nextName);
     setIsEditing(false);
-    dispatch(setName(newName));
+    dispatch(setName(nextName));
+    onSubmitName?.(nextName);
   };
 
   useEffect(() => {
@@ -42,9 +54,8 @@ const EditReportName = ({ name }: Props) => {
     return (
       <div className="flex h-8">
         <Input
-          ref={inputRef}
-          type="text"
-          value={newName}
+          onBlur={() => onSubmit()}
+          onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -52,8 +63,9 @@ const EditReportName = ({ name }: Props) => {
               onSubmit();
             }
           }}
-          onChange={(e) => setNewName(e.target.value)}
-          onBlur={() => onSubmit()}
+          ref={inputRef}
+          type="text"
+          value={newName}
         />
       </div>
     );
@@ -61,14 +73,17 @@ const EditReportName = ({ name }: Props) => {
 
   return (
     <button
+      className="group flex h-8 cursor-pointer select-none items-center gap-2 font-medium text-xl"
+      onClick={() => {
+        submitGuardRef.current = false;
+        setIsEditing(true);
+      }}
       type="button"
-      className="flex cursor-pointer select-none items-center gap-2 text-xl font-medium h-8 group"
-      onClick={() => setIsEditing(true)}
     >
       {newName || 'Unnamed Report'}
       <PencilIcon
+        className="opacity-0 transition-opacity group-hover:opacity-100"
         size={16}
-        className="opacity-0 group-hover:opacity-100 transition-opacity"
       />
     </button>
   );

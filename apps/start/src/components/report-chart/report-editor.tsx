@@ -1,5 +1,5 @@
 import type { IServiceReport } from '@openpanel/db';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter, useSearch } from '@tanstack/react-router';
 import {
   CodeIcon,
@@ -29,6 +29,7 @@ import {
   hydrateDraftReport,
   ready,
   reset,
+  resetDirty,
   setReport,
 } from '@/components/report/reportSlice';
 import { ReportSidebar } from '@/components/report/sidebar/ReportSidebar';
@@ -53,7 +54,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppParams } from '@/hooks/use-app-params';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
-import { useTRPC } from '@/integrations/trpc/react';
+import { handleError, useTRPC } from '@/integrations/trpc/react';
 import { pushModal } from '@/modals';
 import { useDispatch, useSelector } from '@/redux';
 
@@ -357,6 +358,7 @@ export default function ReportEditor({
   const report = useSelector((state) => state.report);
   const draftTokenRef = useRef<string | null>(search?.draft ?? null);
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const projectQuery = useQuery(
     trpc.project.getProjectWithClients.queryOptions(
       { projectId },
@@ -377,6 +379,64 @@ export default function ReportEditor({
         staleTime: 1000 * 60,
       }
     )
+  );
+
+  const updateReportName = useMutation(
+    trpc.report.update.mutationOptions({
+      onSuccess(res) {
+        if (search?.draft && reportId && organizationId && projectId) {
+          clearReportDraft(search.draft);
+          router
+            .navigate({
+              to: '/$organizationId/$projectId/reports/$reportId',
+              params: {
+                organizationId,
+                projectId,
+                reportId,
+              },
+              search: {
+                ...(search ?? {}),
+                draft: undefined,
+              },
+              replace: true,
+            })
+            .catch(handleError);
+        }
+        dispatch(resetDirty());
+        toast('Success', {
+          description: 'Report renamed.',
+        });
+        queryClient.invalidateQueries(
+          trpc.report.list.queryFilter({
+            dashboardId: res.dashboardId,
+            projectId: res.projectId,
+          })
+        );
+        queryClient.invalidateQueries(
+          trpc.report.get.queryFilter({
+            reportId,
+          })
+        );
+      },
+      onError: handleError,
+    })
+  );
+
+  const handleReportNameSubmit = useCallback(
+    (name: string) => {
+      if (!(reportId && organizationId && projectId && report.ready)) {
+        return;
+      }
+
+      updateReportName.mutate({
+        reportId,
+        report: {
+          ...report,
+          name,
+        },
+      });
+    },
+    [organizationId, projectId, report, report.ready, reportId, updateReportName]
   );
 
   // Set report if reportId exists
@@ -515,7 +575,7 @@ export default function ReportEditor({
           <div className="min-w-0">
             <PageBreadcrumbs items={breadcrumbItems} />
             <div className="mt-2">
-              <EditReportName />
+              <EditReportName onSubmit={handleReportNameSubmit} />
             </div>
           </div>
           <div className="flex items-center gap-2">
