@@ -56,6 +56,14 @@ describe('getFunnelBreakdownStickyLayout', () => {
     );
   });
 
+  it('reserves enough width for the first step event-name header', () => {
+    const metrics = getFunnelBreakdownMetricColumnWidths();
+
+    // The first step header does not span Time/Conv/# columns, so it needs its
+    // own wide column to show names like "1 Application Installed".
+    expect(metrics.firstStepCount).toBeGreaterThanOrEqual(240);
+  });
+
   it('keeps enough trailing scroll room to reveal the final metric column', () => {
     expect(getFunnelBreakdownTableScrollGutterWidth()).toBeGreaterThanOrEqual(
       96

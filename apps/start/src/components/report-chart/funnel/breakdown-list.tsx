@@ -68,7 +68,11 @@ export function getFunnelBreakdownStickyLayout() {
 
 export function getFunnelBreakdownMetricColumnWidths() {
   return {
-    firstStepCount: 96,
+    // The first step has only one metric sub-column, so its step-name header
+    // does not span the wider Time/Conv/# group used by later steps. Reserve
+    // enough room for real event names such as "Application Installed" instead
+    // of letting the fixed table clip them to "Application I".
+    firstStepCount: 240,
     time: 96,
     conversion: 112,
     count: 80,
@@ -211,7 +215,7 @@ export function BreakdownList({
     );
   };
 
-  const stickySubHeaderStyle = { top: 37 };
+  const stickySubHeaderStyle = { top: 48 };
 
   const sortableHeader = (
     key: SortKey,
@@ -220,7 +224,7 @@ export function BreakdownList({
     style?: CSSProperties
   ) => (
     <th
-      className={`px-3 py-1 text-right font-normal cursor-pointer hover:text-foreground select-none whitespace-nowrap ${className ?? ''}`}
+      className={`h-12 px-3 py-0 align-middle text-right font-normal cursor-pointer hover:text-foreground select-none whitespace-nowrap ${className ?? ''}`}
       style={style}
       onClick={() => handleSort(key)}
     >
@@ -347,13 +351,13 @@ export function BreakdownList({
         </colgroup>
         <thead>
           {/* Row 1: step group headers */}
-          <tr className="border-b border-border">
+          <tr className="h-12 border-b border-border">
             <th
-              className={`px-2 py-2 ${stickyHeaderLeft0}`}
+              className={`h-12 px-2 py-0 align-middle ${stickyHeaderLeft0}`}
               style={stickySelectionStyle}
             />
             <th
-              className={`px-3 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft1}`}
+              className={`h-12 px-3 py-0 align-middle text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft1}`}
               onClick={() => handleSort('label')}
               style={stickyBreakdownStyle}
             >
@@ -361,7 +365,7 @@ export function BreakdownList({
               <SortIcon col="label" />
             </th>
             <th
-              className={`px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft2}`}
+              className={`h-12 px-3 py-0 align-middle text-right font-medium text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft2}`}
               onClick={() => handleSort('totalConv')}
               style={stickyTotalConversionStyle}
             >
@@ -374,7 +378,7 @@ export function BreakdownList({
                 <th
                   key={step.event.id ?? i}
                   colSpan={colSpan}
-                  className={`px-3 py-2 text-center border-l border-border whitespace-nowrap ${stickyHeader}`}
+                  className={`h-12 px-3 py-0 align-middle text-center border-l border-border whitespace-nowrap ${stickyHeader}`}
                 >
                   <span className="text-muted-foreground font-normal">
                     {i + 1}
@@ -387,22 +391,22 @@ export function BreakdownList({
             })}
             <th
               aria-hidden="true"
-              className={`px-0 py-2 ${stickyHeader}`}
+              className={`h-12 px-0 py-0 align-middle ${stickyHeader}`}
               style={scrollGutterStyle}
             />
           </tr>
           {/* Row 2: sub-column labels (sortable) */}
-          <tr className="border-b border-border">
+          <tr className="h-12 border-b border-border">
             <th
-              className={`px-2 py-1 ${stickyHeaderLeft0}`}
+              className={`h-12 px-2 py-0 align-middle ${stickyHeaderLeft0}`}
               style={{ ...stickySelectionStyle, ...stickySubHeaderStyle }}
             />
             <th
-              className={`px-3 py-1 ${stickyHeaderLeft1}`}
+              className={`h-12 px-3 py-0 align-middle ${stickyHeaderLeft1}`}
               style={{ ...stickyBreakdownStyle, ...stickySubHeaderStyle }}
             />
             <th
-              className={`px-3 py-1 ${stickyHeaderLeft2}`}
+              className={`h-12 px-3 py-0 align-middle ${stickyHeaderLeft2}`}
               style={{
                 ...stickyTotalConversionStyle,
                 ...stickySubHeaderStyle,
@@ -446,7 +450,7 @@ export function BreakdownList({
             })}
             <th
               aria-hidden="true"
-              className={`px-0 py-1 ${stickyHeader}`}
+              className={`h-12 px-0 py-0 align-middle ${stickyHeader}`}
               style={{ ...scrollGutterStyle, ...stickySubHeaderStyle }}
             />
           </tr>
