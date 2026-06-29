@@ -12,8 +12,10 @@ type CohortTableProps = {
 
 const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   const {
-    report: { unit, interval, options },
+    report: { unit, options },
   } = useReportChartContext();
+  const retentionUnit =
+    options?.type === 'retention' ? (options.retentionUnit ?? 'day') : 'day';
   const isPropertyMeasure =
     options?.type === 'retention' &&
     (options.metric === 'property_average' ||
@@ -25,6 +27,12 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   const rowWithHigestSum = data.find(
     (row) => row.sum === max(data.map((row) => row.sum))
   );
+
+  const getColumnLabel = (index: number) => {
+    const unitLabel =
+      retentionUnit.charAt(0).toUpperCase() + retentionUnit.slice(1);
+    return index === 0 ? `< 1 ${unitLabel}` : `${unitLabel} ${index}`;
+  };
 
   const getBackground = (value: number | undefined) => {
     if (!value) {
@@ -72,7 +80,7 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
                     className={cn(thClassName, 'capitalize')}
                     key={index.toString()}
                   >
-                    {index === 0 ? `< ${interval} 1` : `${interval} ${index}`}
+                    {getColumnLabel(index)}
                   </th>
                 ))}
               </tr>

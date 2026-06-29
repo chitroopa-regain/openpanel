@@ -18,6 +18,7 @@ import type {
   UnionOmit,
   zCriteria,
   zFunnelMeasure,
+  zRetentionTimeUnit,
 } from '@openpanel/validation';
 import type { PayloadAction } from '@reduxjs/toolkit';
 import { createSlice } from '@reduxjs/toolkit';
@@ -360,6 +361,21 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeRetentionUnit(
+      state,
+      action: PayloadAction<z.infer<typeof zRetentionTimeUnit> | undefined>
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          type: 'retention',
+          retentionUnit: action.payload,
+        };
+      } else {
+        state.options.retentionUnit = action.payload;
+      }
+    },
+
     changeFunnelGroup(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
@@ -593,6 +609,7 @@ export const {
   changeUnit,
   changeRetentionMetric,
   changeRetentionProperty,
+  changeRetentionUnit,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,

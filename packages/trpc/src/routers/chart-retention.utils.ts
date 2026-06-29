@@ -7,6 +7,24 @@ export type RetentionMeasure =
   | 'property_sum'
   | 'property_average';
 
+export type RetentionTimeUnit = 'day' | 'week' | 'month';
+
+export function getRetentionTimeUnitConfig(unit: RetentionTimeUnit): {
+  diffUnit: RetentionTimeUnit;
+  sqlInterval: 'DAY' | 'WEEK' | 'MONTH';
+} {
+  const config = {
+    day: { diffUnit: 'day', sqlInterval: 'DAY' },
+    week: { diffUnit: 'week', sqlInterval: 'WEEK' },
+    month: { diffUnit: 'month', sqlInterval: 'MONTH' },
+  } as const satisfies Record<
+    RetentionTimeUnit,
+    { diffUnit: RetentionTimeUnit; sqlInterval: 'DAY' | 'WEEK' | 'MONTH' }
+  >;
+
+  return config[unit];
+}
+
 export function isWildcardEventSelection(events: string[]) {
   return events.includes('*');
 }
@@ -51,7 +69,7 @@ export function buildRetentionMeasureIntervalSelect({
   propertyExpression,
 }: {
   index: number;
-  criteria: '>=' | '=';
+  criteria: '>=' | '=' | '<=';
   measure?: RetentionMeasure;
   propertyExpression?: string;
 }) {

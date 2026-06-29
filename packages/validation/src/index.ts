@@ -156,7 +156,8 @@ export const zMetric = z.enum(objectToZodEnums(metrics));
 
 export const zRange = z.enum(objectToZodEnums(timeWindows));
 
-export const zCriteria = z.enum(['on_or_after', 'on']);
+export const zCriteria = z.enum(['on_or_after', 'on', 'on_or_before']);
+export const zRetentionTimeUnit = z.enum(['day', 'week', 'month']);
 export const zRetentionMeasure = z.enum([
   'retention_rate',
   'unique_users',
@@ -204,6 +205,8 @@ export const zRetentionOptions = z.object({
   day: z.number().optional(),
   metric: zRetentionMeasure.optional(),
   property: z.string().optional(),
+  /** Time unit used for retention return buckets. Independent from report.interval, which controls cohort aggregation. */
+  retentionUnit: zRetentionTimeUnit.optional(),
 });
 
 export const zSankeyOptions = z.object({

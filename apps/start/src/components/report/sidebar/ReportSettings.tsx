@@ -10,6 +10,7 @@ import {
   changePrevious,
   changeRetentionMetric,
   changeRetentionProperty,
+  changeRetentionUnit,
   changeSankeyExclude,
   changeSankeyInclude,
   changeSankeyMode,
@@ -39,6 +40,7 @@ export function ReportSettings() {
     retentionOptions?.metric ??
     (unit === '%' ? 'retention_rate' : 'unique_users');
   const retentionProperty = retentionOptions?.property;
+  const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
   const funnelGroup = funnelOptions?.funnelGroup;
@@ -110,6 +112,7 @@ export function ReportSettings() {
 
     if (chartType === 'retention') {
       fields.push('criteria');
+      fields.push('retentionUnit');
       fields.push('retentionMetric');
       fields.push('retentionProperty');
       fields.push('unit');
@@ -190,10 +193,38 @@ export function ReportSettings() {
                   label: 'On',
                   value: 'on',
                 },
+                {
+                  label: 'On or Before',
+                  value: 'on_or_before',
+                },
               ]}
               onChange={(val) => dispatch(changeCriteria(val))}
               placeholder="Select criteria"
               value={criteria}
+            />
+          </div>
+        )}
+        {fields.includes('retentionUnit') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              Conversion Window
+            </Label>
+            <Combobox
+              align="end"
+              items={[
+                { label: 'Each Day', value: 'day' },
+                { label: 'Each Week', value: 'week' },
+                { label: 'Each Month', value: 'month' },
+              ]}
+              onChange={(val) =>
+                dispatch(
+                  changeRetentionUnit(
+                    val === 'week' || val === 'month' ? val : undefined
+                  )
+                )
+              }
+              placeholder="Each Day"
+              value={retentionUnit}
             />
           </div>
         )}

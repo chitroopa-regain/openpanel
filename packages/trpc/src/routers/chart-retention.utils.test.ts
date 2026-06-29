@@ -4,6 +4,7 @@ import {
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
+  getRetentionTimeUnitConfig,
   isWildcardEventSelection,
 } from './chart-retention.utils';
 
@@ -98,5 +99,34 @@ describe('chart retention utils', () => {
     ).toBe(
       'round(sumIf(r.retention_property_value, r.x_after_cohort >= 1), 2) AS interval_1_user_count'
     );
+  });
+
+  it('builds on-or-before retention predicates for cumulative property windows', () => {
+    expect(
+      buildRetentionMeasureIntervalSelect({
+        index: 7,
+        criteria: '<=',
+        measure: 'property_sum',
+        propertyExpression:
+          "toFloat64OrNull(toString(properties['value_inr']))",
+      })
+    ).toBe(
+      'round(sumIf(r.retention_property_value, r.x_after_cohort <= 7), 2) AS interval_7_user_count'
+    );
+  });
+
+  it('maps a separate retention time unit to diff/sql/dateDiff units', () => {
+    expect(getRetentionTimeUnitConfig('day')).toEqual({
+      diffUnit: 'day',
+      sqlInterval: 'DAY',
+    });
+    expect(getRetentionTimeUnitConfig('week')).toEqual({
+      diffUnit: 'week',
+      sqlInterval: 'WEEK',
+    });
+    expect(getRetentionTimeUnitConfig('month')).toEqual({
+      diffUnit: 'month',
+      sqlInterval: 'MONTH',
+    });
   });
 });

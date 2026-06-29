@@ -41,6 +41,7 @@ import {
   zRange,
   zReportInput,
   zRetentionMeasure,
+  zRetentionTimeUnit,
   zTimeInterval,
 } from '@openpanel/validation';
 import {
@@ -66,6 +67,7 @@ import {
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
+  getRetentionTimeUnitConfig,
   isRetentionPropertyMeasure,
 } from './chart-retention.utils';
 
@@ -938,6 +940,7 @@ export const chartRouter = createTRPCRouter({
         criteria: zCriteria.default('on_or_after'),
         metric: zRetentionMeasure.optional(),
         property: z.string().optional(),
+        retentionUnit: zRetentionTimeUnit.default('day'),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         interval: zTimeInterval.default('day'),
@@ -957,6 +960,7 @@ export const chartRouter = createTRPCRouter({
       let criteria = input.criteria;
       let retentionMetric = input.metric ?? 'unique_users';
       let retentionProperty = input.property;
+      let retentionUnit = input.retentionUnit;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
         : input.range;
@@ -990,6 +994,7 @@ export const chartRouter = createTRPCRouter({
         criteria = retentionOptions?.criteria ?? criteria;
         retentionMetric = retentionOptions?.metric ?? retentionMetric;
         retentionProperty = retentionOptions?.property ?? retentionProperty;
+        retentionUnit = retentionOptions?.retentionUnit ?? retentionUnit;
 
         const firstItem = ctx.report.series[0];
         const secondItem = ctx.report.series[1];
@@ -1079,20 +1084,13 @@ export const chartRouter = createTRPCRouter({
         },
         timezone
       );
+      const retentionTimeUnitConfig = getRetentionTimeUnitConfig(retentionUnit);
       const diffInterval = {
-        minute: () => differenceInDays(dates.endDate, dates.startDate),
-        hour: () => differenceInDays(dates.endDate, dates.startDate),
         day: () => differenceInDays(dates.endDate, dates.startDate),
         week: () => differenceInWeeks(dates.endDate, dates.startDate),
         month: () => differenceInMonths(dates.endDate, dates.startDate),
-      }[interval]();
-      const sqlInterval = {
-        minute: 'DAY',
-        hour: 'DAY',
-        day: 'DAY',
-        week: 'WEEK',
-        month: 'MONTH',
-      }[interval];
+      }[retentionTimeUnitConfig.diffUnit]();
+      const sqlInterval = retentionTimeUnitConfig.sqlInterval;
 
       // toStartOfWeek/toStartOfMonth need DateTime input for timezone arg.
       // When col is already a Date (e.g. event_date), cast to DateTime first.
@@ -1106,8 +1104,23 @@ export const chartRouter = createTRPCRouter({
             return `toDate(${col}, '${timezone}')`;
         }
       };
+      const toStartOfRetentionInterval = (col: string) => {
+        switch (retentionUnit) {
+          case 'week':
+            return `toStartOfWeek(toDateTime(${col}), 0, '${timezone}')`;
+          case 'month':
+            return `toStartOfMonth(toDateTime(${col}), '${timezone}')`;
+          default:
+            return `toDate(${col}, '${timezone}')`;
+        }
+      };
 
-      const countCriteria = criteria === 'on_or_after' ? '>=' : '=';
+      const countCriteria =
+        criteria === 'on_or_after'
+          ? '>='
+          : criteria === 'on_or_before'
+            ? '<='
+            : '=';
       const retentionPropertyExpr = getRetentionMeasurePropertyExpression(
         retentionMetric,
         retentionProperty
@@ -1247,7 +1260,7 @@ export const chartRouter = createTRPCRouter({
               f.cohort_interval,
               l.profile_id,
               ${retentionPropertyExpr ? 'l.retention_property_value,' : ''}
-              dateDiff('${sqlInterval}', f.cohort_interval, ${toStartOfInterval('l.event_date')}) AS x_after_cohort
+              dateDiff('${sqlInterval}', f.cohort_interval, ${toStartOfRetentionInterval('l.event_date')}) AS x_after_cohort
           FROM cohort_users AS f
           INNER JOIN last_event AS l ON f.userID = l.profile_id
           WHERE (l.event_date >= f.cohort_interval)

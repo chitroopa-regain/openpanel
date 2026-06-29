@@ -143,6 +143,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
         criteria: retentionOptions?.criteria,
         metric: retentionOptions?.metric,
         property: retentionOptions?.property,
+        retentionUnit: retentionOptions?.retentionUnit,
         interval: report.interval,
         id: 'id' in report ? report.id : undefined,
       },

@@ -46,6 +46,7 @@ export function ReportRetentionChart() {
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
   const metric = retentionOptions?.metric;
   const property = retentionOptions?.property;
+  const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
   const isEnabled =
     (firstEvent.length > 0 || !!firstCustomEventId) &&
     (secondEvent.length > 0 || !!secondCustomEventId) &&
@@ -69,6 +70,7 @@ export function ReportRetentionChart() {
     criteria,
     metric,
     property,
+    retentionUnit,
     interval: report.interval,
     shareId,
     id: 'id' in report ? report.id : undefined,
