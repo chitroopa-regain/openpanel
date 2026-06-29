@@ -257,14 +257,16 @@ export class ConversionService {
     const firstEventTable = useEventsFirst ? TABLE_NAMES.events : TABLE_NAMES.cohort_events_mv;
     const firstIdentifiedFilter = useEventsFirst ? 'AND e.profile_id != e.device_id' : '';
 
-    const secondItem = series[1] as { type?: string; filters?: any[] } | undefined;
     const secondCustomEventComponents = resolvedEvents[1]?.customEventComponents;
+    const secondItem = series[1] as { type?: string; filters?: any[] } | undefined;
     const secondEventFilters = secondItem?.filters ?? [];
+    const secondComponentFilters = (secondCustomEventComponents || []).flatMap(
+      (c: any) => c.filters || [],
+    );
 
     const useEventsSecond =
-      secondItem?.type === 'custom_event' ||
-      (secondCustomEventComponents && secondCustomEventComponents.length > 0) ||
-      needsEventsTable(secondEventFilters);
+      needsEventsTable(secondEventFilters) ||
+      needsEventsTable(secondComponentFilters);
 
     const secondEventTable = useEventsSecond ? TABLE_NAMES.events : TABLE_NAMES.cohort_events_mv;
     const secondIdentifiedFilter = useEventsSecond ? 'AND profile_id != device_id' : '';
