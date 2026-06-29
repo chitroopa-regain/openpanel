@@ -37,6 +37,7 @@ interface MetricCardProps {
   color?: string;
   metric: IChartMetric;
   unit?: string;
+  forceCompactLayout?: boolean;
 }
 
 function renderExactMetricValue(
@@ -102,10 +103,11 @@ export function MetricCard({
   color: _color,
   metric,
   unit,
+  forceCompactLayout = false,
 }: MetricCardProps) {
   const { isEditMode, options, report } = useReportChartContext();
   const number = useNumber();
-  const isHero = options.metricLayout === 'hero';
+  const isHero = options.metricLayout === 'hero' && !forceCompactLayout;
   const metricSurface = options.metricSurface ?? 'card';
   const [compactCardRef, compactCardWidth] = useElementWidth<HTMLDivElement>();
 

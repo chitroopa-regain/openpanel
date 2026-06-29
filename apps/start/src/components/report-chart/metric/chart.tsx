@@ -12,6 +12,13 @@ interface Props {
   data: IChartData;
 }
 
+export function shouldForceCompactMetricLayout(
+  metricLayout: string | undefined,
+  seriesCount: number,
+) {
+  return metricLayout === 'hero' && seriesCount > 1;
+}
+
 export function Chart({ data }: Props) {
   const {
     isEditMode,
@@ -53,6 +60,10 @@ export function Chart({ data }: Props) {
             serie={serie}
             metric={'count'}
             unit={unit}
+            forceCompactLayout={shouldForceCompactMetricLayout(
+              metricLayout,
+              displaySeries.length,
+            )}
           />
         );
       })}
