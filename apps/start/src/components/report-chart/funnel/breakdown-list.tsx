@@ -96,6 +96,19 @@ export function getFunnelBreakdownTableMinWidth(stepCount: number) {
   return pinnedWidth + metricWidth + getFunnelBreakdownTableScrollGutterWidth();
 }
 
+export function getFunnelBreakdownStickyColumnStyle(
+  column: keyof ReturnType<typeof getFunnelBreakdownStickyLayout>
+) {
+  const layout = getFunnelBreakdownStickyLayout()[column];
+
+  return {
+    left: layout.left,
+    width: layout.width,
+    minWidth: layout.width,
+    maxWidth: layout.width,
+  };
+}
+
 // Sticky cell styles. Widths include horizontal padding; the left offsets must
 // match the rendered widths or the pinned Total Conv. column can overlap/crop
 // percentage values on narrow mobile viewports. Keep these literal Tailwind
@@ -115,6 +128,7 @@ const stickyHeaderLeft2 =
   'sticky top-0 left-[240px] z-30 bg-card border-r border-border w-[120px] min-w-[120px]';
 const scrollGutterWidth = getFunnelBreakdownTableScrollGutterWidth();
 const scrollGutterStyle = {
+  width: scrollGutterWidth,
   minWidth: scrollGutterWidth,
 };
 
@@ -180,6 +194,10 @@ export function BreakdownList({
 
   const steps = allBreakdowns[0]!.steps;
   const stickyLayout = getFunnelBreakdownStickyLayout();
+  const stickySelectionStyle = getFunnelBreakdownStickyColumnStyle('selection');
+  const stickyBreakdownStyle = getFunnelBreakdownStickyColumnStyle('breakdown');
+  const stickyTotalConversionStyle =
+    getFunnelBreakdownStickyColumnStyle('totalConversion');
   const metricWidths = getFunnelBreakdownMetricColumnWidths();
   const tableMinWidth = getFunnelBreakdownTableMinWidth(steps.length);
 
@@ -288,8 +306,12 @@ export function BreakdownList({
         </div>
       )}
       <table
-        className="w-full table-fixed text-sm border-collapse"
-        style={{ minWidth: tableMinWidth }}
+        className="text-sm border-collapse"
+        style={{
+          tableLayout: 'fixed',
+          width: tableMinWidth,
+          minWidth: tableMinWidth,
+        }}
       >
         <colgroup>
           <col style={{ width: stickyLayout.selection.width }} />
@@ -317,10 +339,14 @@ export function BreakdownList({
         <thead>
           {/* Row 1: step group headers */}
           <tr className={`border-b border-border ${stickyHeader}`}>
-            <th className={`px-2 py-2 w-8 ${stickyHeaderLeft0}`} />
             <th
-              className={`px-3 py-2 text-left font-medium text-muted-foreground min-w-[200px] cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft1}`}
+              className={`px-2 py-2 ${stickyHeaderLeft0}`}
+              style={stickySelectionStyle}
+            />
+            <th
+              className={`px-3 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft1}`}
               onClick={() => handleSort('label')}
+              style={stickyBreakdownStyle}
             >
               Breakdown
               <SortIcon col="label" />
@@ -328,6 +354,7 @@ export function BreakdownList({
             <th
               className={`px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft2}`}
               onClick={() => handleSort('totalConv')}
+              style={stickyTotalConversionStyle}
             >
               Total Conv.
               <SortIcon col="totalConv" />
@@ -362,15 +389,15 @@ export function BreakdownList({
           >
             <th
               className={`px-2 py-1 ${stickyHeaderLeft0}`}
-              style={{ top: 37 }}
+              style={{ ...stickySelectionStyle, top: 37 }}
             />
             <th
               className={`px-3 py-1 ${stickyHeaderLeft1}`}
-              style={{ top: 37 }}
+              style={{ ...stickyBreakdownStyle, top: 37 }}
             />
             <th
               className={`px-3 py-1 ${stickyHeaderLeft2}`}
-              style={{ top: 37 }}
+              style={{ ...stickyTotalConversionStyle, top: 37 }}
             />
             {steps.map((step, i) => {
               if (i === 0) {
@@ -419,7 +446,10 @@ export function BreakdownList({
                 key={item.id}
                 className="border-b border-border last:border-b-0 hover:bg-muted/30"
               >
-                <td className={`px-2 py-2 ${stickyLeft0}`}>
+                <td
+                  className={`px-2 py-2 ${stickyLeft0}`}
+                  style={stickySelectionStyle}
+                >
                   <Checkbox
                     checked={isVisible}
                     onCheckedChange={() => onToggleVisibility(item.id)}
@@ -433,12 +463,14 @@ export function BreakdownList({
                 </td>
                 <td
                   className={`px-3 py-2 font-medium truncate max-w-[200px] ${stickyLeft1}`}
+                  style={stickyBreakdownStyle}
                   title={label}
                 >
                   {label}
                 </td>
                 <td
                   className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${stickyLeft2}`}
+                  style={stickyTotalConversionStyle}
                 >
                   {number.formatWithUnit(item.lastStep.percent / 100, '%')}
                 </td>

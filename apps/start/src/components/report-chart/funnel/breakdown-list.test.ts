@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getFunnelBreakdownMetricColumnWidths,
+  getFunnelBreakdownStickyColumnStyle,
   getFunnelBreakdownStickyLayout,
   getFunnelBreakdownTableMinWidth,
   getFunnelBreakdownTableScrollGutterWidth,
@@ -59,5 +60,26 @@ describe('getFunnelBreakdownStickyLayout', () => {
     expect(getFunnelBreakdownTableScrollGutterWidth()).toBeGreaterThanOrEqual(
       96
     );
+  });
+
+  it('exports inline sticky styles that cannot be overridden by table auto-layout CSS', () => {
+    expect(getFunnelBreakdownStickyColumnStyle('selection')).toEqual({
+      left: 0,
+      width: 40,
+      minWidth: 40,
+      maxWidth: 40,
+    });
+    expect(getFunnelBreakdownStickyColumnStyle('breakdown')).toEqual({
+      left: 40,
+      width: 200,
+      minWidth: 200,
+      maxWidth: 200,
+    });
+    expect(getFunnelBreakdownStickyColumnStyle('totalConversion')).toEqual({
+      left: 240,
+      width: 120,
+      minWidth: 120,
+      maxWidth: 120,
+    });
   });
 });
