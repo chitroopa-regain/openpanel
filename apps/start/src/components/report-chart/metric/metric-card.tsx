@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react';
+
 import { fancyMinutes, useNumber } from '@/hooks/use-numer-formatter';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
@@ -25,6 +27,8 @@ import {
   compactMetricCardClassName,
   compactMetricLabelClassName,
   compactMetricValueClassName,
+  getCompactMetricLabelFontSizePx,
+  getCompactMetricValueFontSizePx,
 } from './metric-card-layout';
 import { formatMetricDisplayValue } from './metric-value-format';
 
@@ -72,6 +76,27 @@ const TooltipContent = (props: { payload?: any[] }) => {
   );
 };
 
+function useElementWidth<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      setWidth(entry?.contentRect.width ?? 0);
+    });
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, width] as const;
+}
+
 export function MetricCard({
   serie,
   color: _color,
@@ -82,6 +107,7 @@ export function MetricCard({
   const number = useNumber();
   const isHero = options.metricLayout === 'hero';
   const metricSurface = options.metricSurface ?? 'card';
+  const [compactCardRef, compactCardWidth] = useElementWidth<HTMLDivElement>();
 
   const renderValue = (value: number | undefined, unitClassName?: string) => {
     if (value == null) {
@@ -114,11 +140,23 @@ export function MetricCard({
   );
 
   const label = <SerieName name={serie.names} />;
+  const labelText = Array.isArray(serie.names)
+    ? serie.names.join(' > ')
+    : serie.names;
+  const valueText = renderExactMetricValue(number, serie.metrics[metric], unit);
+  const compactValueFontSize = getCompactMetricValueFontSizePx(
+    compactCardWidth,
+    valueText.length,
+  );
+  const compactLabelFontSize = getCompactMetricLabelFontSizePx(
+    compactCardWidth,
+    labelText.length,
+  );
   const value = renderValue(
     serie.metrics[metric],
     isHero ? 'ml-2 text-4xl font-light' : 'ml-1 text-[clamp(1rem,1.8vw,1.25rem)] font-light',
   );
-  const exactValue = renderExactMetricValue(number, serie.metrics[metric], unit);
+  const exactValue = valueText;
   const hoverTooltip = (
     <div className="flex max-w-sm gap-2">
       <div
@@ -164,6 +202,7 @@ export function MetricCard({
 
   return (
     <div
+      ref={compactCardRef}
       className={cn(
         compactMetricCardClassName,
         isEditMode && 'card h-auto min-h-[120px] p-4',
@@ -217,18 +256,32 @@ export function MetricCard({
       <div className="relative z-10 flex h-full flex-col justify-between">
         <div className="flex min-w-0 items-start justify-between gap-4">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <div className={compactMetricLabelClassName}>
+            <div
+              className={compactMetricLabelClassName}
+              style={
+                compactLabelFontSize
+                  ? { fontSize: `${compactLabelFontSize}px` }
+                  : undefined
+              }
+            >
               {label}
             </div>
             <Tooltiper content={hoverTooltip}>
-              <div className={compactMetricValueClassName}>
+              <div
+                className={compactMetricValueClassName}
+                style={
+                  compactValueFontSize
+                    ? { fontSize: `${compactValueFontSize}px` }
+                    : undefined
+                }
+              >
                 {value}
               </div>
             </Tooltiper>
           </div>
           <PreviousDiffIndicator
             {...previous}
-            className="mt-1 w-fit text-base text-muted-foreground"
+            className="mt-1 hidden shrink-0 text-xs text-muted-foreground @min-[220px]:flex"
           />
         </div>
       </div>
