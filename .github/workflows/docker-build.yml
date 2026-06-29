@@ -90,6 +90,7 @@ jobs:
       contents: write
     needs: lint-and-test
     runs-on: ubuntu-latest
+    if: github.repository == 'openpanel-dev/openpanel'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -150,6 +151,7 @@ jobs:
       contents: write
     needs: lint-and-test
     runs-on: ubuntu-latest
+    if: github.repository == 'openpanel-dev/openpanel'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -210,6 +212,7 @@ jobs:
       contents: write
     needs: lint-and-test
     runs-on: ubuntu-latest
+    if: github.repository == 'openpanel-dev/openpanel'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
