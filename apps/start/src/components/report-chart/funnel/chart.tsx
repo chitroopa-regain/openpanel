@@ -70,7 +70,7 @@ export function getFunnelMeasureLabel(measure: FunnelMeasure) {
     conversion_rate: 'Conversion',
     unique_users: 'Unique Users',
     property_sum: 'Property Sum',
-    property_average: 'Property Average',
+    property_average: 'ARPU',
   }[measure];
 }
 

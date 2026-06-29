@@ -78,6 +78,51 @@ function utc(date: string | Date) {
 
 const cacher = cacheMiddleware(getReportFreshness);
 
+type FunnelPropertyStats = { sum: number; average: number; count: number };
+type FunnelSeriesLike = {
+  id: string;
+  steps?: Array<{ count?: number }>;
+  lastStep: Record<string, unknown> & {
+    propertySum?: number;
+    propertyAverage?: number;
+    propertyCount?: number;
+  };
+};
+
+export function getFunnelPropertyAveragePerStarter(
+  sum: number,
+  firstStepCount?: number
+) {
+  if (!firstStepCount || firstStepCount <= 0) {
+    return 0;
+  }
+  return sum / firstStepCount;
+}
+
+export function attachFunnelPropertyStatsToSeries(
+  series: FunnelSeriesLike[],
+  statsByBreakdown: Map<string, FunnelPropertyStats> | null | undefined
+) {
+  for (const item of series) {
+    const key = item.id === 'none' ? 'none' : item.id;
+    const stats = statsByBreakdown?.get(key) ?? {
+      sum: 0,
+      average: 0,
+      count: 0,
+    };
+    const firstStepCount = item.steps?.[0]?.count;
+    item.lastStep.propertySum = stats.sum;
+    // Funnel property average is intentionally ARPU-style: total property
+    // value divided by the users entering this breakdown's funnel, not by
+    // converted users only. This makes purchase value experiments comparable.
+    item.lastStep.propertyAverage = getFunnelPropertyAveragePerStarter(
+      stats.sum,
+      firstStepCount
+    );
+    item.lastStep.propertyCount = stats.count;
+  }
+}
+
 const chartProcedure = publicProcedure.use(
   async ({ ctx, next, getRawInput }) => {
     const rawInput = (await getRawInput()) as {
@@ -713,29 +758,10 @@ export const chartRouter = createTRPCRouter({
         ]);
 
         // Attach property aggregates to the last step of each series.
-        for (const series of current.data) {
-          const key = series.id === 'none' ? 'none' : series.id;
-          const stats = currentStats.get(key) ?? {
-            sum: 0,
-            average: 0,
-            count: 0,
-          };
-          (series.lastStep as any).propertySum = stats.sum;
-          (series.lastStep as any).propertyAverage = stats.average;
-          (series.lastStep as any).propertyCount = stats.count;
-        }
+        // Property Average is ARPU-style: sum divided by step-1 users.
+        attachFunnelPropertyStatsToSeries(current.data, currentStats);
         if (previous) {
-          for (const series of previous.data) {
-            const key = series.id === 'none' ? 'none' : series.id;
-            const stats = previousStats?.get(key) ?? {
-              sum: 0,
-              average: 0,
-              count: 0,
-            };
-            (series.lastStep as any).propertySum = stats.sum;
-            (series.lastStep as any).propertyAverage = stats.average;
-            (series.lastStep as any).propertyCount = stats.count;
-          }
+          attachFunnelPropertyStatsToSeries(previous.data, previousStats);
         }
       }
 

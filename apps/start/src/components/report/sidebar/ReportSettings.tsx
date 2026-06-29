@@ -124,12 +124,12 @@ export function ReportSettings() {
       fields.push('funnelWindow');
     }
 
-    if (chartType === 'funnel') {
-      fields.push('funnelMeasure');
-    }
-
     if (chartType === 'funnel' || chartType === 'funnel_metric') {
       fields.push('breakdownStep');
+    }
+
+    if (chartType === 'funnel') {
+      fields.push('funnelMeasure');
     }
 
     if (
@@ -360,7 +360,7 @@ export function ReportSettings() {
                 { label: 'Conversion Rate', value: 'conversion_rate' },
                 { label: 'Unique Users', value: 'unique_users' },
                 { label: 'Property Sum', value: 'property_sum' },
-                { label: 'Property Average', value: 'property_average' },
+                { label: 'ARPU (Property Average)', value: 'property_average' },
               ]}
               onChange={(val) => {
                 dispatch(
@@ -411,7 +411,7 @@ export function ReportSettings() {
           <div className="flex items-center justify-between gap-4">
             <Label className="mb-0 whitespace-nowrap font-medium">
               {funnelMeasure === 'property_average'
-                ? 'Average Property'
+                ? 'ARPU Property'
                 : 'Sum Property'}
             </Label>
             <Combobox
