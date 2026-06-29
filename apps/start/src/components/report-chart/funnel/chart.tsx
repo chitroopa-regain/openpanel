@@ -42,6 +42,70 @@ type Props = {
   noTopBorderRadius?: boolean;
 };
 
+type FunnelMeasure =
+  | 'conversion_rate'
+  | 'unique_users'
+  | 'property_sum'
+  | 'property_average';
+
+type FunnelStep =
+  RouterOutputs['chart']['funnel']['current'][number]['lastStep'];
+
+export function getFunnelMeasureValue(
+  step: FunnelStep | undefined,
+  measure: FunnelMeasure
+) {
+  if (!step) return 0;
+  if (measure === 'unique_users') return step.count ?? 0;
+  if (measure === 'property_sum')
+    return ((step as any).propertySum as number) ?? 0;
+  if (measure === 'property_average') {
+    return ((step as any).propertyAverage as number) ?? 0;
+  }
+  return step.percent ?? 0;
+}
+
+export function getFunnelMeasureLabel(measure: FunnelMeasure) {
+  return {
+    conversion_rate: 'Conversion',
+    unique_users: 'Unique Users',
+    property_sum: 'Property Sum',
+    property_average: 'Property Average',
+  }[measure];
+}
+
+export function formatFunnelMeasureValue(
+  number: ReturnType<typeof useNumber>,
+  value: number,
+  measure: FunnelMeasure
+) {
+  if (measure === 'conversion_rate') {
+    return number.formatWithUnit(value / 100, '%');
+  }
+  return number.format(value);
+}
+
+export function getFunnelMeasureFromOptions(options: unknown): FunnelMeasure {
+  if (
+    options &&
+    typeof options === 'object' &&
+    'type' in options &&
+    (options as { type?: string }).type === 'funnel' &&
+    'funnelMeasure' in options
+  ) {
+    const measure = (options as { funnelMeasure?: FunnelMeasure })
+      .funnelMeasure;
+    if (
+      measure === 'unique_users' ||
+      measure === 'property_sum' ||
+      measure === 'property_average'
+    ) {
+      return measure;
+    }
+  }
+  return 'conversion_rate';
+}
+
 export const Metric = ({
   label,
   value,
@@ -64,6 +128,15 @@ export const Metric = ({
 
 export function Summary({ data }: { data: RouterOutputs['chart']['funnel'] }) {
   const number = useNumber();
+  const { report } = useReportChartContext();
+  const measure = getFunnelMeasureFromOptions(report.options);
+  const highestMeasured = data.current
+    .slice(0)
+    .sort(
+      (a, b) =>
+        getFunnelMeasureValue(b.lastStep, measure) -
+        getFunnelMeasureValue(a.lastStep, measure)
+    )[0];
   const highestConversion = data.current
     .slice(0)
     .sort((a, b) => b.lastStep.percent - a.lastStep.percent)[0];
@@ -72,6 +145,21 @@ export function Summary({ data }: { data: RouterOutputs['chart']['funnel'] }) {
     .sort((a, b) => b.lastStep.count - a.lastStep.count)[0];
   return (
     <div className="grid grid-cols-2 gap-4">
+      {measure !== 'conversion_rate' && highestMeasured && (
+        <div className="card row items-center p-4 py-3">
+          <Metric
+            label={`Highest ${getFunnelMeasureLabel(measure).toLowerCase()}`}
+            value={<ChartName breakdowns={highestMeasured.breakdowns ?? []} />}
+          />
+          <span className="font-mono font-semibold text-xl">
+            {formatFunnelMeasureValue(
+              number,
+              getFunnelMeasureValue(highestMeasured.lastStep, measure),
+              measure
+            )}
+          </span>
+        </div>
+      )}
       {highestConversion && (
         <div className="card row items-center p-4 py-3">
           <Metric
@@ -149,6 +237,11 @@ export function Tables({
   } = useReportChartContext();
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
+  const measure = getFunnelMeasureFromOptions(options);
+  const selectedMeasureValue = getFunnelMeasureValue(lastStep, measure);
+  const previousSelectedMeasureValue = previousData
+    ? getFunnelMeasureValue(previousData.lastStep, measure)
+    : undefined;
 
   const handleInspectStep = (
     step: (typeof steps)[0],
@@ -198,18 +291,40 @@ export function Tables({
           <Metric
             className="p-4 py-3"
             enhancer={
-              previousData && (
+              previousData &&
+              previousSelectedMeasureValue !== undefined && (
                 <PreviousDiffIndicatorPure
                   {...getPreviousMetric(
-                    lastStep?.percent,
-                    previousData.lastStep?.percent
+                    selectedMeasureValue,
+                    previousSelectedMeasureValue
                   )}
                 />
               )
             }
-            label="Conversion"
-            value={number.formatWithUnit(lastStep?.percent / 100, '%')}
+            label={getFunnelMeasureLabel(measure)}
+            value={formatFunnelMeasureValue(
+              number,
+              selectedMeasureValue,
+              measure
+            )}
           />
+          {measure !== 'conversion_rate' && (
+            <Metric
+              className="p-4 py-3"
+              enhancer={
+                previousData && (
+                  <PreviousDiffIndicatorPure
+                    {...getPreviousMetric(
+                      lastStep?.percent,
+                      previousData.lastStep?.percent
+                    )}
+                  />
+                )
+              }
+              label="Conversion"
+              value={number.formatWithUnit(lastStep?.percent / 100, '%')}
+            />
+          )}
           <Metric
             className="p-4 py-3"
             enhancer={
@@ -561,7 +676,9 @@ function FunnelPreviewSummary({
           <div
             className={cn(
               'inline-flex items-center gap-1.5 font-medium',
-              compact ? 'min-w-0 max-w-[140px] shrink' : 'max-w-[160px] shrink-0'
+              compact
+                ? 'min-w-0 max-w-[140px] shrink'
+                : 'max-w-[160px] shrink-0'
             )}
             key={item.id}
             title={`${item.label} • ${item.percentText}`}

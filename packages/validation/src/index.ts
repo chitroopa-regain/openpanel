@@ -173,6 +173,12 @@ export const zFunnelWindowUnit = z.enum([
   'week',
   'month',
 ]);
+export const zFunnelMeasure = z.enum([
+  'conversion_rate',
+  'unique_users',
+  'property_sum',
+  'property_average',
+]);
 
 export const zFunnelOptions = z.object({
   type: z.literal('funnel'),
@@ -183,8 +189,10 @@ export const zFunnelOptions = z.object({
   breakdownStep: z.number().int().nonnegative().optional(),
   /** Number of top breakdown rows to show in chart. undefined = 10. */
   topN: z.number().int().positive().optional(),
-  /** Property to sum for funnel_metric chart type (e.g. 'properties.value_inr') */
+  /** Property to aggregate for funnel property measures (e.g. 'properties.value_inr') */
   funnelProperty: z.string().optional(),
+  /** Measure displayed for funnel breakdown comparison. */
+  funnelMeasure: zFunnelMeasure.optional(),
   /** Breakdown IDs explicitly hidden by the user. Survives reload. */
   hiddenBreakdowns: z.array(z.string()).optional(),
 });

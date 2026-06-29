@@ -54,7 +54,8 @@ function normalizeBreakdownValue(value: unknown): string {
  * through untouched.
  */
 export function qualifyFunnelCondition(expr: string, alias = 'events'): string {
-  const columnPattern = /^\b(profile_id|device_id|created_at|name|properties)\b/;
+  const columnPattern =
+    /^\b(profile_id|device_id|created_at|name|properties)\b/;
   const wordChar = /\w/;
   let result = '';
   let i = 0;
@@ -153,7 +154,7 @@ export type ResolvedFunnelStep = IChartEvent & {
  */
 export async function resolveSeriesForFunnel(
   series: IChartEventItem[],
-  projectId: string,
+  projectId: string
 ): Promise<ResolvedFunnelStep[]> {
   const resolved: ResolvedFunnelStep[] = [];
   for (const item of series) {
@@ -165,14 +166,12 @@ export async function resolveSeriesForFunnel(
       });
       if (!ce || ce.projectId !== projectId) {
         throw new Error(
-          `Custom event "${item.displayName ?? item.customEventId}" not found or not accessible`,
+          `Custom event "${item.displayName ?? item.customEventId}" not found or not accessible`
         );
       }
       const components = ce.components as ICustomEventComponent[];
       if (!Array.isArray(components) || components.length === 0) {
-        throw new Error(
-          `Custom event "${ce.name}" has no components`,
-        );
+        throw new Error(`Custom event "${ce.name}" has no components`);
       }
       resolved.push({
         id: item.id,
@@ -210,7 +209,7 @@ export class FunnelService {
   getFunnelConditions(
     events: ResolvedFunnelStep[] = [],
     projectId?: string,
-    firstTimeCteAliases: string[] = [],
+    firstTimeCteAliases: string[] = []
   ): string[] {
     return events.map((event, index) => {
       let condition: string;
@@ -218,11 +217,14 @@ export class FunnelService {
         // Custom event: use OR-combined component conditions
         const componentClause = getCustomEventWhereClause(
           event.customEventComponents,
-          projectId,
+          projectId
         );
         // Also apply any outer series-level filters
         if (event.filters && event.filters.length > 0) {
-          const outerWhere = getEventFiltersWhereClause(event.filters, projectId);
+          const outerWhere = getEventFiltersWhereClause(
+            event.filters,
+            projectId
+          );
           const outerClauses = Object.values(outerWhere);
           if (outerClauses.length > 0) {
             condition = `(${componentClause} AND ${outerClauses.join(' AND ')})`;
@@ -315,7 +317,10 @@ export class FunnelService {
         // Build the step predicate for the CTE (same logic as getFunnelConditions)
         let stepPredicate: string;
         if (step.customEventComponents) {
-          stepPredicate = getCustomEventWhereClause(step.customEventComponents, projectId);
+          stepPredicate = getCustomEventWhereClause(
+            step.customEventComponents,
+            projectId
+          );
         } else {
           stepPredicate = `name = ${sqlstring.escape(step.name)}`;
         }
@@ -328,7 +333,11 @@ export class FunnelService {
       }
     }
 
-    const rawFunnels = this.getFunnelConditions(eventSeries, projectId, firstTimeCteAliases);
+    const rawFunnels = this.getFunnelConditions(
+      eventSeries,
+      projectId,
+      firstTimeCteAliases
+    );
 
     // When a trait CTE is joined, OR the caller has signalled it will
     // attach a profiles FINAL join after this method returns, every bare
@@ -337,13 +346,14 @@ export class FunnelService {
     // (the bare table name, since clix's .from() does not apply an
     // explicit alias). Subqueries inside `profile_id IN (...)` are
     // preserved by qualifyFunnelCondition's subquery-skip logic.
-    const needsQualify =
-      traitDescriptors.size > 0 || expectProfilesFinalJoin;
+    const needsQualify = traitDescriptors.size > 0 || expectProfilesFinalJoin;
     const qualify = (expr: string) =>
       needsQualify ? qualifyFunnelCondition(expr, 'events') : expr;
     const col = (c: string) => (needsQualify ? `events.${c}` : c);
 
-    const funnels = needsQualify ? rawFunnels.map((c) => qualify(c)) : rawFunnels;
+    const funnels = needsQualify
+      ? rawFunnels.map((c) => qualify(c))
+      : rawFunnels;
 
     // Mixpanel-parity attribution window: the report date range controls
     // funnel ENTRIES (step 1 only), while steps 2..N may complete after
@@ -352,8 +362,7 @@ export class FunnelService {
     // WHERE (extended below to endDate + funnelWindow) include later-step
     // events that windowFunnel itself will gate via the window parameter.
     if (funnels.length > 0) {
-      funnels[0] =
-        `(${funnels[0]}) AND ${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= toDateTime(${escapedEnd})`;
+      funnels[0] = `(${funnels[0]}) AND ${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= toDateTime(${escapedEnd})`;
     }
     const funnelWindowSeconds = Math.ceil(funnelWindowMilliseconds / 1000);
 
@@ -362,8 +371,8 @@ export class FunnelService {
       eventSeries.flatMap((e) =>
         e.customEventComponents
           ? e.customEventComponents.map((c) => c.eventName)
-          : [e.name],
-      ),
+          : [e.name]
+      )
     );
 
     // Wrap the windowFunnel expression in clix.exp() so clix's select
@@ -376,7 +385,7 @@ export class FunnelService {
     // syntax error at the empty-string literal. See query-builder.ts
     // escapeDate + the comment on the SELECT serializer branch.
     const windowFunnelExpr = clix.exp(
-      `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`,
+      `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`
     );
     const selects =
       groupBy === 'profile_id'
@@ -397,7 +406,7 @@ export class FunnelService {
       .from(TABLE_NAMES.events, false)
       .where('project_id', '=', projectId)
       .rawWhere(
-        `${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})`,
+        `${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})`
       )
       .where('name', 'IN', allEventNames)
       // When trait CTEs are joined, group by the qualified column (the select
@@ -416,7 +425,7 @@ export class FunnelService {
         query.leftJoin(
           `first_time_step_${i}`,
           `${alias}.ft_profile_id = events.profile_id`,
-          alias,
+          alias
         );
       }
     }
@@ -428,7 +437,7 @@ export class FunnelService {
     for (const desc of traitDescriptors.values()) {
       query.leftAnyJoin(
         desc.cteName,
-        `${desc.cteName}.profile_id = events.profile_id`,
+        `${desc.cteName}.profile_id = events.profile_id`
       );
     }
 
@@ -438,7 +447,7 @@ export class FunnelService {
       query.rawWhere(
         needsQualify
           ? 'events.profile_id != events.device_id'
-          : 'profile_id != device_id',
+          : 'profile_id != device_id'
       );
     }
 
@@ -481,7 +490,7 @@ export class FunnelService {
 
   private fillFunnel(
     funnel: { level: number; count: number }[],
-    steps: number,
+    steps: number
   ) {
     const filled = Array.from({ length: steps }, (_, index) => {
       const level = index + 1;
@@ -507,7 +516,7 @@ export class FunnelService {
   toSeries(
     funnel: { level: number; count: number; [key: string]: any }[],
     breakdowns: { name: string }[] = [],
-    limit: number | undefined = undefined,
+    limit: number | undefined = undefined
   ) {
     if (!breakdowns.length) {
       return [
@@ -536,7 +545,7 @@ export class FunnelService {
         acc[key]!.push({
           id: key,
           breakdowns: breakdowns.map((b, index) =>
-            normalizeBreakdownValue(f[`b_${index}`]),
+            normalizeBreakdownValue(f[`b_${index}`])
           ),
           level: f.level,
           count: f.count,
@@ -551,7 +560,7 @@ export class FunnelService {
           level: number;
           count: number;
         }[]
-      >,
+      >
     );
 
     return Object.values(series);
@@ -589,15 +598,17 @@ export class FunnelService {
     // Default window is 24 hours. When unit is set but window is not,
     // convert 24 hours into the selected unit for a sensible default.
     const defaultWindowByUnit: Record<string, number> = {
-      second: 86400,  // 24h in seconds
-      minute: 1440,   // 24h in minutes
-      hour: 24,       // 24h
-      day: 1,         // 1 day
-      week: 1,        // 1 week
-      month: 1,       // 1 month
+      second: 86400, // 24h in seconds
+      minute: 1440, // 24h in minutes
+      hour: 24, // 24h
+      day: 1, // 1 day
+      week: 1, // 1 week
+      month: 1, // 1 month
     };
     const funnelWindow =
-      funnelOptions?.funnelWindow ?? (defaultWindowByUnit[funnelWindowUnit] ?? 24);
+      funnelOptions?.funnelWindow ??
+      defaultWindowByUnit[funnelWindowUnit] ??
+      24;
     const funnelGroup = funnelOptions?.funnelGroup;
 
     const eventSeries = await resolveSeriesForFunnel(series, projectId);
@@ -628,7 +639,7 @@ export class FunnelService {
     // step conditions and argMaxIf breakdown selects).
     const profileFiltersRaw = this.getProfileFilters(eventSeries);
     const profileFilters = profileFiltersRaw.filter(
-      (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null,
+      (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null
     );
     const anyFilterOnProfile = profileFilters.length > 0;
     // profile.properties.* breakdowns use profile_traits CTE (traitDescriptors);
@@ -636,7 +647,7 @@ export class FunnelService {
     const anyBreakdownOnProfile = breakdowns.some(
       (b) =>
         b.name.startsWith('profile.') &&
-        getTraitBreakdownDescriptor(b.name) === null,
+        getTraitBreakdownDescriptor(b.name) === null
     );
 
     // Breakdown step: which step's event to extract breakdown values from.
@@ -692,9 +703,7 @@ export class FunnelService {
     // breakdown (e.g. profile.email) still will — hence this broader
     // trigger covers both trait CTE joins and that remaining path.
     const needsBreakdownQualify =
-      traitDescriptors.size > 0 ||
-      anyFilterOnProfile ||
-      anyBreakdownOnProfile;
+      traitDescriptors.size > 0 || anyFilterOnProfile || anyBreakdownOnProfile;
     const argMaxIfCreatedAt = needsBreakdownQualify
       ? 'events.created_at'
       : 'created_at';
@@ -707,13 +716,13 @@ export class FunnelService {
         : rawStepCondition;
       breakdownSelects = breakdowns.map(
         (b, index) =>
-          `argMaxIf(${breakdownExpr(b.name)}, ${argMaxIfCreatedAt}, ${stepCondition}) as b_${index}`,
+          `argMaxIf(${breakdownExpr(b.name)}, ${argMaxIfCreatedAt}, ${stepCondition}) as b_${index}`
       );
       // No GROUP BY for breakdown columns — argMaxIf aggregates them
       breakdownGroupBy = [];
     } else {
       breakdownSelects = breakdowns.map(
-        (b, index) => `${breakdownExpr(b.name)} as b_${index}`,
+        (b, index) => `${breakdownExpr(b.name)} as b_${index}`
       );
       breakdownGroupBy = breakdowns.map((_, index) => `b_${index}`);
     }
@@ -738,8 +747,7 @@ export class FunnelService {
       // If we're going to attach profiles FINAL below, tell
       // buildFunnelCte so its internal windowFunnel step conditions
       // pre-qualify their event columns with `events.`.
-      expectProfilesFinalJoin:
-        anyFilterOnProfile || anyBreakdownOnProfile,
+      expectProfilesFinalJoin: anyFilterOnProfile || anyBreakdownOnProfile,
     });
 
     if (anyFilterOnProfile || anyBreakdownOnProfile) {
@@ -753,7 +761,7 @@ export class FunnelService {
       for (const b of breakdowns.filter(
         (x) =>
           x.name.startsWith('profile.') &&
-          getTraitBreakdownDescriptor(x.name) === null,
+          getTraitBreakdownDescriptor(x.name) === null
       )) {
         const fieldName = b.name.replace('profile.', '').split('.')[0];
         if (fieldName === 'properties') {
@@ -766,7 +774,7 @@ export class FunnelService {
       funnelCte.leftJoin(
         `(SELECT ${profileSelectColumns} FROM ${TABLE_NAMES.profiles} FINAL
           WHERE project_id = ${sqlstring.escape(projectId)}) as profile`,
-        'profile.id = events.profile_id',
+        'profile.id = events.profile_id'
       );
     }
 
@@ -792,13 +800,13 @@ export class FunnelService {
       // Profile mode: CTE already groups by profile_id, just filter level != 0.
       funnelQuery.with(
         'funnel',
-        'SELECT * FROM session_funnel WHERE level != 0',
+        'SELECT * FROM session_funnel WHERE level != 0'
       );
     } else {
       // Session mode: filter out level = 0
       funnelQuery.with(
         'funnel',
-        'SELECT * FROM session_funnel WHERE level != 0',
+        'SELECT * FROM session_funnel WHERE level != 0'
       );
     }
 
@@ -825,7 +833,7 @@ export class FunnelService {
         const maxLevel = eventSeries.length;
         const filledFunnelRes = this.fillFunnel(
           data.map((d) => ({ level: d.level, count: d.count })),
-          maxLevel,
+          maxLevel
         );
 
         const totalSessions = last(filledFunnelRes)?.count ?? 0;
@@ -871,7 +879,7 @@ export class FunnelService {
               totalConversionPercent: number;
               stepConversionCount: number;
               stepConversionPercent: number;
-            }[],
+            }[]
           )
           .map((step, index, list) => {
             return {
@@ -886,7 +894,7 @@ export class FunnelService {
                 const maxDropoff = Math.max(
                   ...list
                     .map((s) => s.dropoffCount || 0)
-                    .filter((count) => count > 0),
+                    .filter((count) => count > 0)
                 );
 
                 // Check if this is the first step with the highest dropoff
@@ -915,8 +923,10 @@ export class FunnelService {
 
     // Compute time-to-convert metrics using chained step timestamps.
     // Returns a map keyed by breakdown identity (e.g. 'none' or 'FOCUS_BADGE').
-    let timingByBreakdown: Map<string, Record<string, number | null>> =
-      new Map();
+    let timingByBreakdown: Map<
+      string,
+      Record<string, number | null>
+    > = new Map();
     if (stepConditions.length >= 2) {
       try {
         timingByBreakdown = await this.getFunnelTimingStats({
@@ -930,8 +940,8 @@ export class FunnelService {
             eventSeries.flatMap((e) =>
               e.customEventComponents
                 ? e.customEventComponents.map((c) => c.eventName)
-                : [e.name],
-            ),
+                : [e.name]
+            )
           ),
           breakdowns,
           breakdownSelects,
@@ -1023,9 +1033,7 @@ export class FunnelService {
     }
 
     const entityKey = groupBy;
-    const nameList = allEventNames
-      .map((n) => sqlstring.escape(n))
-      .join(', ');
+    const nameList = allEventNames.map((n) => sqlstring.escape(n)).join(', ');
     const identifiedFilter =
       groupBy === 'profile_id' ? 'AND profile_id != device_id' : '';
 
@@ -1086,7 +1094,8 @@ export class FunnelService {
     //   may pick the trait from either profile.
     if (hasBreakdowns) {
       const bdStepIdx = breakdownStep ?? 0;
-      const rawBdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+      const rawBdStepCondition =
+        stepConditions[bdStepIdx] ?? stepConditions[0]!;
 
       // Build trait CTE descriptors + LEFT ANY JOINs for profile trait
       // breakdowns (same fix as d4f4e544 for chart.service.ts). Trait values
@@ -1103,13 +1112,13 @@ export class FunnelService {
       // Register trait CTEs BEFORE timing_bd (CTEs must precede their refs)
       for (const desc of traitDescriptors.values()) {
         ctes.push(
-          `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`,
+          `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`
         );
       }
       const traitJoins = Array.from(traitDescriptors.values())
         .map(
           (desc) =>
-            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`,
+            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`
         )
         .join('\n          ');
 
@@ -1140,12 +1149,12 @@ export class FunnelService {
       if (breakdownStep !== undefined) {
         bdExprs = breakdowns.map(
           (b, i) =>
-            `argMaxIf(${breakdownExpr(b.name)}, e.created_at, ${bdStepCondition}) as b_${i}`,
+            `argMaxIf(${breakdownExpr(b.name)}, e.created_at, ${bdStepCondition}) as b_${i}`
         );
         bdGroup = [];
       } else {
         bdExprs = breakdowns.map(
-          (b, i) => `${breakdownExpr(b.name)} as b_${i}`,
+          (b, i) => `${breakdownExpr(b.name)} as b_${i}`
         );
         bdGroup = breakdowns.map((_, i) => `b_${i}`);
       }
@@ -1175,10 +1184,10 @@ export class FunnelService {
       const tsCol = `${stepCte}.${stepCte}_ts`;
       const nullableTs = `nullIf(${tsCol}, toDateTime64(0, 3))`;
       stepJoins.push(
-        `LEFT JOIN ${stepCte} ON s1.${entityKey} = ${stepCte}.${entityKey}`,
+        `LEFT JOIN ${stepCte} ON s1.${entityKey} = ${stepCte}.${entityKey}`
       );
       medianSelects.push(
-        `quantileTDigestIf(0.5)(dateDiff('second', s1.step_1_ts, ${nullableTs}), isNotNull(${nullableTs})) as step_${i}_median`,
+        `quantileTDigestIf(0.5)(dateDiff('second', s1.step_1_ts, ${nullableTs}), isNotNull(${nullableTs})) as step_${i}_median`
       );
     }
 
@@ -1187,12 +1196,10 @@ export class FunnelService {
     let bdGroupByInFinal = '';
     if (hasBreakdowns) {
       stepJoins.push(
-        `LEFT JOIN timing_bd bd ON s1.${entityKey} = bd.${entityKey}`,
+        `LEFT JOIN timing_bd bd ON s1.${entityKey} = bd.${entityKey}`
       );
-      bdSelectsInFinal =
-        breakdowns.map((_, i) => `bd.b_${i}`).join(', ') + ',';
-      bdGroupByInFinal =
-        `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`;
+      bdSelectsInFinal = breakdowns.map((_, i) => `bd.b_${i}`).join(', ') + ',';
+      bdGroupByInFinal = `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`;
     }
 
     const sql = `
@@ -1224,14 +1231,14 @@ export class FunnelService {
   }
 
   /**
-   * Compute the SUM of a numeric property for entities that completed the
+   * Compute numeric property aggregates for entities that completed the
    * entire funnel. Uses chained CTEs (same pattern as getFunnelTimingStats)
    * to pin the exact last-step timestamp per entity, then extracts the
    * property value at that timestamp.
    *
    * Returns a Map keyed by breakdown identity (or 'none' if no breakdowns).
    */
-  async getFunnelPropertySums({
+  async getFunnelPropertyStats({
     projectId,
     startDate,
     endDate,
@@ -1255,16 +1262,17 @@ export class FunnelService {
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     timezone: string;
-  }): Promise<Map<string, number>> {
-    const result = new Map<string, number>();
+  }): Promise<Map<string, { sum: number; average: number; count: number }>> {
+    const result = new Map<
+      string,
+      { sum: number; average: number; count: number }
+    >();
     if (stepConditions.length < 1) {
       return result;
     }
 
     const entityKey = groupBy;
-    const nameList = allEventNames
-      .map((n) => sqlstring.escape(n))
-      .join(', ');
+    const nameList = allEventNames.map((n) => sqlstring.escape(n)).join(', ');
     const identifiedFilter =
       groupBy === 'profile_id' ? 'AND profile_id != device_id' : '';
 
@@ -1319,7 +1327,8 @@ export class FunnelService {
     // instead of the buggy correlated subquery path (see d4f4e544).
     if (hasBreakdowns) {
       const bdStepIdx = breakdownStep ?? 0;
-      const rawBdStepCondition = stepConditions[bdStepIdx] ?? stepConditions[0]!;
+      const rawBdStepCondition =
+        stepConditions[bdStepIdx] ?? stepConditions[0]!;
 
       // Build trait CTE descriptors for profile trait breakdowns
       const traitDescriptors = new Map<string, TraitBreakdown>();
@@ -1332,13 +1341,13 @@ export class FunnelService {
       // Register trait CTEs BEFORE prop_bd (CTEs must precede their refs)
       for (const desc of traitDescriptors.values()) {
         ctes.push(
-          `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`,
+          `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`
         );
       }
       const traitJoins = Array.from(traitDescriptors.values())
         .map(
           (desc) =>
-            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`,
+            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`
         )
         .join('\n          ');
 
@@ -1362,12 +1371,12 @@ export class FunnelService {
       if (breakdownStep !== undefined) {
         bdExprs = breakdowns.map(
           (b, i) =>
-            `argMaxIf(${breakdownExpr(b.name)}, e.created_at, ${bdStepCondition}) as b_${i}`,
+            `argMaxIf(${breakdownExpr(b.name)}, e.created_at, ${bdStepCondition}) as b_${i}`
         );
         bdGroup = [];
       } else {
         bdExprs = breakdowns.map(
-          (b, i) => `${breakdownExpr(b.name)} as b_${i}`,
+          (b, i) => `${breakdownExpr(b.name)} as b_${i}`
         );
         bdGroup = breakdowns.map((_, i) => `b_${i}`);
       }
@@ -1420,20 +1429,18 @@ export class FunnelService {
     let bdGroupByInFinal = '';
 
     if (hasBreakdowns) {
-      joins.push(
-        `LEFT JOIN prop_bd bd ON pv.${entityKey} = bd.${entityKey}`,
-      );
-      bdSelectsInFinal =
-        breakdowns.map((_, i) => `bd.b_${i}`).join(', ') + ',';
-      bdGroupByInFinal =
-        `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`;
+      joins.push(`LEFT JOIN prop_bd bd ON pv.${entityKey} = bd.${entityKey}`);
+      bdSelectsInFinal = breakdowns.map((_, i) => `bd.b_${i}`).join(', ') + ',';
+      bdGroupByInFinal = `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`;
     }
 
     const sql = `
       WITH ${ctes.join(',\n')}
       SELECT
         ${bdSelectsInFinal}
-        sum(pv.prop_value) as total_sum
+        sum(pv.prop_value) as total_sum,
+        avg(pv.prop_value) as property_average,
+        count(pv.prop_value) as property_count
       FROM prop_vals pv
       ${joins.join('\n')}
       ${bdGroupByInFinal}
@@ -1444,18 +1451,38 @@ export class FunnelService {
     });
 
     if (breakdowns.length === 0) {
-      const val = rows[0]?.total_sum;
-      result.set('none', typeof val === 'number' ? val : 0);
+      const row = rows[0];
+      result.set('none', {
+        sum: typeof row?.total_sum === 'number' ? row.total_sum : 0,
+        average:
+          typeof row?.property_average === 'number' ? row.property_average : 0,
+        count: typeof row?.property_count === 'number' ? row.property_count : 0,
+      });
     } else {
       for (const row of rows) {
         const key = breakdowns
           .map((_, i) => normalizeBreakdownValue(row[`b_${i}`]))
           .join('|');
-        result.set(key, typeof row.total_sum === 'number' ? row.total_sum : 0);
+        result.set(key, {
+          sum: typeof row.total_sum === 'number' ? row.total_sum : 0,
+          average:
+            typeof row.property_average === 'number' ? row.property_average : 0,
+          count:
+            typeof row.property_count === 'number' ? row.property_count : 0,
+        });
       }
     }
 
     return result;
+  }
+
+  async getFunnelPropertySums(
+    input: Parameters<FunnelService['getFunnelPropertyStats']>[0]
+  ): Promise<Map<string, number>> {
+    const stats = await this.getFunnelPropertyStats(input);
+    return new Map(
+      Array.from(stats.entries()).map(([key, value]) => [key, value.sum])
+    );
   }
 }
 

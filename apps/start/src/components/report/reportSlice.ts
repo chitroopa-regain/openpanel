@@ -17,6 +17,7 @@ import type {
   IReportOptions,
   UnionOmit,
   zCriteria,
+  zFunnelMeasure,
 } from '@openpanel/validation';
 import type { PayloadAction } from '@reduxjs/toolkit';
 import { createSlice } from '@reduxjs/toolkit';
@@ -425,6 +426,22 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeFunnelMeasure(
+      state,
+      action: PayloadAction<z.infer<typeof zFunnelMeasure> | undefined>
+    ) {
+      state.dirty = true;
+      const measure = action.payload || undefined;
+      if (!state.options || state.options.type !== 'funnel') {
+        state.options = {
+          type: 'funnel',
+          funnelMeasure: measure,
+        };
+      } else {
+        state.options.funnelMeasure = measure;
+      }
+    },
+
     changeFunnelHiddenBreakdowns(state, action: PayloadAction<string[]>) {
       state.dirty = true;
       const next = action.payload.length > 0 ? action.payload : undefined;
@@ -581,6 +598,7 @@ export const {
   changeFunnelWindowUnit,
   changeFunnelTopN,
   changeFunnelProperty,
+  changeFunnelMeasure,
   changeFunnelHiddenBreakdowns,
   changeDateConfig,
   changeFunnelBreakdownStep,

@@ -5,7 +5,14 @@ import { getChartColor } from '@/utils/theme';
 import { ArrowDown, ArrowUp, ChevronDown } from 'lucide-react';
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { formatDuration } from './chart';
+import {
+  formatDuration,
+  formatFunnelMeasureValue,
+  getFunnelMeasureFromOptions,
+  getFunnelMeasureLabel,
+  getFunnelMeasureValue,
+} from './chart';
+import { useReportChartContext } from '../context';
 
 type FunnelSeries = RouterOutputs['chart']['funnel']['current'][number];
 
@@ -26,12 +33,16 @@ type SortKey =
   | `step:${number}:time`;
 type SortDir = 'asc' | 'desc';
 
-function getSortValue(item: FunnelSeries, key: SortKey): number | string {
+function getSortValue(
+  item: FunnelSeries,
+  key: SortKey,
+  measure = getFunnelMeasureFromOptions(undefined)
+): number | string {
   if (key === 'label') {
     return item.breakdowns?.join(' > ') ?? '';
   }
   if (key === 'totalConv') {
-    return item.lastStep?.percent ?? 0;
+    return getFunnelMeasureValue(item.lastStep, measure);
   }
   const match = key.match(/^step:(\d+):(\w+)$/);
   if (!match) return 0;
@@ -147,6 +158,8 @@ export function BreakdownList({
 }: BreakdownListProps) {
   const allBreakdowns = data.current;
   const number = useNumber();
+  const { report } = useReportChartContext();
+  const measure = getFunnelMeasureFromOptions(report.options);
   const [sortKey, setSortKey] = useState<SortKey>('totalConv');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const displayedTopN = savedTopN ?? 10;
@@ -165,8 +178,8 @@ export function BreakdownList({
   const sortedBreakdowns = useMemo(() => {
     const items = [...allBreakdowns];
     items.sort((a, b) => {
-      const va = getSortValue(a, sortKey);
-      const vb = getSortValue(b, sortKey);
+      const va = getSortValue(a, sortKey, measure);
+      const vb = getSortValue(b, sortKey, measure);
       let cmp: number;
       if (typeof va === 'string' && typeof vb === 'string') {
         cmp = va.localeCompare(vb);
@@ -182,7 +195,7 @@ export function BreakdownList({
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return items;
-  }, [allBreakdowns, sortKey, sortDir]);
+  }, [allBreakdowns, sortKey, sortDir, measure]);
 
   const applyTopN = useCallback(
     (n: number) => {
@@ -369,7 +382,7 @@ export function BreakdownList({
               onClick={() => handleSort('totalConv')}
               style={stickyTotalConversionStyle}
             >
-              Total Conv.
+              {getFunnelMeasureLabel(measure)}
               <SortIcon col="totalConv" />
             </th>
             {steps.map((step, i) => {
@@ -497,7 +510,11 @@ export function BreakdownList({
                   className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${stickyLeft2}`}
                   style={stickyTotalConversionStyle}
                 >
-                  {number.formatWithUnit(item.lastStep.percent / 100, '%')}
+                  {formatFunnelMeasureValue(
+                    number,
+                    getFunnelMeasureValue(item.lastStep, measure),
+                    measure
+                  )}
                 </td>
                 {item.steps.map((step, stepIdx) => {
                   if (stepIdx === 0) {

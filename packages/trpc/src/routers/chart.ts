@@ -632,10 +632,14 @@ export const chartRouter = createTRPCRouter({
       // Funnel Metric: compute property sums for the last step
       const funnelOptions =
         chartInput.options?.type === 'funnel' ? chartInput.options : undefined;
-      if (
-        chartInput.chartType === 'funnel_metric' &&
-        funnelOptions?.funnelProperty
-      ) {
+      const funnelMeasure = funnelOptions?.funnelMeasure ?? 'conversion_rate';
+      const funnelProperty = funnelOptions?.funnelProperty;
+      const needsPropertyStats =
+        !!funnelProperty &&
+        (chartInput.chartType === 'funnel_metric' ||
+          funnelMeasure === 'property_sum' ||
+          funnelMeasure === 'property_average');
+      if (needsPropertyStats && funnelProperty) {
         const eventSeries = await resolveSeriesForFunnel(
           chartInput.series,
           chartInput.projectId
@@ -677,8 +681,8 @@ export const chartRouter = createTRPCRouter({
           funnelWindow * (unitMultipliers[funnelWindowUnit] ?? 3600);
         const group = funnelService.getFunnelGroup(funnelOptions.funnelGroup);
 
-        const [currentSums, previousSums] = await Promise.all([
-          funnelService.getFunnelPropertySums({
+        const [currentStats, previousStats] = await Promise.all([
+          funnelService.getFunnelPropertyStats({
             projectId: chartInput.projectId,
             startDate: currentPeriod.startDate!,
             endDate: currentPeriod.endDate!,
@@ -686,13 +690,13 @@ export const chartRouter = createTRPCRouter({
             funnelWindowSeconds,
             groupBy: group,
             allEventNames,
-            propertyKey: funnelOptions.funnelProperty,
+            propertyKey: funnelProperty,
             breakdowns: chartInput.breakdowns,
             breakdownStep: funnelOptions.breakdownStep,
             timezone,
           }),
           previous
-            ? funnelService.getFunnelPropertySums({
+            ? funnelService.getFunnelPropertyStats({
                 projectId: chartInput.projectId,
                 startDate: previousPeriod.startDate!,
                 endDate: previousPeriod.endDate!,
@@ -700,7 +704,7 @@ export const chartRouter = createTRPCRouter({
                 funnelWindowSeconds,
                 groupBy: group,
                 allEventNames,
-                propertyKey: funnelOptions.funnelProperty,
+                propertyKey: funnelProperty,
                 breakdowns: chartInput.breakdowns,
                 breakdownStep: funnelOptions.breakdownStep,
                 timezone,
@@ -708,17 +712,29 @@ export const chartRouter = createTRPCRouter({
             : Promise.resolve(null),
         ]);
 
-        // Attach propertySum to the last step of each series
+        // Attach property aggregates to the last step of each series.
         for (const series of current.data) {
           const key = series.id === 'none' ? 'none' : series.id;
-          const sum = currentSums.get(key) ?? 0;
-          (series.lastStep as any).propertySum = sum;
+          const stats = currentStats.get(key) ?? {
+            sum: 0,
+            average: 0,
+            count: 0,
+          };
+          (series.lastStep as any).propertySum = stats.sum;
+          (series.lastStep as any).propertyAverage = stats.average;
+          (series.lastStep as any).propertyCount = stats.count;
         }
         if (previous) {
           for (const series of previous.data) {
             const key = series.id === 'none' ? 'none' : series.id;
-            const sum = previousSums?.get(key) ?? 0;
-            (series.lastStep as any).propertySum = sum;
+            const stats = previousStats?.get(key) ?? {
+              sum: 0,
+              average: 0,
+              count: 0,
+            };
+            (series.lastStep as any).propertySum = stats.sum;
+            (series.lastStep as any).propertyAverage = stats.average;
+            (series.lastStep as any).propertyCount = stats.count;
           }
         }
       }

@@ -97,6 +97,28 @@ describe('FunnelService.getFunnelPropertySums', () => {
     mocks.chQuery.mockReset();
   });
 
+  it('returns property sum, average, and converted entity count per breakdown', async () => {
+    mocks.chQuery.mockResolvedValue([
+      { b_0: 'true', total_sum: 90, property_average: 30, property_count: 3 },
+      { b_0: 'false', total_sum: 30, property_average: 15, property_count: 2 },
+    ]);
+
+    const service = new FunnelService({} as any);
+    const result = await service.getFunnelPropertyStats(
+      prodFunnelMetricInput(service)
+    );
+
+    expect(Object.fromEntries(result)).toEqual({
+      true: { sum: 90, average: 30, count: 3 },
+      false: { sum: 30, average: 15, count: 2 },
+    });
+
+    const sql = getLastQuerySql();
+    expect(sql).toContain('sum(pv.prop_value) as total_sum');
+    expect(sql).toContain('avg(pv.prop_value) as property_average');
+    expect(sql).toContain('count(pv.prop_value) as property_count');
+  });
+
   it('builds profile-trait breakdown SQL without the correlated scalar subquery', async () => {
     mocks.chQuery.mockResolvedValue([{ b_0: 'true', total_sum: 42 }]);
 
@@ -423,12 +445,11 @@ describe('FunnelService.getFunnelPropertySums', () => {
     });
 
     const sql = getLastQuerySql();
-    const extended =
-      "addSeconds(toDateTime('2026-04-15 23:59:59'), 2592000)";
+    const extended = "addSeconds(toDateTime('2026-04-15 23:59:59'), 2592000)";
 
     // step_1 stays on the report range
     expect(sql).toContain(
-      "step_1 AS ( SELECT profile_id, min(created_at) as step_1_ts FROM"
+      'step_1 AS ( SELECT profile_id, min(created_at) as step_1_ts FROM'
     );
     expect(sql).toContain(
       "created_at BETWEEN toDateTime('2026-04-15 00:00:00') AND toDateTime('2026-04-15 23:59:59')"
@@ -512,11 +533,9 @@ describe('FunnelService.getFunnelPropertySums', () => {
     // collide with the profiles FINAL join the caller is about to
     // attach.
     expect(sql).toContain(
-      "events.properties['paywallVariant'] = 'CHOOSE_A_PLAN'",
+      "events.properties['paywallVariant'] = 'CHOOSE_A_PLAN'"
     );
-    expect(sql).toContain(
-      "events.name = 'Subscription: Paywall Viewed'",
-    );
+    expect(sql).toContain("events.name = 'Subscription: Paywall Viewed'");
     expect(sql).toContain("events.name = 'Server: Purchase'");
     // And the step-1 anchor `toDateTime('...')` literals must land in
     // the windowFunnel predicate with SINGLE quotes, not double-escaped
@@ -525,19 +544,15 @@ describe('FunnelService.getFunnelPropertySums', () => {
     // query-builder.ts escapeDate comment). Pin the happy shape here
     // and explicitly reject the mangled form so a future regression in
     // how the select is wrapped breaks this test instantly.
-    expect(sql).toContain(
-      "toDateTime('2026-04-15 00:00:00')",
-    );
-    expect(sql).toContain(
-      "toDateTime('2026-04-15 23:59:59')",
-    );
+    expect(sql).toContain("toDateTime('2026-04-15 00:00:00')");
+    expect(sql).toContain("toDateTime('2026-04-15 23:59:59')");
     expect(sql).not.toContain("toDateTime(''");
     expect(sql).not.toContain("''2026-04-15");
     // And the surrounding SELECT / WHERE / GROUP BY event-column refs
     // get the same alias so the later `profile.` columns can't collide.
     expect(sql).toContain('events.profile_id AS profile_id');
     expect(sql).toContain(
-      "events.created_at >= toDateTime('2026-04-15 00:00:00')",
+      "events.created_at >= toDateTime('2026-04-15 00:00:00')"
     );
     expect(sql).toContain('events.profile_id != events.device_id');
     expect(sql).toContain('GROUP BY events.profile_id');
@@ -561,7 +576,9 @@ describe('FunnelService.getFunnelPropertySums', () => {
       expectProfilesFinalJoin: false,
     });
     const unqualifiedSql = normalizeSql(unqualified.toSQL());
-    expect(unqualifiedSql).not.toContain('events.profile_id != events.device_id');
+    expect(unqualifiedSql).not.toContain(
+      'events.profile_id != events.device_id'
+    );
     expect(unqualifiedSql).toContain('profile_id != device_id');
   });
 
@@ -577,15 +594,15 @@ describe('FunnelService.getFunnelPropertySums', () => {
 
     // Bare event columns get the alias prefix.
     expect(
-      qualifyFunnelCondition("name = 'Subscription: Paywall Viewed'"),
+      qualifyFunnelCondition("name = 'Subscription: Paywall Viewed'")
     ).toBe("events.name = 'Subscription: Paywall Viewed'");
 
     expect(
       qualifyFunnelCondition(
-        "properties['paywallVariant'] = 'CHOOSE_A_PLAN' AND name = 'Subscription: Paywall Viewed'",
-      ),
+        "properties['paywallVariant'] = 'CHOOSE_A_PLAN' AND name = 'Subscription: Paywall Viewed'"
+      )
     ).toBe(
-      "events.properties['paywallVariant'] = 'CHOOSE_A_PLAN' AND events.name = 'Subscription: Paywall Viewed'",
+      "events.properties['paywallVariant'] = 'CHOOSE_A_PLAN' AND events.name = 'Subscription: Paywall Viewed'"
     );
 
     // Trait CTE references (`trait_<key>.value`) are not in the column
@@ -594,10 +611,10 @@ describe('FunnelService.getFunnelPropertySums', () => {
     // column would produce `events.trait_show_...` which doesn't exist.
     expect(
       qualifyFunnelCondition(
-        "trait_show_monthly_back_press_offer.value = 'true' AND name = 'Server: Purchase'",
-      ),
+        "trait_show_monthly_back_press_offer.value = 'true' AND name = 'Server: Purchase'"
+      )
     ).toBe(
-      "trait_show_monthly_back_press_offer.value = 'true' AND events.name = 'Server: Purchase'",
+      "trait_show_monthly_back_press_offer.value = 'true' AND events.name = 'Server: Purchase'"
     );
 
     // The outer `profile_id` gets qualified; the inner `profile_id`
@@ -610,7 +627,7 @@ describe('FunnelService.getFunnelPropertySums', () => {
       "profile_id IN (SELECT profile_id FROM profile_traits WHERE project_id = 'regain-app' AND key = 'country' GROUP BY profile_id HAVING argMax(value, updated_at) = 'IN') AND name = 'Subscription: Paywall Viewed'";
     const qualified = qualifyFunnelCondition(stepCond);
     expect(qualified).toBe(
-      "events.profile_id IN (SELECT profile_id FROM profile_traits WHERE project_id = 'regain-app' AND key = 'country' GROUP BY profile_id HAVING argMax(value, updated_at) = 'IN') AND events.name = 'Subscription: Paywall Viewed'",
+      "events.profile_id IN (SELECT profile_id FROM profile_traits WHERE project_id = 'regain-app' AND key = 'country' GROUP BY profile_id HAVING argMax(value, updated_at) = 'IN') AND events.name = 'Subscription: Paywall Viewed'"
     );
     // The inner SELECT's profile_id must stay bare — otherwise the
     // subquery resolves its own profile_id to events.profile_id and
@@ -620,16 +637,14 @@ describe('FunnelService.getFunnelPropertySums', () => {
     // String literals that look like column names are untouched.
     expect(
       qualifyFunnelCondition(
-        "name = 'created_at' AND properties['profile_id'] = '42'",
-      ),
+        "name = 'created_at' AND properties['profile_id'] = '42'"
+      )
     ).toBe(
-      "events.name = 'created_at' AND events.properties['profile_id'] = '42'",
+      "events.name = 'created_at' AND events.properties['profile_id'] = '42'"
     );
 
     // Custom alias is honoured (used by getFunnelPropertySums' `e` alias).
-    expect(qualifyFunnelCondition("name = 'X'", 'e')).toBe(
-      "e.name = 'X'",
-    );
+    expect(qualifyFunnelCondition("name = 'X'", 'e')).toBe("e.name = 'X'");
 
     // First-time-ever join column `ft_<i>.ft_profile_id` must NOT be split
     // into `ft_<i>.ft_events.profile_id`. The regex anchor `\b` matches at
@@ -641,16 +656,14 @@ describe('FunnelService.getFunnelPropertySums', () => {
     // "Identifier 'ft_0.ft_events.profile_id' cannot be resolved from
     //  subquery with name ft_0. In scope session_funnel."
     expect(
-      qualifyFunnelCondition(
-        "(name = 'X' AND ft_0.ft_profile_id != '')",
-      ),
+      qualifyFunnelCondition("(name = 'X' AND ft_0.ft_profile_id != '')")
     ).toBe("(events.name = 'X' AND ft_0.ft_profile_id != '')");
 
     // Likewise for trait CTE alias columns that happen to end in `name`,
     // `properties`, etc. — `trait_user_name.value` must not become
     // `trait_user_events.name.value`.
     expect(
-      qualifyFunnelCondition("trait_user_name.value = 'a' AND name = 'X'"),
+      qualifyFunnelCondition("trait_user_name.value = 'a' AND name = 'X'")
     ).toBe("trait_user_name.value = 'a' AND events.name = 'X'");
   });
 
@@ -699,9 +712,7 @@ describe('FunnelService.getFunnelPropertySums', () => {
       funnelWindowMilliseconds: 30 * 86400 * 1000,
       timezone: 'Asia/Calcutta',
       groupBy: 'profile_id',
-      additionalSelects: [
-        'trait_show_monthly_back_press_offer.value as b_0',
-      ],
+      additionalSelects: ['trait_show_monthly_back_press_offer.value as b_0'],
       additionalGroupBy: ['b_0'],
       traitDescriptors,
     });
@@ -726,7 +737,7 @@ describe('FunnelService.getFunnelPropertySums', () => {
     expect(traitCtes[0]!.name).toBe('trait_show_monthly_back_press_offer');
     const cteSql = normalizeSql(traitCtes[0]!.sql);
     expect(cteSql).toContain(
-      "SELECT profile_id, argMax(value, updated_at) AS value"
+      'SELECT profile_id, argMax(value, updated_at) AS value'
     );
     expect(cteSql).toContain(
       `FROM ${mocks.tables.profileTraits} WHERE project_id = 'regain-app' AND key = 'show_monthly_back_press_offer'`
@@ -813,9 +824,7 @@ describe('FunnelService.getFunnelPropertySums', () => {
       funnelWindowMilliseconds: 604800000, // 7 days
       timezone: 'Asia/Calcutta',
       groupBy: 'profile_id',
-      additionalSelects: [
-        'trait_show_monthly_back_press_offer.value as b_0',
-      ],
+      additionalSelects: ['trait_show_monthly_back_press_offer.value as b_0'],
       additionalGroupBy: ['b_0'],
       traitDescriptors,
     });
@@ -841,9 +850,7 @@ describe('FunnelService.getFunnelPropertySums', () => {
 
     // And the inner trait subquery for the country filter stays bare —
     // its `profile_id` is bound to `profile_traits` inside the subquery.
-    expect(sql).toContain(
-      "events.profile_id IN (SELECT profile_id FROM"
-    );
+    expect(sql).toContain('events.profile_id IN (SELECT profile_id FROM');
     expect(sql).not.toContain('SELECT events.profile_id FROM');
 
     // The first-time CTE itself is emitted at the top level.
@@ -871,9 +878,7 @@ describe('FunnelService.getFunnelPropertySums', () => {
     expect(sql).toContain(
       "dateDiff('second', s1.step_1_ts, e.created_at) <= 900"
     );
-    expect(sql).toContain(
-      "addSeconds(toDateTime('2026-04-15 23:59:59'), 900)"
-    );
+    expect(sql).toContain("addSeconds(toDateTime('2026-04-15 23:59:59'), 900)");
   });
 });
 
@@ -914,6 +919,14 @@ describe.skipIf(!runClickHouseOutputTest)(
             ...row,
             total_sum:
               row.total_sum == null ? row.total_sum : Number(row.total_sum),
+            property_average:
+              row.property_average == null
+                ? row.property_average
+                : Number(row.property_average),
+            property_count:
+              row.property_count == null
+                ? row.property_count
+                : Number(row.property_count),
           }));
         }
       );

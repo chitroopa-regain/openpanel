@@ -3,6 +3,7 @@ import {
   changeCriteria,
   changeFunnelBreakdownStep,
   changeFunnelGroup,
+  changeFunnelMeasure,
   changeFunnelProperty,
   changeFunnelWindow,
   changeFunnelWindowUnit,
@@ -45,6 +46,7 @@ export function ReportSettings() {
   const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
   const breakdownStep = funnelOptions?.breakdownStep;
   const funnelProperty = funnelOptions?.funnelProperty;
+  const funnelMeasure = funnelOptions?.funnelMeasure ?? 'conversion_rate';
   const seriesCount = useSelector((state) => state.report.series.length);
 
   const histogramOptions = options?.type === 'histogram' ? options : undefined;
@@ -53,7 +55,7 @@ export function ReportSettings() {
   const dispatch = useDispatch();
   const { projectId } = useAppParams();
   const eventNames = useEventNames({ projectId });
-  // For funnel_metric, scope properties to the last funnel step event
+  // For funnel property measures, scope properties to the last funnel step event
   const series = useSelector((state) => state.report.series);
   const propertySourceEvent =
     chartType === 'retention'
@@ -85,7 +87,9 @@ export function ReportSettings() {
     },
     {
       enabled:
-        (chartType === 'funnel_metric' || chartType === 'retention') &&
+        (chartType === 'funnel' ||
+          chartType === 'funnel_metric' ||
+          chartType === 'retention') &&
         hasPropertySource,
     }
   );
@@ -120,11 +124,20 @@ export function ReportSettings() {
       fields.push('funnelWindow');
     }
 
+    if (chartType === 'funnel') {
+      fields.push('funnelMeasure');
+    }
+
     if (chartType === 'funnel' || chartType === 'funnel_metric') {
       fields.push('breakdownStep');
     }
 
-    if (chartType === 'funnel_metric') {
+    if (
+      chartType === 'funnel_metric' ||
+      (chartType === 'funnel' &&
+        (funnelMeasure === 'property_sum' ||
+          funnelMeasure === 'property_average'))
+    ) {
       fields.push('funnelProperty');
     }
 
@@ -140,7 +153,7 @@ export function ReportSettings() {
     }
 
     return fields;
-  }, [chartType]);
+  }, [chartType, funnelMeasure]);
 
   if (fields.length === 0) {
     return null;
@@ -336,6 +349,36 @@ export function ReportSettings() {
             </div>
           </div>
         )}
+        {fields.includes('funnelMeasure') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              Measure
+            </Label>
+            <Combobox
+              align="end"
+              items={[
+                { label: 'Conversion Rate', value: 'conversion_rate' },
+                { label: 'Unique Users', value: 'unique_users' },
+                { label: 'Property Sum', value: 'property_sum' },
+                { label: 'Property Average', value: 'property_average' },
+              ]}
+              onChange={(val) => {
+                dispatch(
+                  changeFunnelMeasure(
+                    val === 'conversion_rate'
+                      ? undefined
+                      : (val as
+                          | 'unique_users'
+                          | 'property_sum'
+                          | 'property_average')
+                  )
+                );
+              }}
+              placeholder="Measure"
+              value={funnelMeasure}
+            />
+          </div>
+        )}
         {fields.includes('breakdownStep') && (
           <div className="flex items-center justify-between gap-4">
             <Label className="mb-0 whitespace-nowrap font-medium">
@@ -367,7 +410,9 @@ export function ReportSettings() {
         {fields.includes('funnelProperty') && (
           <div className="flex items-center justify-between gap-4">
             <Label className="mb-0 whitespace-nowrap font-medium">
-              Sum Property
+              {funnelMeasure === 'property_average'
+                ? 'Average Property'
+                : 'Sum Property'}
             </Label>
             <Combobox
               align="end"
