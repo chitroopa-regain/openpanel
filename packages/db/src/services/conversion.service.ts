@@ -257,6 +257,18 @@ export class ConversionService {
     const firstEventTable = useEventsFirst ? TABLE_NAMES.events : TABLE_NAMES.cohort_events_mv;
     const firstIdentifiedFilter = useEventsFirst ? 'AND e.profile_id != e.device_id' : '';
 
+    const secondItem = series[1] as { type?: string; filters?: any[] } | undefined;
+    const secondCustomEventComponents = resolvedEvents[1]?.customEventComponents;
+    const secondEventFilters = secondItem?.filters ?? [];
+
+    const useEventsSecond =
+      secondItem?.type === 'custom_event' ||
+      (secondCustomEventComponents && secondCustomEventComponents.length > 0) ||
+      needsEventsTable(secondEventFilters);
+
+    const secondEventTable = useEventsSecond ? TABLE_NAMES.events : TABLE_NAMES.cohort_events_mv;
+    const secondIdentifiedFilter = useEventsSecond ? 'AND profile_id != device_id' : '';
+
     const query = clix(this.client, timezone)
       .select<{
         event_day: string;
@@ -291,11 +303,11 @@ export class ConversionService {
             SELECT
               profile_id,
               toDate(created_at, '${timezone}') AS event_date
-            FROM ${TABLE_NAMES.events}
+            FROM ${secondEventTable}
             WHERE ${conditionB}
               AND project_id = ${sqlstring.escape(projectId)}
               AND created_at BETWEEN toDate('${startDate}', '${timezone}') AND toDate('${endDate}', '${timezone}') + INTERVAL ${retentionDay + 7} DAY
-              AND profile_id != device_id
+              ${secondIdentifiedFilter}
             GROUP BY profile_id, event_date
           )
           SELECT
