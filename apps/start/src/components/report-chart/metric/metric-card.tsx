@@ -21,6 +21,11 @@ import {
 } from '../common/previous-diff-indicator';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
+import {
+  compactMetricCardClassName,
+  compactMetricLabelClassName,
+  compactMetricValueClassName,
+} from './metric-card-layout';
 import { formatMetricDisplayValue } from './metric-value-format';
 
 interface MetricCardProps {
@@ -158,13 +163,13 @@ export function MetricCard({
   }
 
   return (
-      <div
-        className={cn(
-          'group relative h-full min-h-[140px] overflow-hidden rounded-xl border border-border/80 px-4 pb-4 pt-5 hover:z-10',
-          isEditMode && 'card h-auto min-h-[120px] p-4',
-        )}
-        key={serie.id}
-      >
+    <div
+      className={cn(
+        compactMetricCardClassName,
+        isEditMode && 'card h-auto min-h-[120px] p-4',
+      )}
+      key={serie.id}
+    >
       {showBackgroundChart && (
         <div
           className={cn(
@@ -212,11 +217,11 @@ export function MetricCard({
       <div className="relative z-10 flex h-full flex-col justify-between">
         <div className="flex min-w-0 items-start justify-between gap-4">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <div className="truncate text-left text-[clamp(0.95rem,1.25vw,1.5rem)] leading-tight text-muted-foreground">
+            <div className={compactMetricLabelClassName}>
               {label}
             </div>
             <Tooltiper content={hoverTooltip}>
-              <div className="cursor-default truncate font-mono text-[clamp(2.75rem,4.8vw,4rem)] font-bold leading-none tracking-tight">
+              <div className={compactMetricValueClassName}>
                 {value}
               </div>
             </Tooltiper>

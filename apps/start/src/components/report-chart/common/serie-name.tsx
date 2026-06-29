@@ -21,13 +21,16 @@ export function SerieName({ name, className }: SerieNameProps) {
       return renderSerieName(name);
     }
     return (
-      <div className={cn('flex items-center gap-1', className)}>
+      <div className={cn('flex min-w-0 items-center gap-1 overflow-hidden', className)}>
         {name.map((n, index) => {
           return (
             <Fragment key={n}>
-              <span>{n || NOT_SET_VALUE}</span>
+              <span className="min-w-0 truncate">{n || NOT_SET_VALUE}</span>
               {name.length - 1 > index && (
-                <ChevronRightIcon className="text-muted-foreground" size={12} />
+                <ChevronRightIcon
+                  className="shrink-0 text-muted-foreground"
+                  size={12}
+                />
               )}
             </Fragment>
           );

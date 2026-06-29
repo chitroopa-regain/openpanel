@@ -5,6 +5,7 @@ import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 
 import { useReportChartContext } from '../context';
+import { compactMetricGridClassName } from './metric-card-layout';
 import { MetricCard } from './metric-card';
 
 interface Props {
@@ -41,8 +42,7 @@ export function Chart({ data }: Props) {
   return (
     <div
       className={cn(
-        'grid grid-cols-1 gap-4',
-        isEditMode && 'md:grid-cols-2 lg:grid-cols-3',
+        compactMetricGridClassName,
         isHero && 'h-full place-content-center',
       )}
     >
