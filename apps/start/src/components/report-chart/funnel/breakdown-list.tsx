@@ -4,6 +4,7 @@ import type { RouterOutputs } from '@/trpc/client';
 import { getChartColor } from '@/utils/theme';
 import { ArrowDown, ArrowUp, ChevronDown } from 'lucide-react';
 import { Fragment, useCallback, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { formatDuration } from './chart';
 
 type FunnelSeries = RouterOutputs['chart']['funnel']['current'][number];
@@ -210,9 +211,17 @@ export function BreakdownList({
     );
   };
 
-  const sortableHeader = (key: SortKey, label: string, className?: string) => (
+  const stickySubHeaderStyle = { top: 37 };
+
+  const sortableHeader = (
+    key: SortKey,
+    label: string,
+    className?: string,
+    style?: CSSProperties
+  ) => (
     <th
       className={`px-3 py-1 text-right font-normal cursor-pointer hover:text-foreground select-none whitespace-nowrap ${className ?? ''}`}
+      style={style}
       onClick={() => handleSort(key)}
     >
       {label}
@@ -338,7 +347,7 @@ export function BreakdownList({
         </colgroup>
         <thead>
           {/* Row 1: step group headers */}
-          <tr className={`border-b border-border ${stickyHeader}`}>
+          <tr className="border-b border-border">
             <th
               className={`px-2 py-2 ${stickyHeaderLeft0}`}
               style={stickySelectionStyle}
@@ -383,21 +392,21 @@ export function BreakdownList({
             />
           </tr>
           {/* Row 2: sub-column labels (sortable) */}
-          <tr
-            className={`border-b border-border ${stickyHeader}`}
-            style={{ top: 37 }}
-          >
+          <tr className="border-b border-border">
             <th
               className={`px-2 py-1 ${stickyHeaderLeft0}`}
-              style={{ ...stickySelectionStyle, top: 37 }}
+              style={{ ...stickySelectionStyle, ...stickySubHeaderStyle }}
             />
             <th
               className={`px-3 py-1 ${stickyHeaderLeft1}`}
-              style={{ ...stickyBreakdownStyle, top: 37 }}
+              style={{ ...stickyBreakdownStyle, ...stickySubHeaderStyle }}
             />
             <th
               className={`px-3 py-1 ${stickyHeaderLeft2}`}
-              style={{ ...stickyTotalConversionStyle, top: 37 }}
+              style={{
+                ...stickyTotalConversionStyle,
+                ...stickySubHeaderStyle,
+              }}
             />
             {steps.map((step, i) => {
               if (i === 0) {
@@ -406,7 +415,8 @@ export function BreakdownList({
                     {sortableHeader(
                       `step:${i}:count`,
                       '#',
-                      `border-l border-border ${stickyHeader}`
+                      `border-l border-border ${stickyHeader}`,
+                      stickySubHeaderStyle
                     )}
                   </Fragment>
                 );
@@ -416,17 +426,28 @@ export function BreakdownList({
                   {sortableHeader(
                     `step:${i}:time`,
                     'Time',
-                    `border-l border-border ${stickyHeader}`
+                    `border-l border-border ${stickyHeader}`,
+                    stickySubHeaderStyle
                   )}
-                  {sortableHeader(`step:${i}:conv`, 'Conv %', stickyHeader)}
-                  {sortableHeader(`step:${i}:count`, '#', stickyHeader)}
+                  {sortableHeader(
+                    `step:${i}:conv`,
+                    'Conv %',
+                    stickyHeader,
+                    stickySubHeaderStyle
+                  )}
+                  {sortableHeader(
+                    `step:${i}:count`,
+                    '#',
+                    stickyHeader,
+                    stickySubHeaderStyle
+                  )}
                 </Fragment>
               );
             })}
             <th
               aria-hidden="true"
               className={`px-0 py-1 ${stickyHeader}`}
-              style={{ ...scrollGutterStyle, top: 37 }}
+              style={{ ...scrollGutterStyle, ...stickySubHeaderStyle }}
             />
           </tr>
         </thead>
