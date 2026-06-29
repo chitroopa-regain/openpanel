@@ -9,6 +9,65 @@ export type RetentionMeasure =
 
 export type RetentionTimeUnit = 'day' | 'week' | 'month';
 
+export type ProcessedRetentionCohortRow = {
+  cohort_interval: string;
+  display_interval?: string;
+  sum: number;
+  values: number[];
+  percentages: number[];
+};
+
+export function aggregateRetentionRowsByDisplayInterval(
+  rows: ProcessedRetentionCohortRow[],
+  valueMode: 'sum' | 'weighted_average'
+) {
+  const groups = new Map<
+    string,
+    {
+      sum: number;
+      values: number[];
+      weightedValues: number[];
+    }
+  >();
+
+  for (const row of rows) {
+    const key = row.display_interval ?? row.cohort_interval;
+    const group = groups.get(key) ?? {
+      sum: 0,
+      values: Array(row.values.length).fill(0) as number[],
+      weightedValues: Array(row.values.length).fill(0) as number[],
+    };
+
+    group.sum += row.sum;
+    row.values.forEach((value, index) => {
+      group.values[index] = (group.values[index] ?? 0) + value;
+      group.weightedValues[index] =
+        (group.weightedValues[index] ?? 0) + value * row.sum;
+    });
+    groups.set(key, group);
+  }
+
+  return Array.from(groups.entries())
+    .map(([cohort_interval, group]) => {
+      const values =
+        valueMode === 'weighted_average'
+          ? group.weightedValues.map((value) =>
+              group.sum > 0 ? Math.round((value / group.sum) * 100) / 100 : 0
+            )
+          : group.values;
+
+      return {
+        cohort_interval,
+        sum: group.sum,
+        values,
+        percentages: values.map((value) =>
+          group.sum > 0 ? Math.round((value / group.sum) * 10000) / 10000 : 0
+        ),
+      };
+    })
+    .sort((a, b) => a.cohort_interval.localeCompare(b.cohort_interval));
+}
+
 export function getRetentionTimeUnitConfig(unit: RetentionTimeUnit): {
   diffUnit: RetentionTimeUnit;
   sqlInterval: 'DAY' | 'WEEK' | 'MONTH';

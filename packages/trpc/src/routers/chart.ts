@@ -63,6 +63,7 @@ import {
   publicProcedure,
 } from '../trpc';
 import {
+  aggregateRetentionRowsByDisplayInterval,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
@@ -1114,6 +1115,22 @@ export const chartRouter = createTRPCRouter({
             return `toDate(${col}, '${timezone}')`;
         }
       };
+      const cohortUnit =
+        interval === 'day' || retentionUnit === 'day'
+          ? 'day'
+          : interval === 'week' || retentionUnit === 'week'
+            ? 'week'
+            : 'month';
+      const toStartOfCohortInterval = (col: string) => {
+        switch (cohortUnit) {
+          case 'week':
+            return `toStartOfWeek(toDateTime(${col}), 0, '${timezone}')`;
+          case 'month':
+            return `toStartOfMonth(toDateTime(${col}), '${timezone}')`;
+          default:
+            return `toDate(${col}, '${timezone}')`;
+        }
+      };
 
       const countCriteria =
         criteria === 'on_or_after'
@@ -1230,7 +1247,8 @@ export const chartRouter = createTRPCRouter({
           SELECT
             profile_id AS userID,
             project_id,
-            ${toStartOfInterval('created_at')} AS cohort_interval
+            ${toStartOfInterval('created_at')} AS display_interval,
+            ${toStartOfCohortInterval('created_at')} AS cohort_interval
           FROM ${firstEventTable}
           ${firstEventJoin}
           WHERE ${firstWhereClause}
@@ -1269,21 +1287,24 @@ export const chartRouter = createTRPCRouter({
         cohort_sizes AS (
           SELECT
             cohort_interval,
+            any(display_interval) AS display_interval,
             COUNT(DISTINCT userID) AS total_first_event_count
           FROM cohort_users
           GROUP BY cohort_interval
         )
         SELECT
+          cs.display_interval,
           cs.cohort_interval,
           cs.total_first_event_count,
           ${countsSelect}
         FROM cohort_sizes cs
         LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval
-        GROUP BY cs.cohort_interval, cs.total_first_event_count
+        GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count
         ORDER BY cs.cohort_interval ASC
       `;
 
       const cohortData = await chQuery<{
+        display_interval?: string;
         cohort_interval: string;
         total_first_event_count: number;
         [key: string]: any;
@@ -1295,7 +1316,9 @@ export const chartRouter = createTRPCRouter({
           diffInterval,
           dates.startDate,
           dates.endDate,
-          interval
+          interval,
+          retentionUnit,
+          retentionMetric
         ),
         queries: [cohortQuery],
         timezone,
@@ -1679,6 +1702,7 @@ export const chartRouter = createTRPCRouter({
 
 function processCohortData(
   data: Array<{
+    display_interval?: string;
     cohort_interval: string;
     total_first_event_count: number;
     [key: string]: any;
@@ -1686,9 +1710,17 @@ function processCohortData(
   diffInterval: number,
   startDate?: string,
   endDate?: string,
-  interval?: string
+  interval?: string,
+  retentionUnit?: string,
+  retentionMetric?: string
 ) {
-  const processed = data.map((row) => {
+  let processed: Array<{
+    cohort_interval: string;
+    display_interval?: string;
+    sum: number;
+    values: number[];
+    percentages: number[];
+  }> = data.map((row) => {
     const sum = row.total_first_event_count;
     const values = range(0, diffInterval + 1).map(
       (index) => (row[`interval_${index}_user_count`] || 0) as number
@@ -1696,11 +1728,19 @@ function processCohortData(
 
     return {
       cohort_interval: row.cohort_interval,
+      display_interval: row.display_interval,
       sum,
       values,
       percentages: values.map((value) => (sum > 0 ? round(value / sum, 4) : 0)),
     };
   });
+
+  if (interval && retentionUnit && interval !== retentionUnit) {
+    processed = aggregateRetentionRowsByDisplayInterval(
+      processed,
+      retentionMetric === 'property_average' ? 'weighted_average' : 'sum'
+    );
+  }
 
   // Fill in missing dates with zero rows
   if (startDate && endDate) {

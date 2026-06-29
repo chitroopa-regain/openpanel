@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aggregateRetentionRowsByDisplayInterval,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
@@ -128,5 +129,36 @@ describe('chart retention utils', () => {
       diffUnit: 'month',
       sqlInterval: 'MONTH',
     });
+  });
+
+  it('aggregates daily retention rows into weekly rows by summing counts and recomputing rates', () => {
+    expect(
+      aggregateRetentionRowsByDisplayInterval(
+        [
+          {
+            cohort_interval: '2026-05-31',
+            display_interval: '2026-05-31',
+            sum: 100,
+            values: [2, 1],
+            percentages: [0.02, 0.01],
+          },
+          {
+            cohort_interval: '2026-06-01',
+            display_interval: '2026-05-31',
+            sum: 300,
+            values: [6, 9],
+            percentages: [0.02, 0.03],
+          },
+        ],
+        'sum'
+      )
+    ).toEqual([
+      {
+        cohort_interval: '2026-05-31',
+        sum: 400,
+        values: [8, 10],
+        percentages: [0.02, 0.025],
+      },
+    ]);
   });
 });
