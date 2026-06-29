@@ -51,8 +51,15 @@ type FunnelMeasure =
 type FunnelStep =
   RouterOutputs['chart']['funnel']['current'][number]['lastStep'];
 
+type FunnelMeasureStepLike = {
+  count?: number;
+  percent?: number;
+  propertyAverage?: number;
+  propertySum?: number;
+};
+
 export function getFunnelMeasureValue(
-  step: FunnelStep | undefined,
+  step: FunnelMeasureStepLike | undefined,
   measure: FunnelMeasure
 ) {
   if (!step) return 0;
@@ -70,7 +77,7 @@ export function getFunnelMeasureLabel(measure: FunnelMeasure) {
     conversion_rate: 'Conversion',
     unique_users: 'Unique Users',
     property_sum: 'Property Sum',
-    property_average: 'ARPU',
+    property_average: 'Property Average',
   }[measure];
 }
 
@@ -605,28 +612,53 @@ function FunnelOverallLegend({ percent }: { percent: number }) {
   );
 }
 
+export function formatFunnelPreviewMeasureValue(
+  value: number,
+  measure: FunnelMeasure
+) {
+  if (measure === 'conversion_rate') {
+    return formatFunnelPercent(value);
+  }
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: 3,
+  });
+}
+
 export function getFunnelPreviewSummaryItems({
   breakdowns,
   maxItems,
+  measure = 'conversion_rate',
 }: {
   breakdowns: Array<{
     breakdowns?: string[] | null;
     colorIndex?: number;
     id: string;
-    lastStep: { percent: number };
+    lastStep: {
+      count?: number;
+      percent: number;
+      propertyAverage?: number;
+      propertySum?: number;
+    };
   }>;
   maxItems: number;
+  measure?: FunnelMeasure;
 }) {
   return {
-    items: breakdowns.slice(0, maxItems).map((breakdown, index) => ({
-      colorIndex: breakdown.colorIndex ?? index,
-      id: breakdown.id,
-      label:
-        breakdown.breakdowns && breakdown.breakdowns.length > 0
-          ? breakdown.breakdowns.join(' > ')
-          : 'Overall',
-      percentText: formatFunnelPercent(breakdown.lastStep.percent),
-    })),
+    items: breakdowns.slice(0, maxItems).map((breakdown, index) => {
+      const value = getFunnelMeasureValue(breakdown.lastStep, measure);
+      const valueText = formatFunnelPreviewMeasureValue(value, measure);
+
+      return {
+        colorIndex: breakdown.colorIndex ?? index,
+        id: breakdown.id,
+        label:
+          breakdown.breakdowns && breakdown.breakdowns.length > 0
+            ? breakdown.breakdowns.join(' > ')
+            : 'Overall',
+        percentText: valueText,
+        valueText,
+      };
+    }),
     remainingCount: Math.max(0, breakdowns.length - maxItems),
   };
 }
@@ -642,6 +674,8 @@ function FunnelPreviewSummary({
   maxItems: number;
   compact?: boolean;
 }) {
+  const { options } = useReportChartContext();
+  const measure = getFunnelMeasureFromOptions(options);
   const { items, remainingCount } = getFunnelPreviewSummaryItems({
     breakdowns: breakdowns.map((breakdown, index) => {
       const stableIndex = allBreakdowns.findIndex((b) => b.id === breakdown.id);
@@ -652,6 +686,7 @@ function FunnelPreviewSummary({
       };
     }),
     maxItems,
+    measure,
   });
 
   if (items.length === 0) {
@@ -681,7 +716,7 @@ function FunnelPreviewSummary({
                 : 'max-w-[160px] shrink-0'
             )}
             key={item.id}
-            title={`${item.label} • ${item.percentText}`}
+            title={`${item.label} • ${item.valueText}`}
           >
             <div
               className="size-2.5 shrink-0 rounded-[3px]"
@@ -690,7 +725,7 @@ function FunnelPreviewSummary({
             <span className="truncate text-foreground/90">{item.label}</span>
             <span className="shrink-0 text-muted-foreground">•</span>
             <span className="shrink-0 font-mono text-foreground/90">
-              {item.percentText}
+              {item.valueText}
             </span>
           </div>
         ))}

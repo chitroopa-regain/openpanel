@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getFunnelBarSize,
   getFunnelLabelLayout,
+  getFunnelMeasureLabel,
   getFunnelPreviewSummaryItems,
   getFunnelResponsiveBarSize,
 } from './chart';
@@ -116,6 +117,10 @@ describe('funnel chart adaptive layout', () => {
     expect(label.labelY).toBeGreaterThanOrEqual(4);
   });
 
+  it('labels property average without ARPU wording', () => {
+    expect(getFunnelMeasureLabel('property_average')).toBe('Property Average');
+  });
+
   it('builds a compact preview summary with final conversion by breakdown', () => {
     const summary = getFunnelPreviewSummaryItems({
       breakdowns: [
@@ -145,15 +150,41 @@ describe('funnel chart adaptive layout', () => {
         id: 'version-a',
         label: '46.2.1392',
         percentText: '0%',
+        valueText: '0%',
       },
       {
         colorIndex: 4,
         id: 'version-b',
         label: '43.1.1330',
         percentText: '16.67%',
+        valueText: '16.67%',
       },
     ]);
     expect(summary.remainingCount).toBe(1);
+  });
+
+  it('builds a compact preview summary with selected property average values', () => {
+    const summary = getFunnelPreviewSummaryItems({
+      breakdowns: [
+        {
+          breakdowns: ['VARIANT_A'],
+          id: 'variant-a',
+          lastStep: { percent: 1.93, propertyAverage: 4.713 },
+        },
+        {
+          breakdowns: ['BASELINE'],
+          id: 'baseline',
+          lastStep: { percent: 1.8, propertyAverage: 4.205 },
+        },
+      ],
+      maxItems: 2,
+      measure: 'property_average',
+    });
+
+    expect(summary.items).toMatchObject([
+      { label: 'VARIANT_A', valueText: '4.713' },
+      { label: 'BASELINE', valueText: '4.205' },
+    ]);
   });
 
   it('summarizes dashboard previews as two visible values plus remaining count', () => {

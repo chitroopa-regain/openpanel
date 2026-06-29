@@ -124,10 +124,6 @@ export function ReportSettings() {
       fields.push('funnelWindow');
     }
 
-    if (chartType === 'funnel' || chartType === 'funnel_metric') {
-      fields.push('breakdownStep');
-    }
-
     if (chartType === 'funnel') {
       fields.push('funnelMeasure');
     }
@@ -139,6 +135,10 @@ export function ReportSettings() {
           funnelMeasure === 'property_average'))
     ) {
       fields.push('funnelProperty');
+    }
+
+    if (chartType === 'funnel' || chartType === 'funnel_metric') {
+      fields.push('breakdownStep');
     }
 
     if (chartType === 'sankey') {
@@ -360,7 +360,7 @@ export function ReportSettings() {
                 { label: 'Conversion Rate', value: 'conversion_rate' },
                 { label: 'Unique Users', value: 'unique_users' },
                 { label: 'Property Sum', value: 'property_sum' },
-                { label: 'ARPU (Property Average)', value: 'property_average' },
+                { label: 'Property Average', value: 'property_average' },
               ]}
               onChange={(val) => {
                 dispatch(
@@ -376,6 +376,25 @@ export function ReportSettings() {
               }}
               placeholder="Measure"
               value={funnelMeasure}
+            />
+          </div>
+        )}
+        {fields.includes('funnelProperty') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              {funnelMeasure === 'property_average'
+                ? 'Average Property'
+                : 'Sum Property'}
+            </Label>
+            <Combobox
+              align="end"
+              items={propertyItems}
+              onChange={(val) => {
+                dispatch(changeFunnelProperty(val || undefined));
+              }}
+              placeholder="Select property"
+              searchable
+              value={funnelProperty || ''}
             />
           </div>
         )}
@@ -404,25 +423,6 @@ export function ReportSettings() {
               value={
                 breakdownStep !== undefined ? String(breakdownStep) : 'all'
               }
-            />
-          </div>
-        )}
-        {fields.includes('funnelProperty') && (
-          <div className="flex items-center justify-between gap-4">
-            <Label className="mb-0 whitespace-nowrap font-medium">
-              {funnelMeasure === 'property_average'
-                ? 'ARPU Property'
-                : 'Sum Property'}
-            </Label>
-            <Combobox
-              align="end"
-              items={propertyItems}
-              onChange={(val) => {
-                dispatch(changeFunnelProperty(val || undefined));
-              }}
-              placeholder="Select property"
-              searchable
-              value={funnelProperty || ''}
             />
           </div>
         )}
