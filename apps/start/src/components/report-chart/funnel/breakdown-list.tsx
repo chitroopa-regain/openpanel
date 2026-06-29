@@ -47,7 +47,7 @@ function getSortValue(item: FunnelSeries, key: SortKey): number | string {
 export function getFunnelBreakdownStickyLayout() {
   const selectionWidth = 40;
   const breakdownWidth = 200;
-  const totalConversionWidth = 112;
+  const totalConversionWidth = 120;
 
   return {
     selection: {
@@ -65,8 +65,35 @@ export function getFunnelBreakdownStickyLayout() {
   };
 }
 
+export function getFunnelBreakdownMetricColumnWidths() {
+  return {
+    firstStepCount: 96,
+    time: 96,
+    conversion: 112,
+    count: 80,
+  };
+}
+
 export function getFunnelBreakdownTableScrollGutterWidth() {
   return 96;
+}
+
+export function getFunnelBreakdownTableMinWidth(stepCount: number) {
+  const layout = getFunnelBreakdownStickyLayout();
+  const metrics = getFunnelBreakdownMetricColumnWidths();
+  const pinnedWidth =
+    layout.selection.width +
+    layout.breakdown.width +
+    layout.totalConversion.width;
+  let metricWidth = 0;
+  for (let index = 0; index < stepCount; index += 1) {
+    metricWidth +=
+      index === 0
+        ? metrics.firstStepCount
+        : metrics.time + metrics.conversion + metrics.count;
+  }
+
+  return pinnedWidth + metricWidth + getFunnelBreakdownTableScrollGutterWidth();
 }
 
 // Sticky cell styles. Widths include horizontal padding; the left offsets must
@@ -78,17 +105,16 @@ const stickyLeft0 = 'sticky left-0 z-10 bg-card w-[40px] min-w-[40px]';
 const stickyLeft1 =
   'sticky left-[40px] z-10 bg-card w-[200px] min-w-[200px] max-w-[200px]';
 const stickyLeft2 =
-  'sticky left-[240px] z-10 bg-card border-r border-border w-[112px] min-w-[112px]';
+  'sticky left-[240px] z-10 bg-card border-r border-border w-[120px] min-w-[120px]';
 const stickyHeader = 'sticky top-0 z-20 bg-card';
 const stickyHeaderLeft0 =
   'sticky top-0 left-0 z-30 bg-card w-[40px] min-w-[40px]';
 const stickyHeaderLeft1 =
   'sticky top-0 left-[40px] z-30 bg-card w-[200px] min-w-[200px] max-w-[200px]';
 const stickyHeaderLeft2 =
-  'sticky top-0 left-[240px] z-30 bg-card border-r border-border w-[112px] min-w-[112px]';
+  'sticky top-0 left-[240px] z-30 bg-card border-r border-border w-[120px] min-w-[120px]';
 const scrollGutterWidth = getFunnelBreakdownTableScrollGutterWidth();
 const scrollGutterStyle = {
-  width: scrollGutterWidth,
   minWidth: scrollGutterWidth,
 };
 
@@ -153,6 +179,9 @@ export function BreakdownList({
   }
 
   const steps = allBreakdowns[0]!.steps;
+  const stickyLayout = getFunnelBreakdownStickyLayout();
+  const metricWidths = getFunnelBreakdownMetricColumnWidths();
+  const tableMinWidth = getFunnelBreakdownTableMinWidth(steps.length);
 
   const SortIcon = ({ col }: { col: SortKey }) => {
     if (sortKey !== col) return null;
@@ -258,7 +287,33 @@ export function BreakdownList({
           )}
         </div>
       )}
-      <table className="w-full text-sm border-collapse">
+      <table
+        className="w-full table-fixed text-sm border-collapse"
+        style={{ minWidth: tableMinWidth }}
+      >
+        <colgroup>
+          <col style={{ width: stickyLayout.selection.width }} />
+          <col style={{ width: stickyLayout.breakdown.width }} />
+          <col style={{ width: stickyLayout.totalConversion.width }} />
+          {steps.map((step, i) => {
+            if (i === 0) {
+              return (
+                <col
+                  key={`col-${step.event.id ?? i}-count`}
+                  style={{ width: metricWidths.firstStepCount }}
+                />
+              );
+            }
+            return (
+              <Fragment key={`col-${step.event.id ?? i}`}>
+                <col style={{ width: metricWidths.time }} />
+                <col style={{ width: metricWidths.conversion }} />
+                <col style={{ width: metricWidths.count }} />
+              </Fragment>
+            );
+          })}
+          <col />
+        </colgroup>
         <thead>
           {/* Row 1: step group headers */}
           <tr className={`border-b border-border ${stickyHeader}`}>
