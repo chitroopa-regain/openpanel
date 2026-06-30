@@ -6,22 +6,13 @@ import { round } from './math';
 
 export function getPreviousMetric(
   current: number,
-  previous: number | null | undefined,
+  previous: number | null | undefined
 ): PreviousValue {
   if (isNil(previous)) {
     return undefined;
   }
 
-  const diff = round(
-    ((current > previous
-      ? current / previous
-      : current < previous
-        ? previous / current
-        : 0) -
-      1) *
-      100,
-    1,
-  );
+  const diff = round(Math.abs(((current - previous) / previous) * 100), 1);
 
   return {
     diff:
