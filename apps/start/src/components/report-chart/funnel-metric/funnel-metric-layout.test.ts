@@ -11,7 +11,7 @@ import {
 describe('funnel metric dashboard cards responsive layout', () => {
   it('uses auto-fit cards so a narrow dashboard tile does not force three columns', () => {
     expect(funnelMetricGridClassName).toContain('auto-fit');
-    expect(funnelMetricGridClassName).toContain('minmax(min(7rem,100%),1fr)');
+    expect(funnelMetricGridClassName).toContain('minmax(min(5.25rem,100%),1fr)');
     expect(funnelMetricGridClassName).toContain('w-full');
   });
 
@@ -25,7 +25,7 @@ describe('funnel metric dashboard cards responsive layout', () => {
   it('keeps values small enough for Mixpanel-like narrow cards', () => {
     expect(funnelMetricValueClassName).toContain('cqw');
     expect(funnelMetricValueClassName).toContain('truncate');
-    expect(getFunnelMetricValueFontSizePx(112, '50.8K'.length)).toBeLessThanOrEqual(28);
-    expect(getFunnelMetricValueFontSizePx(112, '1.1K'.length)).toBeLessThanOrEqual(35);
+    expect(getFunnelMetricValueFontSizePx(96, '50.8K'.length)).toBeLessThanOrEqual(24);
+    expect(getFunnelMetricValueFontSizePx(96, '1.1K'.length)).toBeLessThanOrEqual(29);
   });
 });
