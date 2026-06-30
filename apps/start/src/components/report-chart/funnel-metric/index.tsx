@@ -11,6 +11,12 @@ import { useNumber } from '@/hooks/use-numer-formatter';
 import { useTRPC } from '@/integrations/trpc/react';
 import type { RouterOutputs } from '@/trpc/client';
 import { getChartColor } from '@/utils/theme';
+import {
+  funnelMetricCardClassName,
+  funnelMetricGridClassName,
+  funnelMetricLabelClassName,
+  funnelMetricValueClassName,
+} from './funnel-metric-layout';
 
 type FunnelData = RouterOutputs['chart']['funnel'];
 type FunnelSeries = FunnelData['current'][number];
@@ -125,34 +131,27 @@ export function ReportFunnelMetricChart() {
       className={`col gap-4 ${isEditMode ? '' : 'h-full items-center justify-center'}`}
     >
       {/* KPI Cards */}
-      <div
-        className={`grid gap-4 ${
-          metrics.length === 1
-            ? 'grid-cols-1'
-            : metrics.length === 2
-              ? 'grid-cols-2'
-              : 'grid-cols-2 lg:grid-cols-3'
-        }`}
-      >
+      <div className={funnelMetricGridClassName}>
         {metrics.map((metric) => (
           <div
-            className="card group relative flex cursor-default flex-col items-center justify-center gap-2 p-6"
+            className={funnelMetricCardClassName}
             key={metric.id}
           >
-            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <div className={funnelMetricLabelClassName}>
               <div
-                className="h-2.5 w-2.5 rounded-full"
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{ backgroundColor: metric.color }}
               />
-              <span>{metric.label}</span>
+              <span className="min-w-0 truncate">{metric.label}</span>
             </div>
-            <div className="font-bold font-mono text-4xl">
+            <div className={funnelMetricValueClassName}>
               {number.short(metric.value)}
             </div>
             {metric.prevValue != null && (
               <PreviousDiffIndicatorPure
                 {...getPreviousMetric(metric.value, metric.prevValue)}
                 size="sm"
+                className="max-w-full truncate text-xs"
               />
             )}
             {/* Hover tooltip */}
