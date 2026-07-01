@@ -43,6 +43,7 @@ import {
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import { PropertiesCombobox } from './PropertiesCombobox';
+import { buildChangedReportEvent } from './report-series-events';
 import {
   ReportSeriesItem,
   type ReportSeriesItemProps,
@@ -401,45 +402,13 @@ export function ReportSeries() {
                           items={eventNames}
                           multiple={isSelectManyEvents as false}
                           onChange={(value) => {
-                            const selectedItem = Array.isArray(value)
-                              ? null
-                              : eventNames.find((e) => e.name === value);
-
                             dispatch(
                               changeEvent(
-                                selectedItem &&
-                                  'isCustomEvent' in selectedItem &&
-                                  selectedItem.isCustomEvent &&
-                                  'customEventId' in selectedItem &&
-                                  selectedItem.customEventId
-                                  ? {
-                                      id: event.id,
-                                      type: 'custom_event',
-                                      customEventId: selectedItem.customEventId,
-                                      segment: 'event',
-                                      displayName: selectedItem.name,
-                                      filters: [],
-                                    }
-                                  : Array.isArray(value)
-                                    ? {
-                                        id: event.id,
-                                        type: 'event',
-                                        segment: 'user',
-                                        filters: [
-                                          {
-                                            name: 'name',
-                                            operator: 'is',
-                                            value,
-                                          },
-                                        ],
-                                        name: '*',
-                                      }
-                                    : {
-                                        ...event,
-                                        type: 'event',
-                                        name: value,
-                                        filters: [],
-                                      }
+                                buildChangedReportEvent({
+                                  currentEvent: event,
+                                  value,
+                                  eventNames,
+                                })
                               )
                             );
                           }}
