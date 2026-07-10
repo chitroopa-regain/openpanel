@@ -1,11 +1,10 @@
-import { useVisibleSeries } from '@/hooks/use-visible-series';
-import type { IChartData } from '@/trpc/client';
 import { useMemo } from 'react';
 import WorldMap from 'react-svg-worldmap';
 import AutoSizer from 'react-virtualized-auto-sizer';
-
-import { useEventQueryFilters } from '@/hooks/use-event-query-filters';
 import { useReportChartContext } from '../context';
+import { useEventQueryFilters } from '@/hooks/use-event-query-filters';
+import { useVisibleSeries } from '@/hooks/use-visible-series';
+import type { IChartData } from '@/trpc/client';
 
 interface Props {
   data: IChartData;
@@ -13,9 +12,14 @@ interface Props {
 
 export function Chart({ data }: Props) {
   const {
-    report: { metric, unit },
+    report: { metric, unit, series: reportSeries },
   } = useReportChartContext();
-  const { series } = useVisibleSeries(data, 99999);
+  const hiddenSeriesIds = useMemo(
+    () =>
+      reportSeries.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    [reportSeries]
+  );
+  const { series } = useVisibleSeries(data, 99_999, hiddenSeriesIds);
   const [_, setFilter] = useEventQueryFilters();
   const mapData = useMemo(
     () =>
@@ -23,22 +27,22 @@ export function Chart({ data }: Props) {
         country: s.names[1]?.toLowerCase() ?? '',
         value: s.metrics[metric] ?? 0,
       })),
-    [series, metric],
+    [series, metric]
   );
 
   return (
     <AutoSizer disableHeight>
       {({ width }) => (
         <WorldMap
+          borderColor={'var(--foreground)'}
+          color={'var(--chart-0)'}
+          data={mapData}
           onClickFunction={(event) => {
             if (event.countryCode) {
               setFilter('country', event.countryCode);
             }
           }}
           size={width}
-          data={mapData}
-          color={'var(--chart-0)'}
-          borderColor={'var(--foreground)'}
           value-suffix={unit}
         />
       )}

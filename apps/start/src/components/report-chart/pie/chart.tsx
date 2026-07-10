@@ -1,26 +1,24 @@
-import { useVisibleSeries } from '@/hooks/use-visible-series';
-import type { IChartData } from '@/trpc/client';
-import { cn } from '@/utils/cn';
-import { round } from '@/utils/math';
-import { getChartColor } from '@/utils/theme';
-import { truncate } from '@/utils/truncate';
-import { Fragment } from 'react';
+import { Fragment, useMemo } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-
+import { AXIS_FONT_PROPS } from '../common/axis';
+import { PreviousDiffIndicator } from '../common/previous-diff-indicator';
+import { ReportTable } from '../common/report-table';
+import { SerieIcon } from '../common/serie-icon';
+import { SerieName } from '../common/serie-name';
+import { useReportChartContext } from '../context';
 import {
   ChartTooltipContainer,
   ChartTooltipHeader,
   ChartTooltipItem,
 } from '@/components/charts/chart-tooltip';
 import { useNumber } from '@/hooks/use-numer-formatter';
+import { useVisibleSeries } from '@/hooks/use-visible-series';
+import type { IChartData } from '@/trpc/client';
+import { cn } from '@/utils/cn';
 import { formatDate } from '@/utils/date';
-import { AXIS_FONT_PROPS } from '../common/axis';
-import { PreviousDiffIndicator } from '../common/previous-diff-indicator';
-import { ReportChartTooltip } from '../common/report-chart-tooltip';
-import { ReportTable } from '../common/report-table';
-import { SerieIcon } from '../common/serie-icon';
-import { SerieName } from '../common/serie-name';
-import { useReportChartContext } from '../context';
+import { round } from '@/utils/math';
+import { getChartColor } from '@/utils/theme';
+import { truncate } from '@/utils/truncate';
 
 interface Props {
   data: IChartData;
@@ -42,9 +40,9 @@ const PieTooltip = (props: { payload?: any[] }) => {
             <ChartTooltipItem color={item.color}>
               <div className="flex items-center gap-1">
                 <SerieIcon name={item.name} />
-                <SerieName name={item.names} className="font-medium" />
+                <SerieName className="font-medium" name={item.names} />
               </div>
-              <div className="flex justify-between gap-8 font-mono font-medium">
+              <div className="flex justify-between gap-8 font-medium font-mono">
                 <div className="row gap-1">
                   {number.formatWithUnit(item.count)}
                   {!!item.previous && (
@@ -65,7 +63,16 @@ const PieTooltip = (props: { payload?: any[] }) => {
 
 export function Chart({ data }: Props) {
   const { isEditMode, report } = useReportChartContext();
-  const { series, setVisibleSeries } = useVisibleSeries(data);
+  const hiddenSeriesIds = useMemo(
+    () =>
+      report.series.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    [report.series]
+  );
+  const { series, setVisibleSeries } = useVisibleSeries(
+    data,
+    undefined,
+    hiddenSeriesIds
+  );
   const number = useNumber();
 
   const isFrequencyDistribution = report.series?.some(
@@ -106,50 +113,50 @@ export function Chart({ data }: Props) {
           <PieChart>
             <Tooltip content={<PieTooltip />} />
             <Pie
-              dataKey={'count'}
               data={pieData}
+              dataKey={'count'}
               // Smaller outerRadius leaves room for the external labels
               // ("google-play", "apps.instagram.com" etc.) so they don't get
               // clipped by the card edges.
               innerRadius={'25%'}
-              outerRadius={'62%'}
               isAnimationActive={false}
               label={labelRenderer}
+              outerRadius={'62%'}
             >
               {pieData.map((item) => {
                 return (
                   <Cell
-                    key={item.id}
-                    strokeWidth={4}
                     className="stroke-background"
                     fill={item.color}
+                    key={item.id}
+                    strokeWidth={4}
                   />
                 );
               })}
             </Pie>
-            {(
+            {
               <text
+                dominantBaseline="central"
+                textAnchor="middle"
                 x="50%"
                 y="50%"
-                textAnchor="middle"
-                dominantBaseline="central"
                 {...AXIS_FONT_PROPS}
+                fill="currentColor"
                 fontSize={18}
                 fontWeight={700}
-                fill="currentColor"
               >
                 {number.shortWithUnit(sum)}
               </text>
-            )}
+            }
           </PieChart>
         </ResponsiveContainer>
       </div>
       {isEditMode && (
         <ReportTable
-          data={data}
-          visibleSeries={series}
-          setVisibleSeries={setVisibleSeries}
           chartType="pie"
+          data={data}
+          setVisibleSeries={setVisibleSeries}
+          visibleSeries={data.series}
         />
       )}
     </>
@@ -185,11 +192,11 @@ const renderFrequencyLabel = ({
   return (
     <>
       <text
-        x={x}
-        y={y - 6}
+        dominantBaseline="central"
         fill={fill}
         textAnchor={anchor}
-        dominantBaseline="central"
+        x={x}
+        y={y - 6}
         {...AXIS_FONT_PROPS}
         fontSize={11}
         fontWeight={700}
@@ -197,11 +204,11 @@ const renderFrequencyLabel = ({
         {freqLabel}
       </text>
       <text
-        x={x}
-        y={y + 8}
+        dominantBaseline="central"
         fill={fill}
         textAnchor={anchor}
-        dominantBaseline="central"
+        x={x}
+        y={y + 8}
         {...AXIS_FONT_PROPS}
         fontSize={11}
         fontWeight={400}
@@ -243,12 +250,12 @@ const renderLabel = ({
   return (
     <>
       <text
+        dominantBaseline="central"
+        fill="white"
+        pointerEvents={'none'}
+        textAnchor="middle"
         x={xProcent}
         y={yProcent}
-        fill="white"
-        textAnchor="middle"
-        dominantBaseline="central"
-        pointerEvents={'none'}
         {...AXIS_FONT_PROPS}
         fontSize={12}
         fontWeight={700}
@@ -256,11 +263,11 @@ const renderLabel = ({
         {percent}%
       </text>
       <text
-        x={x}
-        y={y}
+        dominantBaseline="central"
         fill={fill}
         textAnchor={x > cx ? 'start' : 'end'}
-        dominantBaseline="central"
+        x={x}
+        y={y}
         {...AXIS_FONT_PROPS}
         fontSize={10}
         fontWeight={700}

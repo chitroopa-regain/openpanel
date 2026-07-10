@@ -40,6 +40,7 @@ import {
   removeEvent,
   reorderEvents,
 } from '../reportSlice';
+import { PropertiesCombobox } from './PropertiesCombobox';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import { PropertiesCombobox } from './PropertiesCombobox';
@@ -279,6 +280,16 @@ export function ReportSeries() {
           }
           return;
         }
+        case 'toggleHidden': {
+          const normalized =
+            'type' in event ? event : { ...event, type: 'event' as const };
+          return dispatch(
+            changeEvent({
+              ...normalized,
+              hidden: !normalized.hidden,
+            } as IChartEventItem)
+          );
+        }
       }
     };
 
@@ -356,6 +367,7 @@ export function ReportSeries() {
                         firstTimeFilter={
                           (event as IChartCustomEvent).firstTimeFilter
                         }
+                        hidden={(event as IChartCustomEvent).hidden}
                         onClick={handleMore(event)}
                         onDisplayNameChange={(value) => {
                           dispatchChangeEvent({
@@ -383,6 +395,7 @@ export function ReportSeries() {
                       <ReportEventMore
                         displayName={event.displayName}
                         displayNamePlaceholder={`Display name (${alphabetIds[index]})`}
+                        hidden={event.hidden}
                         hideFirstTimeFilter
                         onClick={handleMore(event)}
                         onDisplayNameChange={(value) => {
@@ -451,6 +464,9 @@ export function ReportSeries() {
                         firstTimeFilter={
                           (event as IChartEventItem & { type: 'event' })
                             .firstTimeFilter
+                        }
+                        hidden={
+                          (event as IChartEventItem & { type: 'event' }).hidden
                         }
                         onClick={handleMore(event)}
                         onDisplayNameChange={(value) => {

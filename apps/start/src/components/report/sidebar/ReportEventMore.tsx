@@ -2,6 +2,8 @@ import {
   CheckIcon,
   ClockIcon,
   CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
   MoreHorizontal,
   PencilIcon,
   TrashIcon,
@@ -22,7 +24,12 @@ import { Input } from '@/components/ui/input';
 
 export interface ReportEventMoreProps {
   onClick: (
-    action: 'remove' | 'duplicate' | 'firstTimeFilter' | 'editCustomEvent'
+    action:
+      | 'remove'
+      | 'duplicate'
+      | 'firstTimeFilter'
+      | 'editCustomEvent'
+      | 'toggleHidden'
   ) => void;
   firstTimeFilter?: boolean;
   hideFirstTimeFilter?: boolean;
@@ -30,6 +37,8 @@ export interface ReportEventMoreProps {
   displayNamePlaceholder?: string;
   onDisplayNameChange?: (value: string) => void;
   showEditCustomEvent?: boolean;
+  triggerClassName?: string;
+  hidden?: boolean;
 }
 
 export function ReportEventMore({
@@ -40,13 +49,15 @@ export function ReportEventMore({
   displayNamePlaceholder,
   onDisplayNameChange,
   showEditCustomEvent,
+  triggerClassName,
+  hidden,
 }: ReportEventMoreProps) {
   const [open, setOpen] = React.useState(false);
 
   return (
     <DropdownMenu onOpenChange={setOpen} open={open}>
       <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="ghost">
+        <Button className={triggerClassName} size="sm" variant="ghost">
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
@@ -88,6 +99,14 @@ export function ReportEventMore({
             <CopyIcon className="mr-2 h-4 w-4" />
             Duplicate
             <DropdownMenuShortcut>⌘⌫</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onClick('toggleHidden')}>
+            {hidden ? (
+              <EyeIcon className="mr-2 h-4 w-4" />
+            ) : (
+              <EyeOffIcon className="mr-2 h-4 w-4" />
+            )}
+            {hidden ? 'Show Metric' : 'Hide Metric'}
           </DropdownMenuItem>
           {showEditCustomEvent && (
             <DropdownMenuItem

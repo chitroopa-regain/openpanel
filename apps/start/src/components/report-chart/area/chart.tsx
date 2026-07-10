@@ -1,15 +1,8 @@
-import { useRechartDataModel } from '@/hooks/use-rechart-data-model';
-import { useVisibleSeries } from '@/hooks/use-visible-series';
-import { useTRPC } from '@/integrations/trpc/react';
-import { pushModal } from '@/modals';
-import type { IChartData } from '@/trpc/client';
-import { cn } from '@/utils/cn';
-import { getChartColor } from '@/utils/theme';
 import { useQuery } from '@tanstack/react-query';
 import { isSameDay, isSameHour, isSameMonth, isSameWeek } from 'date-fns';
 import { BookmarkIcon, UsersIcon } from 'lucide-react';
 import { last } from 'ramda';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   Area,
   CartesianGrid,
@@ -23,8 +16,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-
-import { useDashedStroke } from '@/hooks/use-dashed-stroke';
 import { useXAxisProps, useYAxisProps } from '../common/axis';
 import {
   ChartClickMenu,
@@ -35,6 +26,14 @@ import { ReportTable } from '../common/report-table';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
+import { useDashedStroke } from '@/hooks/use-dashed-stroke';
+import { useRechartDataModel } from '@/hooks/use-rechart-data-model';
+import { useVisibleSeries } from '@/hooks/use-visible-series';
+import { useTRPC } from '@/integrations/trpc/react';
+import { pushModal } from '@/modals';
+import type { IChartData } from '@/trpc/client';
+import { cn } from '@/utils/cn';
+import { getChartColor } from '@/utils/theme';
 
 interface Props {
   data: IChartData;
@@ -67,13 +66,22 @@ export function Chart({ data }: Props) {
       },
       {
         staleTime: 1000 * 60 * 10,
-      },
-    ),
+      }
+    )
   );
-  const { series, setVisibleSeries } = useVisibleSeries(data);
+  const hiddenSeriesIds = useMemo(
+    () =>
+      reportSeries.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    [reportSeries]
+  );
+  const { series, setVisibleSeries } = useVisibleSeries(
+    data,
+    undefined,
+    hiddenSeriesIds
+  );
   const rechartData = useRechartDataModel(series);
 
-  let dotIndex = undefined;
+  let dotIndex: number | undefined;
   if (range === 'today') {
     // Find closest index based on times
     dotIndex = rechartData.findIndex((item) => {
@@ -108,7 +116,7 @@ export function Chart({ data }: Props) {
 
   const CustomLegend = useCallback(() => {
     return (
-      <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs mt-4 -mb-2">
+      <div className="mt-4 -mb-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs">
         {series.map((serie) => (
           <div
             className="flex items-center gap-1"
@@ -191,7 +199,7 @@ export function Chart({ data }: Props) {
       endDate,
       range,
       previous,
-    ],
+    ]
   );
 
   const { getStrokeDasharray, calcStrokeDasharray, handleAnimationEnd } =
@@ -207,30 +215,30 @@ export function Chart({ data }: Props) {
             <ComposedChart data={rechartData}>
               <Customized component={calcStrokeDasharray} />
               <Line
+                animationDuration={0}
                 dataKey="calcStrokeDasharray"
                 legendType="none"
-                animationDuration={0}
                 onAnimationEnd={handleAnimationEnd}
               />
               <CartesianGrid
-                strokeDasharray="3 3"
-                horizontal={true}
-                vertical={false}
                 className="stroke-border"
+                horizontal={true}
+                strokeDasharray="3 3"
+                vertical={false}
               />
               {references.data?.map((ref) => (
                 <ReferenceLine
+                  fontSize={10}
                   key={ref.id}
-                  x={ref.date.getTime()}
-                  stroke={'oklch(from var(--foreground) l c h / 0.1)'}
-                  strokeDasharray={'3 3'}
                   label={{
                     value: ref.title,
                     position: 'centerTop',
                     fill: '#334155',
                     fontSize: 12,
                   }}
-                  fontSize={10}
+                  stroke={'oklch(from var(--foreground) l c h / 0.1)'}
+                  strokeDasharray={'3 3'}
+                  x={ref.date.getTime()}
                 />
               ))}
               <YAxis {...yAxisProps} />
@@ -244,8 +252,8 @@ export function Chart({ data }: Props) {
                     <linearGradient
                       id={`color${color}`}
                       x1="0"
-                      y1="0"
                       x2="0"
+                      y1="0"
                       y2="1"
                     >
                       <stop offset="0%" stopColor={color} stopOpacity={0.8} />
@@ -262,21 +270,21 @@ export function Chart({ data }: Props) {
                 const color = getChartColor(serie.index);
                 return (
                   <Area
-                    key={serie.id}
-                    stackId="1"
-                    type={lineType}
-                    name={serie.id}
                     dataKey={`${serie.id}:count`}
+                    fill={`url(#color${color})`}
+                    fillOpacity={0.7}
+                    isAnimationActive={false}
+                    key={serie.id}
+                    name={serie.id}
+                    stackId="1"
+                    stroke={color}
                     strokeDasharray={
                       useDashedLastLine
                         ? getStrokeDasharray(`${serie.id}:count`)
                         : undefined
                     }
-                    fill={`url(#color${color})`}
-                    stroke={color}
                     strokeWidth={2}
-                    isAnimationActive={false}
-                    fillOpacity={0.7}
+                    type={lineType}
                   />
                 );
               })}
@@ -285,16 +293,16 @@ export function Chart({ data }: Props) {
                   const color = getChartColor(serie.index);
                   return (
                     <Area
-                      key={`${serie.id}:prev`}
-                      stackId="2"
-                      type={lineType}
-                      name={`${serie.id}:prev`}
                       dataKey={`${serie.id}:prev:count`}
-                      stroke={color}
                       fill={color}
                       fillOpacity={0.3}
-                      strokeOpacity={0.3}
                       isAnimationActive={false}
+                      key={`${serie.id}:prev`}
+                      name={`${serie.id}:prev`}
+                      stackId="2"
+                      stroke={color}
+                      strokeOpacity={0.3}
+                      type={lineType}
                     />
                   );
                 })}
@@ -304,8 +312,8 @@ export function Chart({ data }: Props) {
         {isEditMode && (
           <ReportTable
             data={data}
-            visibleSeries={series}
             setVisibleSeries={setVisibleSeries}
+            visibleSeries={data.series}
           />
         )}
       </ChartClickMenu>

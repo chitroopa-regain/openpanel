@@ -44,6 +44,10 @@ export const zChartEvent = z.object({
     .string()
     .optional()
     .describe('A user-friendly name for display purposes'),
+  hidden: z
+    .boolean()
+    .optional()
+    .describe('When true, hide this metric from chart visualizations'),
   property: z
     .string()
     .optional()
@@ -74,6 +78,10 @@ export const zChartFormula = z.object({
     .string()
     .optional()
     .describe('A user-friendly name for display purposes'),
+  hidden: z
+    .boolean()
+    .optional()
+    .describe('When true, hide this metric from chart visualizations'),
 });
 
 // Event with type field for discriminated union
@@ -89,6 +97,10 @@ export const zChartCustomEvent = z.object({
     .string()
     .optional()
     .describe('A user-friendly name for display purposes'),
+  hidden: z
+    .boolean()
+    .optional()
+    .describe('When true, hide this metric from chart visualizations'),
   segment: zChartEventSegment,
   filters: z
     .array(zChartEventFilter)

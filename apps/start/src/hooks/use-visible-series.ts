@@ -1,28 +1,34 @@
-import type { IChartData } from '@/trpc/client';
 import { useEffect, useMemo, useState } from 'react';
+import type { IChartData } from '@/trpc/client';
 
 export type IVisibleSeries = ReturnType<typeof useVisibleSeries>['series'];
-export function useVisibleSeries(data: IChartData, limit?: number | undefined) {
+export function useVisibleSeries(
+  data: IChartData,
+  limit?: number | undefined,
+  hiddenSeriesIds: string[] = []
+) {
   const max = limit ?? 5;
   const [visibleSeries, setVisibleSeries] = useState<string[]>(
-    data?.series?.slice(0, max).map((serie) => serie.id) ?? [],
+    data?.series?.slice(0, max).map((serie) => serie.id) ?? []
   );
 
   useEffect(() => {
     setVisibleSeries(
-      data?.series?.slice(0, max).map((serie) => serie.id) ?? [],
+      data?.series?.slice(0, max).map((serie) => serie.id) ?? []
     );
   }, [data, max]);
 
   return useMemo(() => {
+    const hidden = new Set(hiddenSeriesIds);
     return {
       series: data.series
         .map((serie, index) => ({
           ...serie,
           index,
         }))
-        .filter((serie) => visibleSeries.includes(serie.id)),
+        .filter((serie) => visibleSeries.includes(serie.id))
+        .filter((serie) => !hidden.has(serie.id)),
       setVisibleSeries,
     } as const;
-  }, [visibleSeries, data.series]);
+  }, [visibleSeries, data.series, hiddenSeriesIds]);
 }
