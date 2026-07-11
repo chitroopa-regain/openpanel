@@ -92,8 +92,18 @@ function ReportSqlContent({ active }: { active: boolean }) {
       : secondSeriesItem?.type === 'custom_event'
         ? (secondSeriesItem.filters ?? [])
         : [];
+  const firstRetentionFirstTimeFilter =
+    firstSeriesItem?.type === 'event' || firstSeriesItem?.type === 'custom_event'
+      ? !!firstSeriesItem.firstTimeFilter
+      : false;
+  const secondRetentionFirstTimeFilter =
+    secondSeriesItem?.type === 'event' || secondSeriesItem?.type === 'custom_event'
+      ? !!secondSeriesItem.firstTimeFilter
+      : false;
   const retentionOptions =
     report.options?.type === 'retention' ? report.options : undefined;
+  const propertyAverageDenominatorStep =
+    retentionOptions?.propertyAverageDenominatorStep;
 
   const chartRes = useQuery(
     trpc.chart.chart.queryOptions(input, {
@@ -136,6 +146,8 @@ function ReportSqlContent({ active }: { active: boolean }) {
         secondCustomEventId: secondRetentionCustomEventId,
         firstEventFilters: firstRetentionFilters,
         secondEventFilters: secondRetentionFilters,
+        firstEventFirstTimeFilter: firstRetentionFirstTimeFilter,
+        secondEventFirstTimeFilter: secondRetentionFirstTimeFilter,
         range: report.range,
         startDate: report.startDate,
         endDate: report.endDate,
@@ -143,6 +155,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
         criteria: retentionOptions?.criteria,
         metric: retentionOptions?.metric,
         property: retentionOptions?.property,
+        propertyAverageDenominatorStep,
         retentionUnit: retentionOptions?.retentionUnit,
         interval: report.interval,
         id: 'id' in report ? report.id : undefined,

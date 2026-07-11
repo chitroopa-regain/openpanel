@@ -41,12 +41,22 @@ export function ReportRetentionChart() {
       : secondItem?.type === 'custom_event'
         ? (secondItem.filters ?? [])
         : [];
+  const firstEventFirstTimeFilter =
+    firstItem?.type === 'event' || firstItem?.type === 'custom_event'
+      ? !!firstItem.firstTimeFilter
+      : false;
+  const secondEventFirstTimeFilter =
+    secondItem?.type === 'event' || secondItem?.type === 'custom_event'
+      ? !!secondItem.firstTimeFilter
+      : false;
   const retentionOptions =
     report.options?.type === 'retention' ? report.options : undefined;
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
   const metric = retentionOptions?.metric;
   const property = retentionOptions?.property;
   const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
+  const propertyAverageDenominatorStep =
+    retentionOptions?.propertyAverageDenominatorStep;
   const isEnabled =
     (firstEvent.length > 0 || !!firstCustomEventId) &&
     (secondEvent.length > 0 || !!secondCustomEventId) &&
@@ -62,6 +72,8 @@ export function ReportRetentionChart() {
     secondCustomEventId,
     firstEventFilters,
     secondEventFilters,
+    firstEventFirstTimeFilter,
+    secondEventFirstTimeFilter,
     projectId: report.projectId,
     range: report.range,
     startDate: report.startDate,
@@ -70,6 +82,7 @@ export function ReportRetentionChart() {
     criteria,
     metric,
     property,
+    propertyAverageDenominatorStep,
     retentionUnit,
     interval: report.interval,
     shareId,

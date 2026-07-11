@@ -339,6 +339,9 @@ export const reportSlice = createSlice({
         ) {
           state.options.property = undefined;
         }
+        if (action.payload !== 'property_average') {
+          state.options.propertyAverageDenominatorStep = undefined;
+        }
       }
     },
 
@@ -373,6 +376,22 @@ export const reportSlice = createSlice({
         };
       } else {
         state.options.retentionUnit = action.payload;
+      }
+    },
+
+    changeRetentionPropertyAverageDenominatorStep(
+      state,
+      action: PayloadAction<number | undefined>
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          type: 'retention',
+          metric: 'property_average',
+          propertyAverageDenominatorStep: action.payload,
+        };
+      } else {
+        state.options.propertyAverageDenominatorStep = action.payload;
       }
     },
 
@@ -610,6 +629,7 @@ export const {
   changeRetentionMetric,
   changeRetentionProperty,
   changeRetentionUnit,
+  changeRetentionPropertyAverageDenominatorStep,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,

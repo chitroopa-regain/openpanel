@@ -64,6 +64,7 @@ import {
 } from '../trpc';
 import {
   aggregateRetentionRowsByDisplayInterval,
+  buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
@@ -938,9 +939,12 @@ export const chartRouter = createTRPCRouter({
         secondCustomEventId: z.string().optional(),
         firstEventFilters: z.array(zChartEventFilter).default([]),
         secondEventFilters: z.array(zChartEventFilter).default([]),
+        firstEventFirstTimeFilter: z.boolean().optional(),
+        secondEventFirstTimeFilter: z.boolean().optional(),
         criteria: zCriteria.default('on_or_after'),
         metric: zRetentionMeasure.optional(),
         property: z.string().optional(),
+        propertyAverageDenominatorStep: z.number().int().nonnegative().optional(),
         retentionUnit: zRetentionTimeUnit.default('day'),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
@@ -958,9 +962,13 @@ export const chartRouter = createTRPCRouter({
       let secondEvent = input.secondEvent;
       let firstEventFilters: IChartEventFilter[] = input.firstEventFilters;
       let secondEventFilters: IChartEventFilter[] = input.secondEventFilters;
+      let firstEventFirstTimeFilter = !!input.firstEventFirstTimeFilter;
+      let secondEventFirstTimeFilter = !!input.secondEventFirstTimeFilter;
       let criteria = input.criteria;
       let retentionMetric = input.metric ?? 'unique_users';
       let retentionProperty = input.property;
+      let propertyAverageDenominatorStep =
+        input.propertyAverageDenominatorStep ?? 0;
       let retentionUnit = input.retentionUnit;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
@@ -995,6 +1003,9 @@ export const chartRouter = createTRPCRouter({
         criteria = retentionOptions?.criteria ?? criteria;
         retentionMetric = retentionOptions?.metric ?? retentionMetric;
         retentionProperty = retentionOptions?.property ?? retentionProperty;
+        propertyAverageDenominatorStep =
+          retentionOptions?.propertyAverageDenominatorStep ??
+          propertyAverageDenominatorStep;
         retentionUnit = retentionOptions?.retentionUnit ?? retentionUnit;
 
         const firstItem = ctx.report.series[0];
@@ -1003,6 +1014,7 @@ export const chartRouter = createTRPCRouter({
         if (firstItem?.type === 'event') {
           firstEvent = (firstItem.filters?.[0]?.value ?? []).map(String);
           firstEventFilters = (firstItem.filters ?? []).slice(1);
+          firstEventFirstTimeFilter = !!firstItem.firstTimeFilter;
         } else if (firstItem?.type === 'custom_event') {
           const ce = await db.customEvent.findUnique({
             where: { id: firstItem.customEventId },
@@ -1018,11 +1030,13 @@ export const chartRouter = createTRPCRouter({
           }
           // Preserve outer series-level filters on the custom event
           firstEventFilters = firstItem.filters ?? [];
+          firstEventFirstTimeFilter = !!firstItem.firstTimeFilter;
         }
 
         if (secondItem?.type === 'event') {
           secondEvent = (secondItem.filters?.[0]?.value ?? []).map(String);
           secondEventFilters = (secondItem.filters ?? []).slice(1);
+          secondEventFirstTimeFilter = !!secondItem.firstTimeFilter;
         } else if (secondItem?.type === 'custom_event') {
           const ce = await db.customEvent.findUnique({
             where: { id: secondItem.customEventId },
@@ -1038,6 +1052,7 @@ export const chartRouter = createTRPCRouter({
           }
           // Preserve outer series-level filters on the custom event
           secondEventFilters = secondItem.filters ?? [];
+          secondEventFirstTimeFilter = !!secondItem.firstTimeFilter;
         }
       }
 
@@ -1150,9 +1165,21 @@ export const chartRouter = createTRPCRouter({
             criteria: countCriteria,
             measure: retentionMetric,
             propertyExpression: retentionPropertyExpr,
+            propertyAverageDenominatorStep,
           })
         )
         .join(',\n');
+      const propertyAverageDenominatorSelect =
+        retentionMetric === 'property_average' &&
+        retentionPropertyExpr &&
+        propertyAverageDenominatorStep > 0
+          ? `,\n${range(0, diffInterval + 1)
+              .map((index) => {
+                const predicate = `r.x_after_cohort ${countCriteria} ${index}`;
+                return `uniqExactIf(r.profile_id, ${predicate}) AS interval_${index}_denominator_count`;
+              })
+              .join(',\n')}`
+          : '';
 
       // Determine which table to use: events table when any non-profile
       // filter is present (cohort_events_mv only has project_id, name,
@@ -1168,9 +1195,11 @@ export const chartRouter = createTRPCRouter({
         );
 
       const useEventsFirst =
+        firstEventFirstTimeFilter ||
         needsEventsTable(firstEventFilters) ||
         needsEventsTable(firstComponentFilters);
       const useEventsSecond =
+        secondEventFirstTimeFilter ||
         isRetentionPropertyMeasure(retentionMetric) ||
         needsEventsTable(secondEventFilters) ||
         needsEventsTable(secondComponentFilters);
@@ -1241,8 +1270,36 @@ export const chartRouter = createTRPCRouter({
         : `${getRetentionReturnEventWhereClause(secondEvent)}`;
       const secondFilterClause = secondEventWhere;
 
+      const firstTimeStartExpression = `toDate('${utc(dates.startDate)}', '${timezone}')`;
+      const firstTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}')`;
+      const secondTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${diffInterval} ${sqlInterval}`;
+      const firstEventFirstTimeCte = firstEventFirstTimeFilter
+        ? `first_event_first_time AS (${buildRetentionFirstTimeCteSql({
+            projectId,
+            eventPredicate: firstWhereClause,
+            startExpression: firstTimeStartExpression,
+            endExpression: firstTimeEndExpression,
+          })}),`
+        : '';
+      const secondEventFirstTimeCte = secondEventFirstTimeFilter
+        ? `second_event_first_time AS (${buildRetentionFirstTimeCteSql({
+            projectId,
+            eventPredicate: secondWhereClause,
+            startExpression: firstTimeStartExpression,
+            endExpression: secondTimeEndExpression,
+          })}),`
+        : '';
+      const firstEventFirstTimeJoin = firstEventFirstTimeFilter
+        ? 'INNER JOIN first_event_first_time AS first_ft ON first_ft.ft_profile_id = profile_id AND first_ft.first_created_at = created_at'
+        : '';
+      const secondEventFirstTimeJoin = secondEventFirstTimeFilter
+        ? 'INNER JOIN second_event_first_time AS second_ft ON second_ft.ft_profile_id = profile_id AND second_ft.first_created_at = created_at'
+        : '';
+
       const cohortQuery = `
         WITH
+        ${firstEventFirstTimeCte}
+        ${secondEventFirstTimeCte}
         cohort_users AS (
           SELECT
             profile_id AS userID,
@@ -1251,6 +1308,7 @@ export const chartRouter = createTRPCRouter({
             ${toStartOfCohortInterval('created_at')} AS cohort_interval
           FROM ${firstEventTable}
           ${firstEventJoin}
+          ${firstEventFirstTimeJoin}
           WHERE ${firstWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
             AND created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
@@ -1266,6 +1324,7 @@ export const chartRouter = createTRPCRouter({
                 ${retentionPropertyExpr ? `, ${retentionPropertyExpr} AS retention_property_value` : ''}
             FROM ${secondEventTable}
             ${secondEventJoin}
+            ${secondEventFirstTimeJoin}
             WHERE ${secondWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
             AND created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${diffInterval} ${sqlInterval}
@@ -1297,6 +1356,7 @@ export const chartRouter = createTRPCRouter({
           cs.cohort_interval,
           cs.total_first_event_count,
           ${countsSelect}
+          ${propertyAverageDenominatorSelect}
         FROM cohort_sizes cs
         LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval
         GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count
@@ -1719,11 +1779,17 @@ function processCohortData(
     display_interval?: string;
     sum: number;
     values: number[];
+    valueWeights?: number[];
     percentages: number[];
   }> = data.map((row) => {
     const sum = row.total_first_event_count;
     const values = range(0, diffInterval + 1).map(
       (index) => (row[`interval_${index}_user_count`] || 0) as number
+    );
+    const valueWeights = range(0, diffInterval + 1).map(
+      (index) =>
+        (row[`interval_${index}_denominator_count`] ??
+          row.total_first_event_count) as number
     );
 
     return {
@@ -1731,6 +1797,7 @@ function processCohortData(
       display_interval: row.display_interval,
       sum,
       values,
+      valueWeights,
       percentages: values.map((value) => (sum > 0 ? round(value / sum, 4) : 0)),
     };
   });
@@ -1770,6 +1837,7 @@ function processCohortData(
           cohort_interval: dateStr,
           sum: 0,
           values: [...zeroValues],
+          valueWeights: [...zeroValues],
           percentages: [...zeroValues],
         });
       }
@@ -1813,9 +1881,10 @@ function processCohortData(
     nonZeroRowCount++;
     averageData.totalSum += row.sum;
     row.values.forEach((value, index) => {
+      const weight = row.valueWeights?.[index] ?? row.sum;
       if (value !== 0) {
-        averageData.values[index]!.sum += row.sum;
-        averageData.values[index]!.weightedSum += value * row.sum;
+        averageData.values[index]!.sum += weight;
+        averageData.values[index]!.weightedSum += value * weight;
       }
     });
     row.percentages.forEach((percentage, index) => {

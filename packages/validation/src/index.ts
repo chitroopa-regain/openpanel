@@ -219,6 +219,8 @@ export const zRetentionOptions = z.object({
   property: z.string().optional(),
   /** Time unit used for retention return buckets. Independent from report.interval, which controls cohort aggregation. */
   retentionUnit: zRetentionTimeUnit.optional(),
+  /** 0-based retention step used as the denominator for Property Average. undefined/0 = step 1 cohort users. */
+  propertyAverageDenominatorStep: z.number().int().nonnegative().optional(),
 });
 
 export const zSankeyOptions = z.object({

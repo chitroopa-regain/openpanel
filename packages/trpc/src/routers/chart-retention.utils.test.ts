@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateRetentionRowsByDisplayInterval,
+  buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
@@ -66,6 +67,19 @@ describe('chart retention utils', () => {
     ).toBe("toFloat64OrNull(toString(properties['value_inr']))");
   });
 
+  it('builds first-time-ever CTE SQL over all historical events', () => {
+    expect(
+      buildRetentionFirstTimeCteSql({
+        projectId: 'project_1',
+        eventPredicate: "name = 'Application Installed'",
+        startExpression: "toDate('2026-06-24', 'Asia/Kolkata')",
+        endExpression: "toDate('2026-07-01', 'Asia/Kolkata')",
+      })
+    ).toBe(
+      "SELECT profile_id AS ft_profile_id, min(created_at) AS first_created_at FROM events WHERE project_id = 'project_1' AND name = 'Application Installed' GROUP BY ft_profile_id HAVING first_created_at >= toDate('2026-06-24', 'Asia/Kolkata') AND first_created_at <= toDate('2026-07-01', 'Asia/Kolkata')"
+    );
+  });
+
   it('builds unique-user interval aggregation by default', () => {
     expect(
       buildRetentionMeasureIntervalSelect({ index: 3, criteria: '>=' })
@@ -74,7 +88,7 @@ describe('chart retention utils', () => {
     );
   });
 
-  it('builds property average as property sum divided by cohort users', () => {
+  it('builds property average as property sum divided by cohort users by default', () => {
     expect(
       buildRetentionMeasureIntervalSelect({
         index: 2,
@@ -85,6 +99,21 @@ describe('chart retention utils', () => {
       })
     ).toBe(
       'round(sumIf(r.retention_property_value, r.x_after_cohort = 2) / nullIf(any(cs.total_first_event_count), 0), 2) AS interval_2_user_count'
+    );
+  });
+
+  it('builds property average with selected retention step unique users as denominator', () => {
+    expect(
+      buildRetentionMeasureIntervalSelect({
+        index: 2,
+        criteria: '=',
+        measure: 'property_average',
+        propertyExpression:
+          "toFloat64OrNull(toString(properties['value_inr']))",
+        propertyAverageDenominatorStep: 1,
+      })
+    ).toBe(
+      'round(sumIf(r.retention_property_value, r.x_after_cohort = 2) / nullIf(uniqExactIf(r.profile_id, r.x_after_cohort = 2), 0), 2) AS interval_2_user_count'
     );
   });
 
@@ -158,6 +187,38 @@ describe('chart retention utils', () => {
         sum: 400,
         values: [8, 10],
         percentages: [0.02, 0.025],
+      },
+    ]);
+  });
+
+  it('aggregates property averages with per-interval denominator weights', () => {
+    expect(
+      aggregateRetentionRowsByDisplayInterval(
+        [
+          {
+            cohort_interval: '2026-05-31',
+            display_interval: '2026-05-31',
+            sum: 100,
+            values: [10],
+            valueWeights: [5],
+            percentages: [0.1],
+          },
+          {
+            cohort_interval: '2026-06-01',
+            display_interval: '2026-05-31',
+            sum: 300,
+            values: [20],
+            valueWeights: [15],
+            percentages: [0.067],
+          },
+        ],
+        'weighted_average'
+      )
+    ).toMatchObject([
+      {
+        cohort_interval: '2026-05-31',
+        sum: 400,
+        values: [17.5],
       },
     ]);
   });

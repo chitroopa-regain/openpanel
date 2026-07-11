@@ -9,6 +9,7 @@ import {
   changeFunnelWindowUnit,
   changePrevious,
   changeRetentionMetric,
+  changeRetentionPropertyAverageDenominatorStep,
   changeRetentionProperty,
   changeRetentionUnit,
   changeSankeyExclude,
@@ -41,6 +42,8 @@ export function ReportSettings() {
     (unit === '%' ? 'retention_rate' : 'unique_users');
   const retentionProperty = retentionOptions?.property;
   const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
+  const retentionPropertyAverageDenominatorStep =
+    retentionOptions?.propertyAverageDenominatorStep ?? 0;
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
   const funnelGroup = funnelOptions?.funnelGroup;
@@ -115,6 +118,7 @@ export function ReportSettings() {
       fields.push('retentionUnit');
       fields.push('retentionMetric');
       fields.push('retentionProperty');
+      fields.push('retentionPropertyAverageDenominatorStep');
       fields.push('unit');
     }
 
@@ -277,6 +281,31 @@ export function ReportSettings() {
                 placeholder="Select property"
                 searchable
                 value={retentionProperty || ''}
+              />
+            </div>
+          )}
+        {fields.includes('retentionPropertyAverageDenominatorStep') &&
+          retentionMetric === 'property_average' && (
+            <div className="flex items-center justify-between gap-4">
+              <Label className="mb-0 whitespace-nowrap font-medium">
+                Denominator Step
+              </Label>
+              <Combobox
+                align="end"
+                items={Array.from({ length: Math.max(2, seriesCount) }, (_, i) => ({
+                  label: `Step ${i + 1}`,
+                  value: String(i),
+                }))}
+                onChange={(val) => {
+                  const step = Number(val);
+                  dispatch(
+                    changeRetentionPropertyAverageDenominatorStep(
+                      Number.isNaN(step) || step <= 0 ? undefined : step
+                    )
+                  );
+                }}
+                placeholder="Step 1"
+                value={String(retentionPropertyAverageDenominatorStep)}
               />
             </div>
           )}

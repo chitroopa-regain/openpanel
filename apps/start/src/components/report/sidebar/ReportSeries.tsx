@@ -43,7 +43,6 @@ import {
 import { PropertiesCombobox } from './PropertiesCombobox';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
-import { PropertiesCombobox } from './PropertiesCombobox';
 import { buildChangedReportEvent } from './report-series-events';
 import {
   ReportSeriesItem,
