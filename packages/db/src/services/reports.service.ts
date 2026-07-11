@@ -65,7 +65,6 @@ export function transformReportEventItem(
       filters: (item.filters ?? []).map(transformFilter),
       property: item.property,
       firstTimeFilter: item.firstTimeFilter,
-      hidden: item.hidden,
     };
   }
 
@@ -80,7 +79,6 @@ export function transformReportEventItem(
     hidden: item.hidden,
     property: item.property,
     firstTimeFilter: item.firstTimeFilter,
-    hidden: item.hidden,
   };
 }
 
