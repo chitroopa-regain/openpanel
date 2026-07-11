@@ -12,7 +12,10 @@ import {
   ChartTooltipItem,
 } from '@/components/charts/chart-tooltip';
 import { useNumber } from '@/hooks/use-numer-formatter';
-import { useVisibleSeries } from '@/hooks/use-visible-series';
+import {
+  getHiddenSeriesKeys,
+  useVisibleSeries,
+} from '@/hooks/use-visible-series';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { formatDate } from '@/utils/date';
@@ -64,8 +67,7 @@ const PieTooltip = (props: { payload?: any[] }) => {
 export function Chart({ data }: Props) {
   const { isEditMode, report } = useReportChartContext();
   const hiddenSeriesIds = useMemo(
-    () =>
-      report.series.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    () => getHiddenSeriesKeys(report.series),
     [report.series]
   );
   const { series, setVisibleSeries } = useVisibleSeries(

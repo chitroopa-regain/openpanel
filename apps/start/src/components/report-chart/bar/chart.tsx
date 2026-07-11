@@ -22,7 +22,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useNumber } from '@/hooks/use-numer-formatter';
-import { useVisibleSeries } from '@/hooks/use-visible-series';
+import {
+  getHiddenSeriesKeys,
+  useVisibleSeries,
+} from '@/hooks/use-visible-series';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
@@ -52,8 +55,7 @@ export function Chart({ data }: Props) {
   const number = useNumber();
 
   const hiddenSeriesIds = useMemo(
-    () =>
-      reportSeries.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    () => getHiddenSeriesKeys(reportSeries),
     [reportSeries]
   );
 

@@ -1,5 +1,17 @@
+import { alphabetIds } from '@openpanel/constants';
 import { useEffect, useMemo, useState } from 'react';
 import type { IChartData } from '@/trpc/client';
+
+export function getHiddenSeriesKeys(
+  series: Array<{ hidden?: boolean; id?: string }>
+) {
+  return series.flatMap((serie, index) => {
+    if (!serie.hidden) {
+      return [];
+    }
+    return [serie.id, alphabetIds[index]].filter(Boolean) as string[];
+  });
+}
 
 export type IVisibleSeries = ReturnType<typeof useVisibleSeries>['series'];
 export function useVisibleSeries(
@@ -26,8 +38,17 @@ export function useVisibleSeries(
           ...serie,
           index,
         }))
-        .filter((serie) => visibleSeries.includes(serie.id))
-        .filter((serie) => !hidden.has(serie.id)),
+        .filter((serie) => {
+          if (!visibleSeries.includes(serie.id)) {
+            return false;
+          }
+          if (hidden.has(serie.id) || hidden.has(serie.event?.id ?? '')) {
+            return false;
+          }
+          return !serie.names.some((name) =>
+            hiddenSeriesIds.some((key) => name.startsWith(`(${key}) `))
+          );
+        }),
       setVisibleSeries,
     } as const;
   }, [visibleSeries, data.series, hiddenSeriesIds]);

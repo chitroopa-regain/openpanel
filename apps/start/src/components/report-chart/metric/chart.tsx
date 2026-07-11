@@ -2,7 +2,10 @@ import { useMemo } from 'react';
 import { useReportChartContext } from '../context';
 import { compactMetricGridClassName } from './metric-card-layout';
 import { MetricCard } from './metric-card';
-import { useVisibleSeries } from '@/hooks/use-visible-series';
+import {
+  getHiddenSeriesKeys,
+  useVisibleSeries,
+} from '@/hooks/use-visible-series';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 
@@ -26,8 +29,7 @@ export function Chart({ data }: Props) {
   const metricLayout = options.metricLayout ?? 'compact';
   const isHero = metricLayout === 'hero';
   const hiddenSeriesIds = useMemo(
-    () =>
-      reportSeries.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    () => getHiddenSeriesKeys(reportSeries),
     [reportSeries]
   );
   const { series } = useVisibleSeries(

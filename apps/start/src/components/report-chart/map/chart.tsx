@@ -3,7 +3,10 @@ import WorldMap from 'react-svg-worldmap';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useReportChartContext } from '../context';
 import { useEventQueryFilters } from '@/hooks/use-event-query-filters';
-import { useVisibleSeries } from '@/hooks/use-visible-series';
+import {
+  getHiddenSeriesKeys,
+  useVisibleSeries,
+} from '@/hooks/use-visible-series';
 import type { IChartData } from '@/trpc/client';
 
 interface Props {
@@ -15,8 +18,7 @@ export function Chart({ data }: Props) {
     report: { metric, unit, series: reportSeries },
   } = useReportChartContext();
   const hiddenSeriesIds = useMemo(
-    () =>
-      reportSeries.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    () => getHiddenSeriesKeys(reportSeries),
     [reportSeries]
   );
   const { series } = useVisibleSeries(data, 99_999, hiddenSeriesIds);

@@ -21,7 +21,10 @@ import { ReportTable } from '../common/report-table';
 import { useReportChartContext } from '../context';
 import { useRechartDataModel } from '@/hooks/use-rechart-data-model';
 import { useTheme } from '@/hooks/use-theme';
-import { useVisibleSeries } from '@/hooks/use-visible-series';
+import {
+  getHiddenSeriesKeys,
+  useVisibleSeries,
+} from '@/hooks/use-visible-series';
 import { useTRPC } from '@/integrations/trpc/react';
 import { pushModal } from '@/modals';
 import type { IChartData } from '@/trpc/client';
@@ -83,8 +86,7 @@ export function Chart({ data }: Props) {
     )
   );
   const hiddenSeriesIds = useMemo(
-    () =>
-      reportSeries.filter((serie) => serie.hidden).map((serie) => serie.id!),
+    () => getHiddenSeriesKeys(reportSeries),
     [reportSeries]
   );
   const { series, setVisibleSeries } = useVisibleSeries(
