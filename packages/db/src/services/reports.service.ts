@@ -50,6 +50,7 @@ export function transformReportEventItem(
       id: item.id ?? alphabetIds[index]!,
       formula: item.formula || '',
       displayName: item.displayName,
+      hidden: item.hidden,
     };
   }
 
@@ -63,6 +64,7 @@ export function transformReportEventItem(
       filters: (item.filters ?? []).map(transformFilter),
       property: item.property,
       firstTimeFilter: item.firstTimeFilter,
+      hidden: item.hidden,
     };
   }
 
@@ -76,6 +78,7 @@ export function transformReportEventItem(
     displayName: item.displayName,
     property: item.property,
     firstTimeFilter: item.firstTimeFilter,
+    hidden: item.hidden,
   };
 }
 
