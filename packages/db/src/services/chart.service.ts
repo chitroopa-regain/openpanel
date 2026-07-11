@@ -45,22 +45,36 @@ function traitSubquery(
       if (values.length === 1) {
         return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) = ${sqlstring.escape(String(values[0]).trim())})`;
       }
-      const inList = values.map((v) => sqlstring.escape(String(v).trim())).join(', ');
+      const inList = values
+        .map((v) => sqlstring.escape(String(v).trim()))
+        .join(', ');
       return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) IN (${inList}))`;
     }
     case 'isNot': {
       if (values.length === 1) {
         return `profile_id NOT IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) = ${sqlstring.escape(String(values[0]).trim())})`;
       }
-      const inList = values.map((v) => sqlstring.escape(String(v).trim())).join(', ');
+      const inList = values
+        .map((v) => sqlstring.escape(String(v).trim()))
+        .join(', ');
       return `profile_id NOT IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING argMax(value, updated_at) IN (${inList}))`;
     }
     case 'contains': {
-      const likeExprs = values.map((v) => `argMax(value, updated_at) LIKE ${sqlstring.escape(`%${String(v).trim()}%`)}`).join(' OR ');
+      const likeExprs = values
+        .map(
+          (v) =>
+            `argMax(value, updated_at) LIKE ${sqlstring.escape(`%${String(v).trim()}%`)}`
+        )
+        .join(' OR ');
       return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING ${likeExprs})`;
     }
     case 'doesNotContain': {
-      const likeExprs = values.map((v) => `argMax(value, updated_at) NOT LIKE ${sqlstring.escape(`%${String(v).trim()}%`)}`).join(' AND ');
+      const likeExprs = values
+        .map(
+          (v) =>
+            `argMax(value, updated_at) NOT LIKE ${sqlstring.escape(`%${String(v).trim()}%`)}`
+        )
+        .join(' AND ');
       return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING ${likeExprs})`;
     }
     case 'isNull': {
@@ -72,19 +86,29 @@ function traitSubquery(
     default: {
       // Fallback for gt, lt, gte, lte, startsWith, endsWith, regex — use argMax with the operator
       const argMaxExpr = 'argMax(value, updated_at)';
-      const valExprs = values.map((v) => {
-        const escaped = sqlstring.escape(String(v).trim());
-        switch (operator) {
-          case 'gt': return `toFloat64OrZero(${argMaxExpr}) > toFloat64(${escaped})`;
-          case 'lt': return `toFloat64OrZero(${argMaxExpr}) < toFloat64(${escaped})`;
-          case 'gte': return `toFloat64OrZero(${argMaxExpr}) >= toFloat64(${escaped})`;
-          case 'lte': return `toFloat64OrZero(${argMaxExpr}) <= toFloat64(${escaped})`;
-          case 'startsWith': return `${argMaxExpr} LIKE ${sqlstring.escape(`${String(v).trim()}%`)}`;
-          case 'endsWith': return `${argMaxExpr} LIKE ${sqlstring.escape(`%${String(v).trim()}`)}`;
-          case 'regex': return `match(${argMaxExpr}, ${escaped})`;
-          default: return `${argMaxExpr} = ${escaped}`;
-        }
-      }).join(' OR ');
+      const valExprs = values
+        .map((v) => {
+          const escaped = sqlstring.escape(String(v).trim());
+          switch (operator) {
+            case 'gt':
+              return `toFloat64OrZero(${argMaxExpr}) > toFloat64(${escaped})`;
+            case 'lt':
+              return `toFloat64OrZero(${argMaxExpr}) < toFloat64(${escaped})`;
+            case 'gte':
+              return `toFloat64OrZero(${argMaxExpr}) >= toFloat64(${escaped})`;
+            case 'lte':
+              return `toFloat64OrZero(${argMaxExpr}) <= toFloat64(${escaped})`;
+            case 'startsWith':
+              return `${argMaxExpr} LIKE ${sqlstring.escape(`${String(v).trim()}%`)}`;
+            case 'endsWith':
+              return `${argMaxExpr} LIKE ${sqlstring.escape(`%${String(v).trim()}`)}`;
+            case 'regex':
+              return `match(${argMaxExpr}, ${escaped})`;
+            default:
+              return `${argMaxExpr} = ${escaped}`;
+          }
+        })
+        .join(' OR ');
       return `profile_id IN (SELECT profile_id FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${escapedKey} GROUP BY profile_id HAVING ${valExprs})`;
     }
   }
@@ -117,7 +141,9 @@ export function transformPropertyKey(property: string) {
 //  → global scalar → every event bucketed into a single value).
 export type TraitBreakdown = { key: string; cteName: string; column: string };
 
-export function getTraitBreakdownDescriptor(property: string): TraitBreakdown | null {
+export function getTraitBreakdownDescriptor(
+  property: string
+): TraitBreakdown | null {
   if (!property.startsWith('profile.properties.')) return null;
   const key = property.replace('profile.properties.', '').split('.')[0];
   if (!key) return null;
@@ -131,7 +157,7 @@ function registerTraitBreakdowns(
   breakdowns: { name: string }[],
   projectId: string,
   addCte: (name: string, query: string) => void,
-  sbJoins: Record<string, string>,
+  sbJoins: Record<string, string>
 ): { traitJoinsRef: string; descriptors: Map<string, TraitBreakdown> } {
   const descriptors = new Map<string, TraitBreakdown>();
   for (const b of breakdowns) {
@@ -142,24 +168,37 @@ function registerTraitBreakdowns(
         desc.cteName,
         `SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id`
       );
-      sbJoins[desc.cteName] = `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`;
+      sbJoins[desc.cteName] =
+        `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`;
     }
   }
   const traitJoinsRef = Array.from(descriptors.values())
-    .map((d) => `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = e.profile_id`)
+    .map(
+      (d) =>
+        `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = e.profile_id`
+    )
     .join(' ');
   return { traitJoinsRef, descriptors };
 }
 
 // Build trait join string for a given events alias (e.g., 'e2' for subqueries).
-function buildTraitJoinsFor(descriptors: Map<string, TraitBreakdown>, eventsAlias: string): string {
+function buildTraitJoinsFor(
+  descriptors: Map<string, TraitBreakdown>,
+  eventsAlias: string
+): string {
   return Array.from(descriptors.values())
-    .map((d) => `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = ${eventsAlias}.profile_id`)
+    .map(
+      (d) =>
+        `LEFT ANY JOIN ${d.cteName} ON ${d.cteName}.profile_id = ${eventsAlias}.profile_id`
+    )
     .join(' ');
 }
 
 // Get the SQL expression for a breakdown column.
-function getBreakdownExpr(breakdownName: string, descriptors: Map<string, TraitBreakdown>): string {
+function getBreakdownExpr(
+  breakdownName: string,
+  descriptors: Map<string, TraitBreakdown>
+): string {
   const desc = getTraitBreakdownDescriptor(breakdownName);
   if (desc && descriptors.has(desc.key)) {
     return desc.column;
@@ -168,14 +207,21 @@ function getBreakdownExpr(breakdownName: string, descriptors: Map<string, TraitB
 }
 
 // Qualify profile_id as e.profile_id when trait CTEs are joined (prevents AMBIGUOUS_IDENTIFIER).
-function qualifyProfileId(expr: string, descriptors: Map<string, TraitBreakdown>, alias = 'e'): string {
+function qualifyProfileId(
+  expr: string,
+  descriptors: Map<string, TraitBreakdown>,
+  alias = 'e'
+): string {
   if (descriptors.size === 0) return expr;
   return expr.replace(/\bprofile_id\b/g, `${alias}.profile_id`);
 }
 
 // Compat shim: old correlated subquery form used by funnel.service.ts, conversion.service.ts,
 // and chart.ts TRPC router. Those callers will be migrated to CTE-based approach separately.
-export function getTraitBreakdownExpression(property: string, projectId: string): string | null {
+export function getTraitBreakdownExpression(
+  property: string,
+  projectId: string
+): string | null {
   const desc = getTraitBreakdownDescriptor(property);
   if (!desc) return null;
   return `(SELECT argMax(t.value, t.updated_at) FROM ${TABLE_NAMES.profile_traits} t WHERE t.project_id = ${sqlstring.escape(projectId)} AND t.key = ${sqlstring.escape(desc.key)} AND t.profile_id = profile_id)`;
@@ -230,7 +276,7 @@ export function buildFirstTimeSubquery(
   projectId: string,
   stepPredicate: string,
   startDate: string,
-  endDate: string,
+  endDate: string
 ): string {
   const escapedProject = sqlstring.escape(projectId);
   const escapedStart = sqlstring.escape(startDate);
@@ -278,7 +324,10 @@ export function getChartSql({
   if (customEventComponents && customEventComponents.length > 0) {
     const displayName = event.displayName ?? event.name;
     sb.select.label_0 = `${sqlstring.escape(displayName)} as label_0`;
-    sb.where.eventName = getCustomEventWhereClause(customEventComponents, projectId);
+    sb.where.eventName = getCustomEventWhereClause(
+      customEventComponents,
+      projectId
+    );
   } else if (event.name !== '*') {
     sb.select.label_0 = `${sqlstring.escape(event.name)} as label_0`;
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
@@ -289,11 +338,15 @@ export function getChartSql({
   // First-time-ever filter: only include users whose first-ever occurrence
   // of this event falls within the query date range
   if (event.firstTimeFilter && startDate && endDate && event.name !== '*') {
-    const stepPredicate = customEventComponents && customEventComponents.length > 0
-      ? getCustomEventWhereClause(customEventComponents, projectId)
-      : `name = ${sqlstring.escape(event.name)}`;
+    const stepPredicate =
+      customEventComponents && customEventComponents.length > 0
+        ? getCustomEventWhereClause(customEventComponents, projectId)
+        : `name = ${sqlstring.escape(event.name)}`;
     sb.where.firstTimeFilter = buildFirstTimeSubquery(
-      projectId, stepPredicate, startDate, endDate
+      projectId,
+      stepPredicate,
+      startDate,
+      endDate
     );
   }
 
@@ -301,7 +354,8 @@ export function getChartSql({
   // on profile_id — they don't need the profile CTE JOIN.
   // Only device/geo filters and breakdowns still need the profile CTE.
   const anyFilterOnProfile = event.filters.some(
-    (filter) => filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
+    (filter) =>
+      filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
   );
   // profile.properties.* breakdowns use profile_traits CTE (see registerTraitBreakdowns);
   // only profile.<scalar> breakdowns like profile.email still need the profile CTE.
@@ -408,17 +462,17 @@ export function getChartSql({
 
   // Register trait CTEs for trait-based breakdowns (e.g., profile.properties.show_monthly_back_press_offer).
   // Each trait gets a pre-aggregated CTE joined to events, replacing the old broken correlated subquery.
-  const { traitJoinsRef, descriptors: traitDescriptors } = registerTraitBreakdowns(
-    breakdowns, projectId, addCte, sb.joins
-  );
+  const { traitJoinsRef, descriptors: traitDescriptors } =
+    registerTraitBreakdowns(breakdowns, projectId, addCte, sb.joins);
 
   // When trait CTEs are joined, qualify bare profile_id in WHERE clauses to avoid ambiguity.
   // Only replace the OUTER profile_id (before IN/NOT IN), not inner subquery references.
   if (traitDescriptors.size > 0) {
     for (const key of Object.keys(sb.where)) {
-      sb.where[key] = sb.where[key]!
-        .replace(/^profile_id (IN|NOT IN) /i, 'e.profile_id $1 ')
-        .replace(/^profile_id (!= |= )/i, 'e.profile_id $1');
+      sb.where[key] = sb.where[key]!.replace(
+        /^profile_id (IN|NOT IN) /i,
+        'e.profile_id $1 '
+      ).replace(/^profile_id (!= |= )/i, 'e.profile_id $1');
     }
   }
 
@@ -477,7 +531,8 @@ export function getChartSql({
   effectiveBreakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
-    sb.select[key] = `${getBreakdownExpr(breakdown.name, traitDescriptors)} as ${key}`;
+    sb.select[key] =
+      `${getBreakdownExpr(breakdown.name, traitDescriptors)} as ${key}`;
     sb.groupBy[key] = `${key}`;
   });
 
@@ -489,7 +544,10 @@ export function getChartSql({
   );
   sb.select.count = `${qualifyProfileId(segmentAggregate.expression, traitDescriptors)} as count`;
   if (segmentAggregate.whereClause) {
-    sb.where.property = qualifyProfileId(segmentAggregate.whereClause, traitDescriptors);
+    sb.where.property = qualifyProfileId(
+      segmentAggregate.whereClause,
+      traitDescriptors
+    );
   }
 
   if (event.segment === 'one_event_per_user') {
@@ -533,9 +591,16 @@ export function getChartSql({
 
     const subqueryTraitJoins = buildTraitJoinsFor(traitDescriptors, 'e2');
     // Rewrite profilesJoinRef for e2 alias (it references e.profile_id)
-    const subqueryProfilesJoin = profilesJoinRef.replace(/\be\.profile_id\b/g, 'e2.profile_id');
+    const subqueryProfilesJoin = profilesJoinRef.replace(
+      /\be\.profile_id\b/g,
+      'e2.profile_id'
+    );
     // Qualify profile_id in aggregate expression for the subquery scope
-    const subqueryAggregate = qualifyProfileId(globalAggregate.expression, traitDescriptors, 'e2');
+    const subqueryAggregate = qualifyProfileId(
+      globalAggregate.expression,
+      traitDescriptors,
+      'e2'
+    );
     sb.select.total_unique_count = `(
         SELECT ${subqueryAggregate}
         FROM ${TABLE_NAMES.events} e2
@@ -548,7 +613,10 @@ export function getChartSql({
       .replace(/\be\./g, 'e2.')
       .replace(/\bprofile\./g, 'profile.');
 
-    const subqueryProfilesJoin = profilesJoinRef.replace(/\be\.profile_id\b/g, 'e2.profile_id');
+    const subqueryProfilesJoin = profilesJoinRef.replace(
+      /\be\.profile_id\b/g,
+      'e2.profile_id'
+    );
     sb.select.total_unique_count = `(
         SELECT ${globalAggregate.expression}
         FROM ${TABLE_NAMES.events} e2
@@ -584,7 +652,10 @@ export function getAggregateChartSql({
   if (customEventComponents && customEventComponents.length > 0) {
     const displayName = event.displayName ?? event.name;
     sb.select.label_0 = `${sqlstring.escape(displayName)} as label_0`;
-    sb.where.eventName = getCustomEventWhereClause(customEventComponents, projectId);
+    sb.where.eventName = getCustomEventWhereClause(
+      customEventComponents,
+      projectId
+    );
   } else if (event.name !== '*') {
     sb.select.label_0 = `${sqlstring.escape(event.name)} as label_0`;
     sb.where.eventName = `name = ${sqlstring.escape(event.name)}`;
@@ -594,17 +665,22 @@ export function getAggregateChartSql({
 
   // First-time-ever filter
   if (event.firstTimeFilter && startDate && endDate && event.name !== '*') {
-    const stepPredicate = customEventComponents && customEventComponents.length > 0
-      ? getCustomEventWhereClause(customEventComponents, projectId)
-      : `name = ${sqlstring.escape(event.name)}`;
+    const stepPredicate =
+      customEventComponents && customEventComponents.length > 0
+        ? getCustomEventWhereClause(customEventComponents, projectId)
+        : `name = ${sqlstring.escape(event.name)}`;
     sb.where.firstTimeFilter = buildFirstTimeSubquery(
-      projectId, stepPredicate, startDate, endDate
+      projectId,
+      stepPredicate,
+      startDate,
+      endDate
     );
   }
 
   // Trait filters are now IN-subqueries — only device/geo filters need profile CTE
   const anyFilterOnProfile = event.filters.some(
-    (filter) => filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
+    (filter) =>
+      filter.name.startsWith('profile.') && !isProfileTrait(filter.name)
   );
   // profile.properties.* breakdowns use profile_traits CTE (see registerTraitBreakdowns);
   // only profile.<scalar> breakdowns like profile.email still need the profile CTE.
@@ -705,16 +781,16 @@ export function getAggregateChartSql({
   }
 
   // Register trait CTEs for trait-based breakdowns (aggregate chart path).
-  const { traitJoinsRef: aggTraitJoinsRef, descriptors: aggTraitDescriptors } = registerTraitBreakdowns(
-    breakdowns, projectId, addCte, sb.joins
-  );
+  const { traitJoinsRef: aggTraitJoinsRef, descriptors: aggTraitDescriptors } =
+    registerTraitBreakdowns(breakdowns, projectId, addCte, sb.joins);
 
   // Qualify bare profile_id in WHERE clauses when trait CTEs introduce ambiguity.
   if (aggTraitDescriptors.size > 0) {
     for (const key of Object.keys(sb.where)) {
-      sb.where[key] = sb.where[key]!
-        .replace(/^profile_id (IN|NOT IN) /i, 'e.profile_id $1 ')
-        .replace(/^profile_id (!= |= )/i, 'e.profile_id $1');
+      sb.where[key] = sb.where[key]!.replace(
+        /^profile_id (IN|NOT IN) /i,
+        'e.profile_id $1 '
+      ).replace(/^profile_id (!= |= )/i, 'e.profile_id $1');
     }
   }
 
@@ -738,7 +814,10 @@ export function getAggregateChartSql({
     true
   );
   if (segmentAggregate.whereClause) {
-    sb.where.property = qualifyProfileId(segmentAggregate.whereClause, aggTraitDescriptors);
+    sb.where.property = qualifyProfileId(
+      segmentAggregate.whereClause,
+      aggTraitDescriptors
+    );
   }
 
   // Skip top_breakdowns CTE for aggregate/pie charts entirely.
@@ -751,7 +830,8 @@ export function getAggregateChartSql({
   breakdowns.forEach((breakdown, index) => {
     // Breakdowns start at label_1 (label_0 is reserved for event name)
     const key = `label_${index + 1}`;
-    sb.select[key] = `${getBreakdownExpr(breakdown.name, aggTraitDescriptors)} as ${key}`;
+    sb.select[key] =
+      `${getBreakdownExpr(breakdown.name, aggTraitDescriptors)} as ${key}`;
     sb.groupBy[key] = `${key}`;
   });
 
@@ -929,7 +1009,10 @@ function buildAggregateExpression(
   }
 }
 
-export function getEventFiltersWhereClause(filters: IChartEventFilter[], projectId?: string) {
+export function getEventFiltersWhereClause(
+  filters: IChartEventFilter[],
+  projectId?: string
+) {
   const where: Record<string, string> = {};
   filters.forEach((filter, index) => {
     const id = `f${index}`;
@@ -1343,13 +1426,21 @@ export function getChartStartEndDate(
     switch (dateConfig.dateMode) {
       case 'fixed':
         if (dateConfig.fixedStartDate && dateConfig.fixedEndDate) {
-          const startDt = DateTime.fromISO(dateConfig.fixedStartDate, { zone: timezone });
-          const endDt = DateTime.fromISO(dateConfig.fixedEndDate, { zone: timezone });
+          const startDt = DateTime.fromISO(dateConfig.fixedStartDate, {
+            zone: timezone,
+          });
+          const endDt = DateTime.fromISO(dateConfig.fixedEndDate, {
+            zone: timezone,
+          });
           return {
-            startDate: (dateConfig.enableTimeRanges ? startDt : startDt.startOf('day'))
-              .toFormat('yyyy-MM-dd HH:mm:ss'),
-            endDate: (dateConfig.enableTimeRanges ? endDt : endDt.endOf('day'))
-              .toFormat('yyyy-MM-dd HH:mm:ss'),
+            startDate: (dateConfig.enableTimeRanges
+              ? startDt
+              : startDt.startOf('day')
+            ).toFormat('yyyy-MM-dd HH:mm:ss'),
+            endDate: (dateConfig.enableTimeRanges
+              ? endDt
+              : endDt.endOf('day')
+            ).toFormat('yyyy-MM-dd HH:mm:ss'),
           };
         }
         break;
@@ -1367,10 +1458,14 @@ export function getChartStartEndDate(
       }
       case 'since':
         if (dateConfig.sinceDate) {
-          const sinceDt = DateTime.fromISO(dateConfig.sinceDate, { zone: timezone });
+          const sinceDt = DateTime.fromISO(dateConfig.sinceDate, {
+            zone: timezone,
+          });
           return {
-            startDate: (dateConfig.enableTimeRanges ? sinceDt : sinceDt.startOf('day'))
-              .toFormat('yyyy-MM-dd HH:mm:ss'),
+            startDate: (dateConfig.enableTimeRanges
+              ? sinceDt
+              : sinceDt.startOf('day')
+            ).toFormat('yyyy-MM-dd HH:mm:ss'),
             endDate: now.endOf('day').toFormat('yyyy-MM-dd HH:mm:ss'),
           };
         }
@@ -1473,9 +1568,9 @@ export function getDatesFromRange(range: IChartRange, timezone: string) {
     };
   }
 
-  if (range === '6m') {
+  if (range === '3m' || range === '6m') {
     const startDate = DateTime.now()
-      .minus({ month: 6 })
+      .minus({ month: range === '3m' ? 3 : 6 })
       .setZone(timezone)
       .startOf('day')
       .toFormat('yyyy-MM-dd HH:mm:ss');

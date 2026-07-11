@@ -36,6 +36,11 @@ export const timeWindows = {
     label: 'Last 30 days',
     shortcut: 'T',
   },
+  '3m': {
+    key: '3m',
+    label: 'Last 3 months',
+    shortcut: '3',
+  },
   '6m': {
     key: '6m',
     label: 'Last 6 months',
@@ -198,7 +203,7 @@ export const metrics = {
 } as const;
 
 export function isMinuteIntervalEnabledByRange(
-  range: keyof typeof timeWindows,
+  range: keyof typeof timeWindows
 ) {
   return range === '30min' || range === 'lastHour';
 }
@@ -213,7 +218,7 @@ export function isHourIntervalEnabledByRange(range: keyof typeof timeWindows) {
 }
 
 export function getDefaultIntervalByRange(
-  range: keyof typeof timeWindows,
+  range: keyof typeof timeWindows
 ): keyof typeof intervals {
   if (range === '30min' || range === 'lastHour') {
     return 'minute';
@@ -234,7 +239,7 @@ export function getDefaultIntervalByRange(
 
 export function getDefaultIntervalByDates(
   startDate: string | null,
-  endDate: string | null,
+  endDate: string | null
 ): null | keyof typeof intervals {
   if (startDate && endDate) {
     if (isSameDay(startDate, endDate)) {
