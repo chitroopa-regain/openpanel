@@ -23,7 +23,7 @@ export const projectRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
-      }),
+      })
     )
     .query(async ({ input: { projectId }, ctx }) => {
       const access = await getProjectAccess({
@@ -42,11 +42,22 @@ export const projectRouter = createTRPCRouter({
     .input(
       z.object({
         organizationId: z.string().nullable(),
-      }),
+      })
     )
-    .query(async ({ input: { organizationId } }) => {
+    .query(async ({ input: { organizationId }, ctx }) => {
       if (organizationId === null) return [];
-      return getProjectsByOrganizationId(organizationId);
+
+      const projects = await getProjectsByOrganizationId(organizationId);
+      const access = await Promise.all(
+        projects.map((project) =>
+          getProjectAccess({
+            userId: ctx.session.userId,
+            projectId: project.id,
+          })
+        )
+      );
+
+      return projects.filter((_, index) => !!access[index]);
     }),
 
   update: protectedProcedure
@@ -153,7 +164,7 @@ export const projectRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
-      }),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       const access = await getProjectAccess({
@@ -180,7 +191,7 @@ export const projectRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
-      }),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       const access = await getProjectAccess({
