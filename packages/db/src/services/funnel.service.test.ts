@@ -1512,7 +1512,7 @@ describe('FunnelService.isMvEligibleFunnel', () => {
     ).toBe(false);
   });
 
-  it('rejects step with per-event property filter', async () => {
+  it('rejects step with per-event property filter (properties.*)', async () => {
     const s = new FunnelService({} as any);
     expect(
       await s.isMvEligibleFunnel({
@@ -1523,6 +1523,59 @@ describe('FunnelService.isMvEligibleFunnel', () => {
             filters: [
               { name: 'properties.source', value: ['x'], operator: 'is' },
             ],
+            segment: 'event',
+          },
+          simpleFunnel.eventSeries[1],
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it('accepts step with whitelisted top-level filter (app_version)', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          {
+            name: 'Application Installed',
+            filters: [
+              { name: 'app_version', value: ['9.8.415'], operator: 'is' },
+            ],
+            segment: 'event',
+          },
+          simpleFunnel.eventSeries[1],
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it('accepts step with whitelisted top-level filter (country)', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          {
+            name: 'Application Installed',
+            filters: [{ name: 'country', value: ['IN'], operator: 'is' }],
+            segment: 'event',
+          },
+          simpleFunnel.eventSeries[1],
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it('rejects non-whitelisted top-level filter (os_version)', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          {
+            name: 'Application Installed',
+            filters: [{ name: 'os_version', value: ['14'], operator: 'is' }],
             segment: 'event',
           },
           simpleFunnel.eventSeries[1],
@@ -1567,7 +1620,7 @@ describe('FunnelService.isMvEligibleFunnel', () => {
     ).toBe(false);
   });
 
-  it('rejects funnel with breakdowns (v1 scope limit)', async () => {
+  it('rejects funnel with event-property breakdown (properties.*)', async () => {
     const s = new FunnelService({} as any);
     expect(
       await s.isMvEligibleFunnel({
@@ -1575,6 +1628,16 @@ describe('FunnelService.isMvEligibleFunnel', () => {
         breakdowns: [{ name: 'properties.country' }],
       })
     ).toBe(false);
+  });
+
+  it('accepts whitelisted top-level breakdown (app_version)', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        breakdowns: [{ name: 'app_version' }],
+      })
+    ).toBe(true);
   });
 
   it('rejects when profile filters/breakdowns require profiles FINAL join', async () => {
@@ -1618,6 +1681,11 @@ describe('FunnelService.buildFunnelCteFromMv', () => {
     expect(normalized).toContain('FROM event_profile_firsts_local');
     expect(normalized).toContain(
       "arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts"
+    );
+    // MV subquery must project whitelisted top-level cols so step-condition
+    // filters like `app_version = '9.8.415'` resolve to real column refs.
+    expect(normalized).toContain(
+      'SELECT project_id, name, profile_id, app_version, country,'
     );
     expect(normalized).toContain(
       "windowFunnel(86400000, 'strict_increase')"

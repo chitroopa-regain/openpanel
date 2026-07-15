@@ -310,18 +310,33 @@ export class FunnelService {
     // MV is per profile_id — no session mode.
     if (params.groupBy !== 'profile_id') return false;
 
-    // MV drops event properties — anything property-scoped forces raw path.
+    // Filters/breakdowns on this whitelist of top-level event columns are
+    // supported because they are stored directly in the MV grain
+    // (event_profile_firsts_local's ORDER BY / GROUP BY). Anything else
+    // (event properties like `properties.foo`, uncommon top-level cols like
+    // `os_version`, `brand`) forces the raw path. See the funnel audit in
+    // scratchpad/mv_baseline.md — this whitelist covers ~66% of brainpal +
+    // 79% of regain funnels while keeping MV row growth under ~1.5×.
+    const MV_ALLOWED_COLUMNS = new Set(['app_version', 'country']);
+
     for (const step of params.eventSeries) {
       if (step.firstTimeFilter) return false;
-      if ((step.filters?.length ?? 0) > 0) return false;
-      if (step.customEventComponents?.some((c) => (c.filters?.length ?? 0) > 0))
+      const stepFilters = step.filters ?? [];
+      if (stepFilters.some((f) => !MV_ALLOWED_COLUMNS.has(f.name))) return false;
+      const componentFilters = (step.customEventComponents ?? []).flatMap(
+        (c) => c.filters ?? [],
+      );
+      if (componentFilters.some((f) => !MV_ALLOWED_COLUMNS.has(f.name)))
         return false;
     }
 
-    // v1: no breakdowns, no profile filters. Trait breakdowns/filters can
-    // come in a follow-up; the CTE join pattern works on the MV output too,
-    // but the initial patch keeps the surface minimal.
-    if (params.breakdowns.length > 0) return false;
+    // Breakdown on any column outside the whitelist → raw. Trait
+    // (profile.properties.*) breakdowns still fall through here because the
+    // trait CTE join hasn't been ported to the MV subquery yet.
+    for (const b of params.breakdowns) {
+      if (!MV_ALLOWED_COLUMNS.has(b.name)) return false;
+    }
+
     if (params.anyFilterOnProfile || params.anyBreakdownOnProfile) return false;
     if (params.traitDescriptors.size > 0) return false;
 
@@ -455,13 +470,17 @@ export class FunnelService {
       .map((n) => sqlstring.escape(n))
       .join(', ');
 
+    // Project the MV whitelist columns (app_version, country) alongside
+    // the timestamp so step conditions like `app_version = '9.8.415'` and
+    // WITH FILL breakdowns on `country` resolve to real column refs. If we
+    // later widen the whitelist, add columns here AND in the MV schema.
     const sql = `SELECT profile_id AS profile_id,
         windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(
           toUInt64(toUnixTimestamp64Milli(ts)),
           ${funnels.join(', ')}
         ) AS level
       FROM (
-        SELECT project_id, name, profile_id,
+        SELECT project_id, name, profile_id, app_version, country,
           arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
         FROM ${TABLE_NAMES.event_profile_firsts}
         WHERE project_id = ${escapedProject}
