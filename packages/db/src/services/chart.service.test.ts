@@ -37,7 +37,11 @@ vi.mock('../prisma-client', () => ({
   db: {},
 }));
 
-import { getAggregateChartSql, getChartSql } from './chart.service';
+import {
+  getAggregateChartSql,
+  getChartSql,
+  getChartStartEndDate,
+} from './chart.service';
 
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
@@ -843,5 +847,83 @@ describe('getChartSql', () => {
       expect(sql).toContain("name = 'Server: Purchase'");
       expect(sql).toContain("name = 'Subscription: Purchase Success'");
     });
+  });
+});
+
+// "Last N months" (custom dateMode='last', lastUnit='month') must subtract
+// calendar months, not N * 30 days. The 30-day approximation shifts the
+// window start by up to ~5–11 days depending on the current month, which
+// shows up as a missing cohort row on retention and a shifted first bar on
+// funnel. See openpanel-fork:packages/db/src/services/chart.service.ts.
+describe('getChartStartEndDate — dateMode=last, lastUnit=month', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // Pin now to a date where calendar-month vs 30-day math diverges by
+    // multiple days. From 2026-05-15, 12 calendar months back is 2025-05-15
+    // (365 days); 12 * 30 days back is 2025-05-20 (360 days). 5-day delta.
+    vi.setSystemTime(new Date('2026-05-15T10:00:00Z'));
+  });
+
+  it('resolves "Last 3 months" to 3 calendar months back (not 90 days)', () => {
+    const dates = getChartStartEndDate(
+      {
+        range: 'custom',
+        startDate: null,
+        endDate: null,
+        dateConfig: {
+          dateMode: 'last',
+          lastAmount: 3,
+          lastUnit: 'month',
+          lastEndingDaysAgo: 0,
+        },
+      },
+      'UTC'
+    );
+    // Calendar-accurate: 2026-05-15 - 3 months = 2026-02-15 00:00:00
+    // Buggy 90-day math would return 2026-02-14 00:00:00
+    expect(dates.startDate).toBe('2026-02-15 00:00:00');
+    expect(dates.endDate).toBe('2026-05-15 23:59:59');
+  });
+
+  it('resolves "Last 12 months" to 12 calendar months back (not 360 days)', () => {
+    const dates = getChartStartEndDate(
+      {
+        range: 'custom',
+        startDate: null,
+        endDate: null,
+        dateConfig: {
+          dateMode: 'last',
+          lastAmount: 12,
+          lastUnit: 'month',
+          lastEndingDaysAgo: 0,
+        },
+      },
+      'UTC'
+    );
+    // Calendar-accurate: 2026-05-15 - 12 months = 2025-05-15 00:00:00
+    // Buggy 360-day math would return 2025-05-20 00:00:00 (5-day skew)
+    expect(dates.startDate).toBe('2025-05-15 00:00:00');
+    expect(dates.endDate).toBe('2026-05-15 23:59:59');
+  });
+
+  it('resolves "Last 3 weeks" to exactly 21 days (weeks are exact)', () => {
+    const dates = getChartStartEndDate(
+      {
+        range: 'custom',
+        startDate: null,
+        endDate: null,
+        dateConfig: {
+          dateMode: 'last',
+          lastAmount: 3,
+          lastUnit: 'week',
+          lastEndingDaysAgo: 0,
+        },
+      },
+      'UTC'
+    );
+    // 21 days back from 2026-05-15 = 2026-04-24 (weeks are always 7 days —
+    // the flat-multiplier path was only wrong for months, not weeks).
+    expect(dates.startDate).toBe('2026-04-24 00:00:00');
+    expect(dates.endDate).toBe('2026-05-15 23:59:59');
   });
 });

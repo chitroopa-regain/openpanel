@@ -13,12 +13,22 @@ import {
   startOfYear,
   subDays,
   subMonths,
+  subWeeks,
 } from 'date-fns';
 import { useState } from 'react';
 
 import { CheckIcon, RotateCcwIcon, XIcon } from 'lucide-react';
 import { popModal } from '.';
 import { ModalContent } from './Modal/Container';
+
+// Resolve "Last N <unit>" start from an end date. Months are calendar
+// months, not a 30-day approximation — must match the backend resolver in
+// packages/db/src/services/chart.service.ts (getChartStartEndDate).
+function subtractLastWindow(end: Date, amount: number, unit: string | null | undefined): Date {
+  if (unit === 'week') return subWeeks(end, amount);
+  if (unit === 'month') return subMonths(end, amount);
+  return subDays(end, amount);
+}
 
 type DateMode = 'fixed' | 'last' | 'since' | 'period_to_date';
 
@@ -241,10 +251,8 @@ export default function DateRangerPicker(props: Props) {
         if (lastAmount <= 0) {
           return { label1: 'From', value1: null, label2: 'To', value2: null };
         }
-        const multiplier =
-          lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
         const end = subDays(now, lastEndingDaysAgo);
-        const start = subDays(end, lastAmount * multiplier);
+        const start = subtractLastWindow(end, lastAmount, lastUnit);
         return {
           label1: 'From',
           value1: format(start, 'MMM d, yyyy'),
@@ -525,16 +533,18 @@ export default function DateRangerPicker(props: Props) {
               mode="range"
               defaultMonth={(() => {
                 if (lastAmount <= 0) return subMonths(new Date(), isBelowSm ? 0 : 1);
-                const mult = lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
                 const end = subDays(new Date(), lastEndingDaysAgo);
-                return subMonths(subDays(end, lastAmount * mult), isBelowSm ? 0 : 1);
+                return subMonths(
+                  subtractLastWindow(end, lastAmount, lastUnit),
+                  isBelowSm ? 0 : 1,
+                );
               })()}
               selected={lastAmount > 0 ? {
-                from: (() => {
-                  const mult = lastUnit === 'week' ? 7 : lastUnit === 'month' ? 30 : 1;
-                  const end = subDays(new Date(), lastEndingDaysAgo);
-                  return subDays(end, lastAmount * mult);
-                })(),
+                from: subtractLastWindow(
+                  subDays(new Date(), lastEndingDaysAgo),
+                  lastAmount,
+                  lastUnit,
+                ),
                 to: subDays(new Date(), lastEndingDaysAgo),
               } : undefined}
               toDate={new Date()}

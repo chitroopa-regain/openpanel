@@ -16,6 +16,8 @@ import {
   startOfWeek,
   startOfYear,
   subDays,
+  subMonths,
+  subWeeks,
 } from 'date-fns';
 import type { IDateConfig } from '@openpanel/validation';
 import { Button } from '../ui/button';
@@ -79,10 +81,16 @@ export function ReportInterval({
           break;
         case 'last': {
           const amt = dateConfig.lastAmount ?? 7;
-          const mult = dateConfig.lastUnit === 'week' ? 7 : dateConfig.lastUnit === 'month' ? 30 : 1;
           const ending = dateConfig.lastEndingDaysAgo ?? 0;
           effectiveEnd = subDays(now, ending);
-          effectiveStart = subDays(effectiveEnd, amt * mult);
+          // Months are calendar months — match the backend resolver in
+          // packages/db/src/services/chart.service.ts.
+          effectiveStart =
+            dateConfig.lastUnit === 'week'
+              ? subWeeks(effectiveEnd, amt)
+              : dateConfig.lastUnit === 'month'
+                ? subMonths(effectiveEnd, amt)
+                : subDays(effectiveEnd, amt);
           break;
         }
         case 'since':

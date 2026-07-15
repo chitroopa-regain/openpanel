@@ -1448,9 +1448,16 @@ export function getChartStartEndDate(
         const amount = dateConfig.lastAmount ?? 7;
         const unit = dateConfig.lastUnit ?? 'day';
         const endingDaysAgo = dateConfig.lastEndingDaysAgo ?? 0;
-        const mult = unit === 'week' ? 7 : unit === 'month' ? 30 : 1;
         const end = now.minus({ day: endingDaysAgo }).endOf('day');
-        const start = end.minus({ day: amount * mult }).startOf('day');
+        // Months are variable-length — subtract calendar months, not
+        // a flat 30-day approximation, so "Last 12 months" is a year.
+        const delta =
+          unit === 'week'
+            ? { week: amount }
+            : unit === 'month'
+              ? { month: amount }
+              : { day: amount };
+        const start = end.minus(delta).startOf('day');
         return {
           startDate: start.toFormat('yyyy-MM-dd HH:mm:ss'),
           endDate: end.toFormat('yyyy-MM-dd HH:mm:ss'),
