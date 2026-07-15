@@ -1587,7 +1587,7 @@ export class FunnelService {
       const prevCte = `step_${i}`;
       const currCte = `step_${i + 1}`;
       ctes.push(`${currCte} AS (
-        SELECT prev.profile_id, min(e.ts) as ${currCte}_ts
+        SELECT prev.profile_id AS profile_id, min(e.ts) as ${currCte}_ts
         FROM ${prevCte} prev
         JOIN mv_events e ON e.profile_id = prev.profile_id
         JOIN step_1 s1 ON s1.profile_id = prev.profile_id
