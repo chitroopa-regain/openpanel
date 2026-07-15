@@ -31,6 +31,7 @@ vi.mock('../clickhouse/client', () => ({
     event_names_mv: 'distinct_event_names_mv',
     event_property_values_mv: 'event_property_values_mv',
     cohort_events_mv: 'cohort_events_mv',
+    event_profile_firsts: 'event_profile_firsts_local',
     sessions: 'sessions',
     events_imports: 'events_imports',
     session_replay_chunks: 'session_replay_chunks',
@@ -1409,3 +1410,253 @@ function prodFunnelMetricInput(
     timezone: 'Asia/Calcutta',
   };
 }
+
+describe('FunnelService.isMvEligibleFunnel', () => {
+  const originalDisabled = process.env.OP_FUNNEL_MV_DISABLED;
+  const originalStale = process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS;
+
+  beforeEach(() => {
+    delete process.env.OP_FUNNEL_MV_DISABLED;
+    delete process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS;
+    mocks.chQuery.mockReset();
+    // Default: MV covers brainrot-app from 2026-04-01, fresh (0h stale)
+    mocks.chQuery.mockResolvedValue([
+      {
+        project_id: 'brainrot-app',
+        min_day: '2026-04-01',
+        max_day: '2026-07-15',
+        staleness_hours: 0,
+      },
+    ]);
+  });
+
+  afterAll(() => {
+    if (originalDisabled === undefined) delete process.env.OP_FUNNEL_MV_DISABLED;
+    else process.env.OP_FUNNEL_MV_DISABLED = originalDisabled;
+    if (originalStale === undefined)
+      delete process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS;
+    else process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS = originalStale;
+  });
+
+  const simpleFunnel: any = {
+    eventSeries: [
+      { name: 'Application Installed', filters: [], segment: 'event' },
+      { name: 'Counter Bubble: Shown', filters: [], segment: 'event' },
+    ],
+    breakdowns: [],
+    groupBy: 'profile_id' as const,
+    anyFilterOnProfile: false,
+    anyBreakdownOnProfile: false,
+    projectId: 'brainrot-app',
+    traitDescriptors: new Map(),
+    startDate: '2026-06-15 00:00:00',
+  };
+
+  it('accepts a simple 2-step funnel when MV has coverage', async () => {
+    const s = new FunnelService({} as any);
+    expect(await s.isMvEligibleFunnel(simpleFunnel)).toBe(true);
+  });
+
+  it('honors global kill switch OP_FUNNEL_MV_DISABLED=1', async () => {
+    process.env.OP_FUNNEL_MV_DISABLED = '1';
+    const s = new FunnelService({} as any);
+    expect(await s.isMvEligibleFunnel(simpleFunnel)).toBe(false);
+  });
+
+  it('rejects projects the MV has no data for', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({ ...simpleFunnel, projectId: 'regain-app' })
+    ).toBe(false);
+  });
+
+  it('rejects when query range predates MV backfill', async () => {
+    const s = new FunnelService({} as any);
+    // MV covers 2026-04-01 → 2026-07-15; asking for 2026-01-01 is out of range
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        startDate: '2026-01-01 00:00:00',
+      })
+    ).toBe(false);
+  });
+
+  it('rejects when MV writer is stalled beyond staleness limit', async () => {
+    mocks.chQuery.mockReset();
+    mocks.chQuery.mockResolvedValue([
+      {
+        project_id: 'brainrot-app',
+        min_day: '2026-04-01',
+        max_day: '2026-07-10',
+        staleness_hours: 120, // 5 days stale
+      },
+    ]);
+    const s = new FunnelService({} as any);
+    expect(await s.isMvEligibleFunnel(simpleFunnel)).toBe(false);
+  });
+
+  it('falls back safely when MV table does not exist', async () => {
+    mocks.chQuery.mockReset();
+    mocks.chQuery.mockRejectedValue(new Error('UNKNOWN_TABLE'));
+    const s = new FunnelService({} as any);
+    expect(await s.isMvEligibleFunnel(simpleFunnel)).toBe(false);
+  });
+
+  it('rejects session-mode funnels (MV is per-profile)', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        groupBy: 'session_id' as const,
+      })
+    ).toBe(false);
+  });
+
+  it('rejects step with per-event property filter', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          {
+            name: 'Application Installed',
+            filters: [
+              { name: 'properties.source', value: ['x'], operator: 'is' },
+            ],
+            segment: 'event',
+          },
+          simpleFunnel.eventSeries[1],
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it('rejects step with firstTimeFilter', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          { ...simpleFunnel.eventSeries[0], firstTimeFilter: true },
+          simpleFunnel.eventSeries[1],
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it('rejects custom event with per-component filter', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          simpleFunnel.eventSeries[0],
+          {
+            name: 'custom',
+            filters: [],
+            segment: 'event',
+            customEventComponents: [
+              {
+                eventName: 'Counter Bubble: Shown',
+                filters: [{ name: 'properties.x', value: [1], operator: 'is' }],
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it('rejects funnel with breakdowns (v1 scope limit)', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        breakdowns: [{ name: 'properties.country' }],
+      })
+    ).toBe(false);
+  });
+
+  it('rejects when profile filters/breakdowns require profiles FINAL join', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({ ...simpleFunnel, anyFilterOnProfile: true })
+    ).toBe(false);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        anyBreakdownOnProfile: true,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('FunnelService.buildFunnelCteFromMv', () => {
+  it('generates a windowFunnel over the MV via arrayJoin(min, max)', () => {
+    const s = new FunnelService({} as any);
+    const { sql, firstTimeCtes, traitCtes } = s.buildFunnelCteFromMv({
+      projectId: 'brainrot-app',
+      startDate: '2026-06-15 00:00:00',
+      endDate: '2026-07-16 00:00:00',
+      eventSeries: [
+        { name: 'Application Installed', filters: [], segment: 'event' } as any,
+        {
+          name: 'All Active Users Events',
+          filters: [],
+          segment: 'event',
+          customEventComponents: [
+            { eventName: 'Counter Bubble: Shown', filters: [] },
+            { eventName: 'Counter Bubble Pulse: Shown', filters: [] },
+          ],
+        } as any,
+      ],
+      funnelWindowMilliseconds: 86400000,
+    });
+    const normalized = normalizeSql(sql);
+    expect(firstTimeCtes).toEqual([]);
+    expect(traitCtes).toEqual([]);
+    expect(normalized).toContain('FROM event_profile_firsts_local');
+    expect(normalized).toContain(
+      "arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts"
+    );
+    expect(normalized).toContain(
+      "windowFunnel(86400000, 'strict_increase')"
+    );
+    expect(normalized).toContain('toUInt64(toUnixTimestamp64Milli(ts))');
+    // Step 1 anchored to [startDate, endDate]
+    expect(normalized).toContain(
+      "ts >= toDateTime64('2026-06-15 00:00:00', 3)"
+    );
+    expect(normalized).toContain(
+      "ts <= toDateTime64('2026-07-16 00:00:00', 3)"
+    );
+    // Custom-event OR-clause preserved
+    expect(normalized).toContain("name = 'Counter Bubble: Shown'");
+    expect(normalized).toContain("name = 'Counter Bubble Pulse: Shown'");
+    // Extended outer bound (endDate + windowSeconds) so cross-day step-2 events land
+    expect(normalized).toContain(
+      "ts <= addSeconds(toDateTime64('2026-07-16 00:00:00', 3), 86400)"
+    );
+    // Day partition prune
+    expect(normalized).toContain(
+      "day BETWEEN toDate('2026-06-15 00:00:00') AND addDays(toDate('2026-07-16 00:00:00'), 1)"
+    );
+    // MV zero-sentinel filter (unidentified rows have min_..._identified = 0)
+    expect(normalized).toContain(
+      "min_created_at_identified > toDateTime64('1970-01-02', 3)"
+    );
+  });
+
+  it('throws on zero-step input', () => {
+    const s = new FunnelService({} as any);
+    expect(() =>
+      s.buildFunnelCteFromMv({
+        projectId: 'brainrot-app',
+        startDate: '2026-06-15 00:00:00',
+        endDate: '2026-07-16 00:00:00',
+        eventSeries: [],
+        funnelWindowMilliseconds: 86400000,
+      })
+    ).toThrow(/at least one step/);
+  });
+});

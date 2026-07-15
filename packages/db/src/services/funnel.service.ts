@@ -264,6 +264,218 @@ export class FunnelService {
    * cross-source funnels where steps come from different session_ids
    * (e.g. app SDK events + server webhook events).
    */
+  /**
+   * MV fast path: swap FROM `openpanel.events` with a subquery over
+   * `openpanel.event_profile_firsts_local` that unpacks each row's
+   * (min, max) identified-timestamps via `arrayJoin([min, max])` and
+   * feeds the resulting stream to the SAME `windowFunnel` operator
+   * used by the raw-events path. Identical outer aggregation logic —
+   * only the source of timestamps changes.
+   *
+   * The MV drops event properties, so this only applies to "simple"
+   * funnels (no per-event property filters, no firstTimeFilter, no
+   * event-property breakdowns, no session grouping, no profile-scalar
+   * filters). Anything else falls back to `buildFunnelCte` unchanged.
+   *
+   * Which projects qualify at all is auto-detected from the MV itself
+   * (see `getMvProjectCoverage`) — no per-project env-var maintenance.
+   * A project qualifies when the MV has data for it AND that data
+   * covers the requested query range AND the MV is fresh (max_day
+   * within OP_FUNNEL_MV_MAX_STALENESS_HOURS of "now"). Set
+   * OP_FUNNEL_MV_DISABLED=1 to hard-disable the fast path globally.
+   *
+   * Correctness parity verified against the raw path at 7d/14d/30d for
+   * brainrot-app on 2026-07-15: exact match modulo live-event drift
+   * of ±few users (see scratchpad/mv_baseline.md). Latency drops from
+   * ~45s to ~1s on the reference 30-day install→engagement funnel.
+   */
+  async isMvEligibleFunnel(params: {
+    eventSeries: ResolvedFunnelStep[];
+    breakdowns: { name: string }[];
+    groupBy: 'session_id' | 'profile_id';
+    anyFilterOnProfile: boolean;
+    anyBreakdownOnProfile: boolean;
+    projectId: string;
+    traitDescriptors: Map<string, TraitBreakdown>;
+    startDate: string;
+  }): Promise<boolean> {
+    // Global kill switch (no code change needed to revert everywhere).
+    if (
+      process.env.OP_FUNNEL_MV_DISABLED === '1' ||
+      process.env.OP_FUNNEL_MV_DISABLED === 'true'
+    ) {
+      return false;
+    }
+
+    // MV is per profile_id — no session mode.
+    if (params.groupBy !== 'profile_id') return false;
+
+    // MV drops event properties — anything property-scoped forces raw path.
+    for (const step of params.eventSeries) {
+      if (step.firstTimeFilter) return false;
+      if ((step.filters?.length ?? 0) > 0) return false;
+      if (step.customEventComponents?.some((c) => (c.filters?.length ?? 0) > 0))
+        return false;
+    }
+
+    // v1: no breakdowns, no profile filters. Trait breakdowns/filters can
+    // come in a follow-up; the CTE join pattern works on the MV output too,
+    // but the initial patch keeps the surface minimal.
+    if (params.breakdowns.length > 0) return false;
+    if (params.anyFilterOnProfile || params.anyBreakdownOnProfile) return false;
+    if (params.traitDescriptors.size > 0) return false;
+
+    // Auto-detect: MV must have data for this project, covering the
+    // query range, AND be fresh (writer not stalled).
+    const coverage = await this.getMvProjectCoverage(params.projectId);
+    if (!coverage) return false;
+    const startDay = params.startDate.slice(0, 10); // 'YYYY-MM-DD'
+    if (coverage.minDay > startDay) return false; // backfill doesn't cover range
+    const maxStalenessHours = Number(
+      process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS || 24,
+    );
+    if (coverage.stalenessHours > maxStalenessHours) return false;
+
+    return true;
+  }
+
+  /**
+   * Per-project MV coverage cache with TTL. Populated lazily on first
+   * funnel request. Key insight: the MV auto-discovers which projects
+   * are eligible (any project with rows in event_profile_firsts_local),
+   * so onboarding a new app is just "backfill the MV" — no env-var edit
+   * or code change needed. Cache TTL (default 15 min) governs how
+   * quickly a freshly-backfilled project becomes visible.
+   *
+   * Failure modes handled:
+   * - MV table missing (fresh install / self-hosted): returns null,
+   *   falls back to raw-events path. No boot-time crash.
+   * - MV writer stalled (max day too old): caller filters via
+   *   OP_FUNNEL_MV_MAX_STALENESS_HOURS to avoid serving gap-riddled
+   *   funnels.
+   */
+  private mvCoverageCache: {
+    fetchedAt: number;
+    coverage: Map<
+      string,
+      { minDay: string; maxDay: string; stalenessHours: number }
+    >;
+  } | null = null;
+
+  private async getMvProjectCoverage(
+    projectId: string,
+  ): Promise<
+    { minDay: string; maxDay: string; stalenessHours: number } | null
+  > {
+    const ttlSec = Number(process.env.OP_FUNNEL_MV_CACHE_TTL_SECONDS || 900);
+    const nowMs = Date.now();
+    if (
+      !this.mvCoverageCache ||
+      nowMs - this.mvCoverageCache.fetchedAt > ttlSec * 1000
+    ) {
+      const coverage = new Map<
+        string,
+        { minDay: string; maxDay: string; stalenessHours: number }
+      >();
+      try {
+        const rows = await chQuery<{
+          project_id: string;
+          min_day: string;
+          max_day: string;
+          staleness_hours: number;
+        }>(
+          `SELECT project_id,
+                  toString(min(day)) AS min_day,
+                  toString(max(day)) AS max_day,
+                  dateDiff('hour', toDateTime(max(day)) + INTERVAL 1 DAY, now()) AS staleness_hours
+           FROM ${TABLE_NAMES.event_profile_firsts}
+           GROUP BY project_id`,
+        );
+        for (const r of rows) {
+          coverage.set(r.project_id, {
+            minDay: r.min_day,
+            maxDay: r.max_day,
+            stalenessHours: Number(r.staleness_hours),
+          });
+        }
+      } catch {
+        // MV table doesn't exist (fresh install / self-hosted). Leave
+        // cache empty — all funnels route through raw-events path.
+      }
+      this.mvCoverageCache = { fetchedAt: nowMs, coverage };
+    }
+    return this.mvCoverageCache.coverage.get(projectId) ?? null;
+  }
+
+  /**
+   * MV-backed drop-in for `buildFunnelCte`'s session_funnel body. Returns
+   * a raw SQL string (register via `funnelQuery.with('session_funnel', sql)`).
+   * Same shape as buildFunnelCte's return so callers can branch cleanly.
+   */
+  buildFunnelCteFromMv({
+    projectId,
+    startDate,
+    endDate,
+    eventSeries,
+    funnelWindowMilliseconds,
+  }: {
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    eventSeries: ResolvedFunnelStep[];
+    funnelWindowMilliseconds: number;
+  }): { sql: string; firstTimeCtes: never[]; traitCtes: never[] } {
+    const escapedProject = sqlstring.escape(projectId);
+    const escapedStart = sqlstring.escape(startDate);
+    const escapedEnd = sqlstring.escape(endDate);
+    const funnelWindowSeconds = Math.ceil(funnelWindowMilliseconds / 1000);
+
+    const rawFunnels = this.getFunnelConditions(eventSeries, projectId);
+    if (rawFunnels.length === 0) {
+      throw new Error('MV funnel requires at least one step');
+    }
+
+    // Anchor step 1 to the report range. Steps 2..N are gated by the
+    // windowFunnel operator itself (funnelWindowMilliseconds).
+    // Rewrite `created_at` -> `ts` since the MV subquery aliases the
+    // unpacked timestamp as `ts`. `name` and `properties` refs pass
+    // through unchanged (MV subquery exposes `name`).
+    const funnels = rawFunnels.map((f) => f.replace(/\bcreated_at\b/g, 'ts'));
+    funnels[0] =
+      `(${funnels[0]}) AND ts >= toDateTime64(${escapedStart}, 3) AND ts <= toDateTime64(${escapedEnd}, 3)`;
+
+    const allEventNames = uniq(
+      eventSeries.flatMap((e) =>
+        e.customEventComponents
+          ? e.customEventComponents.map((c) => c.eventName)
+          : [e.name],
+      ),
+    );
+    const escapedNames = allEventNames
+      .map((n) => sqlstring.escape(n))
+      .join(', ');
+
+    const sql = `SELECT profile_id AS profile_id,
+        windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(
+          toUInt64(toUnixTimestamp64Milli(ts)),
+          ${funnels.join(', ')}
+        ) AS level
+      FROM (
+        SELECT project_id, name, profile_id,
+          arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
+        FROM ${TABLE_NAMES.event_profile_firsts}
+        WHERE project_id = ${escapedProject}
+          AND name IN (${escapedNames})
+          AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), 1)
+          AND min_created_at_identified > toDateTime64('1970-01-02', 3)
+      )
+      WHERE ts >= toDateTime64(${escapedStart}, 3)
+        AND ts <= addSeconds(toDateTime64(${escapedEnd}, 3), ${funnelWindowSeconds})
+      GROUP BY profile_id`;
+
+    return { sql, firstTimeCtes: [], traitCtes: [] };
+  }
+
   buildFunnelCte({
     projectId,
     startDate,
@@ -729,28 +941,65 @@ export class FunnelService {
 
     const stepConditions = this.getFunnelConditions(eventSeries, projectId);
 
-    const {
-      query: funnelCte,
-      firstTimeCtes,
-      traitCtes,
-    } = this.buildFunnelCte({
-      projectId,
-      startDate: startDate!,
-      endDate: endDate!,
+    // MV fast path — swap FROM events with a subquery over the aggregating
+    // MV when the funnel is "simple" (see isMvEligibleFunnel). Same
+    // windowFunnel semantics, ~90× faster on install→engagement funnels.
+    const useMv = await this.isMvEligibleFunnel({
       eventSeries,
-      funnelWindowMilliseconds,
-      timezone,
+      breakdowns,
       groupBy: group,
-      additionalSelects: breakdownSelects,
-      additionalGroupBy: breakdownGroupBy,
+      anyFilterOnProfile,
+      anyBreakdownOnProfile,
+      projectId,
       traitDescriptors,
-      // If we're going to attach profiles FINAL below, tell
-      // buildFunnelCte so its internal windowFunnel step conditions
-      // pre-qualify their event columns with `events.`.
-      expectProfilesFinalJoin: anyFilterOnProfile || anyBreakdownOnProfile,
+      startDate: startDate!,
     });
 
+    let funnelCte: ReturnType<typeof clix> | string;
+    let firstTimeCtes: { name: string; sql: string }[];
+    let traitCtes: { name: string; sql: string }[];
+
+    if (useMv) {
+      const mv = this.buildFunnelCteFromMv({
+        projectId,
+        startDate: startDate!,
+        endDate: endDate!,
+        eventSeries,
+        funnelWindowMilliseconds,
+      });
+      funnelCte = mv.sql;
+      firstTimeCtes = mv.firstTimeCtes;
+      traitCtes = mv.traitCtes;
+    } else {
+      const built = this.buildFunnelCte({
+        projectId,
+        startDate: startDate!,
+        endDate: endDate!,
+        eventSeries,
+        funnelWindowMilliseconds,
+        timezone,
+        groupBy: group,
+        additionalSelects: breakdownSelects,
+        additionalGroupBy: breakdownGroupBy,
+        traitDescriptors,
+        // If we're going to attach profiles FINAL below, tell
+        // buildFunnelCte so its internal windowFunnel step conditions
+        // pre-qualify their event columns with `events.`.
+        expectProfilesFinalJoin: anyFilterOnProfile || anyBreakdownOnProfile,
+      });
+      funnelCte = built.query;
+      firstTimeCtes = built.firstTimeCtes;
+      traitCtes = built.traitCtes;
+    }
+
     if (anyFilterOnProfile || anyBreakdownOnProfile) {
+      // Only reachable in the raw-events path. isMvEligibleFunnel returns
+      // false when profile filters/breakdowns exist, so funnelCte is Query.
+      if (useMv || typeof funnelCte === 'string') {
+        throw new Error(
+          'Unreachable: MV path is not chosen when profile filters/breakdowns exist',
+        );
+      }
       // Collect profile columns needed for filters and breakdowns (same as conversion.service)
       const profileFields = new Set<string>(['id']);
       for (const f of profileFilters) {

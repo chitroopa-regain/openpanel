@@ -56,6 +56,7 @@ export const TABLE_NAMES = {
   event_names_mv: 'distinct_event_names_mv',
   event_property_values_mv: 'event_property_values_mv',
   cohort_events_mv: 'cohort_events_mv',
+  event_profile_firsts: 'event_profile_firsts_local',
   sessions: 'sessions',
   events_imports: 'events_imports',
   session_replay_chunks: 'session_replay_chunks',
