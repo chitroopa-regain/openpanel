@@ -1197,26 +1197,37 @@ export class FunnelService {
     > = new Map();
     if (stepConditions.length >= 2) {
       try {
-        timingByBreakdown = await this.getFunnelTimingStats({
-          projectId,
-          startDate: startDate!,
-          endDate: endDate!,
-          stepConditions,
-          funnelWindowSeconds,
-          groupBy: group,
-          allEventNames: uniq(
-            eventSeries.flatMap((e) =>
-              e.customEventComponents
-                ? e.customEventComponents.map((c) => c.eventName)
-                : [e.name]
-            )
+        const allTimingEventNames = uniq(
+          eventSeries.flatMap((e) =>
+            e.customEventComponents
+              ? e.customEventComponents.map((c) => c.eventName)
+              : [e.name],
           ),
-          breakdowns,
-          breakdownSelects,
-          breakdownStep,
-          eventSeries,
-          timezone,
-        });
+        );
+        timingByBreakdown = useMv
+          ? await this.getFunnelTimingStatsFromMv({
+              projectId,
+              startDate: startDate!,
+              endDate: endDate!,
+              stepConditions,
+              funnelWindowSeconds,
+              allEventNames: allTimingEventNames,
+              timezone,
+            })
+          : await this.getFunnelTimingStats({
+              projectId,
+              startDate: startDate!,
+              endDate: endDate!,
+              stepConditions,
+              funnelWindowSeconds,
+              groupBy: group,
+              allEventNames: allTimingEventNames,
+              breakdowns,
+              breakdownSelects,
+              breakdownStep,
+              eventSeries,
+              timezone,
+            });
       } catch {
         // Timing query failed — continue without timing data
       }
@@ -1495,6 +1506,124 @@ export class FunnelService {
       }
     }
 
+    return result;
+  }
+
+  /**
+   * MV-backed drop-in for getFunnelTimingStats. Same chained-CTE shape,
+   * but sources events from `event_profile_firsts_local` via an mv_events
+   * CTE that unpacks each row's (min, max) identified timestamps via
+   * arrayJoin. Only callable when isMvEligibleFunnel() has already
+   * accepted the funnel (guarantees: profile_id grouping, no breakdowns,
+   * no traits, filters only on whitelisted top-level cols).
+   *
+   * The raw path frequently hits `MEMORY_LIMIT_EXCEEDED` on the JOIN
+   * chain for large date ranges (see scratchpad/timing_baseline.md —
+   * 11 of 132 timing queries failed in a 6h window, each eating ~29 s
+   * of wall-clock before erroring). This path scans ~200 M pre-aggregated
+   * rows instead of billions of raw events, so those failures go away.
+   */
+  private async getFunnelTimingStatsFromMv({
+    projectId,
+    startDate,
+    endDate,
+    stepConditions,
+    funnelWindowSeconds,
+    allEventNames,
+    timezone,
+  }: {
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    stepConditions: string[];
+    funnelWindowSeconds: number;
+    allEventNames: string[];
+    timezone: string;
+  }): Promise<Map<string, Record<string, number | null>>> {
+    const result = new Map<string, Record<string, number | null>>();
+    if (stepConditions.length < 2) return result;
+
+    const nameList = allEventNames
+      .map((n) => sqlstring.escape(n))
+      .join(', ');
+    const escapedProject = sqlstring.escape(projectId);
+    const escapedStart = sqlstring.escape(startDate);
+    const escapedEnd = sqlstring.escape(endDate);
+
+    // Rewrite step-condition column refs from `created_at` (raw column)
+    // to `ts` (arrayJoin output). All other refs (name, profile_id,
+    // app_version, country) pass through — they're projected verbatim
+    // in the mv_events subquery.
+    const toMvCondition = (cond: string) =>
+      cond.replace(/\bcreated_at\b/g, 'ts');
+
+    const ctes: string[] = [];
+
+    // Base CTE: unpack (min, max) as ts stream — same as buildFunnelCteFromMv.
+    // Reused across all step_N CTEs (CH materializes CTE once per WITH).
+    ctes.push(`mv_events AS (
+      SELECT project_id, name, profile_id, app_version, country,
+        arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
+      FROM ${TABLE_NAMES.event_profile_firsts}
+      WHERE project_id = ${escapedProject}
+        AND name IN (${nameList})
+        AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), 1)
+        AND min_created_at_identified > toDateTime64('1970-01-02', 3)
+    )`);
+
+    // Step 1: anchored to [startDate, endDate].
+    ctes.push(`step_1 AS (
+      SELECT profile_id, min(ts) as step_1_ts
+      FROM mv_events
+      WHERE ts >= toDateTime64(${escapedStart}, 3)
+        AND ts <= toDateTime64(${escapedEnd}, 3)
+        AND (${toMvCondition(stepConditions[0]!)})
+      GROUP BY profile_id
+    )`);
+
+    // Steps 2..N: chain forward, gated by ts > prev.step_N_ts AND
+    // funnelWindow from step_1_ts.
+    for (let i = 1; i < stepConditions.length; i++) {
+      const prevCte = `step_${i}`;
+      const currCte = `step_${i + 1}`;
+      ctes.push(`${currCte} AS (
+        SELECT prev.profile_id, min(e.ts) as ${currCte}_ts
+        FROM ${prevCte} prev
+        JOIN mv_events e ON e.profile_id = prev.profile_id
+        JOIN step_1 s1 ON s1.profile_id = prev.profile_id
+        WHERE e.ts > prev.${prevCte}_ts
+          AND dateDiff('second', s1.step_1_ts, e.ts) <= ${funnelWindowSeconds}
+          AND (${toMvCondition(stepConditions[i]!)})
+        GROUP BY prev.profile_id
+      )`);
+    }
+
+    // Final aggregation — quantileTDigestIf medians (same as raw path).
+    const stepJoins: string[] = [];
+    const medianSelects: string[] = [];
+    for (let i = 1; i < stepConditions.length; i++) {
+      const stepCte = `step_${i + 1}`;
+      const tsCol = `${stepCte}.${stepCte}_ts`;
+      const nullableTs = `nullIf(${tsCol}, toDateTime64(0, 3))`;
+      stepJoins.push(
+        `LEFT JOIN ${stepCte} ON s1.profile_id = ${stepCte}.profile_id`,
+      );
+      medianSelects.push(
+        `quantileTDigestIf(0.5)(dateDiff('second', s1.step_1_ts, ${nullableTs}), isNotNull(${nullableTs})) as step_${i}_median`,
+      );
+    }
+
+    const sql = `
+      WITH ${ctes.join(',\n')}
+      SELECT ${medianSelects.join(',\n')}
+      FROM step_1 s1
+      ${stepJoins.join('\n')}
+    `;
+
+    const rows = await chQuery<Record<string, any>>(sql, {
+      session_timezone: timezone,
+    });
+    result.set('none', rows[0] ?? {});
     return result;
   }
 

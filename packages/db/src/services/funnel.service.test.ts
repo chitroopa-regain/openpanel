@@ -1728,3 +1728,79 @@ describe('FunnelService.buildFunnelCteFromMv', () => {
     ).toThrow(/at least one step/);
   });
 });
+
+describe('FunnelService.getFunnelTimingStatsFromMv (MV timing path)', () => {
+  beforeEach(() => {
+    mocks.chQuery.mockReset();
+    mocks.chQuery.mockResolvedValue([{ step_1_median: 42 }]);
+  });
+
+  const timingInput = {
+    projectId: 'brainrot-app',
+    startDate: '2026-06-15 00:00:00',
+    endDate: '2026-07-16 00:00:00',
+    funnelWindowSeconds: 86400,
+    allEventNames: ['Application Installed', 'Counter Bubble: Shown'],
+    timezone: 'UTC',
+  };
+
+  it('returns empty map for <2 step conditions', async () => {
+    const s = new FunnelService({} as any);
+    const r = await (s as any).getFunnelTimingStatsFromMv({
+      ...timingInput,
+      stepConditions: ["name = 'Application Installed'"],
+    });
+    expect(r.size).toBe(0);
+    expect(mocks.chQuery).not.toHaveBeenCalled();
+  });
+
+  it('generates chained CTEs sourced from mv_events with arrayJoin', async () => {
+    const s = new FunnelService({} as any);
+    await (s as any).getFunnelTimingStatsFromMv({
+      ...timingInput,
+      stepConditions: [
+        "name = 'Application Installed'",
+        "name = 'Counter Bubble: Shown'",
+      ],
+    });
+
+    const sql = normalizeSql(String(mocks.chQuery.mock.calls[0]?.[0] ?? ''));
+    // Base MV CTE with arrayJoin
+    expect(sql).toContain('mv_events AS');
+    expect(sql).toContain(
+      'arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts'
+    );
+    expect(sql).toContain('FROM event_profile_firsts_local');
+    // step_1 anchored to report range
+    expect(sql).toContain('step_1 AS');
+    expect(sql).toContain('min(ts) as step_1_ts');
+    expect(sql).toContain("ts >= toDateTime64('2026-06-15 00:00:00', 3)");
+    expect(sql).toContain("ts <= toDateTime64('2026-07-16 00:00:00', 3)");
+    // step_2 chained + funnel window gate
+    expect(sql).toContain('step_2 AS');
+    expect(sql).toContain('e.ts > prev.step_1_ts');
+    expect(sql).toContain("dateDiff('second', s1.step_1_ts, e.ts) <= 86400");
+    // Median select
+    expect(sql).toContain('quantileTDigestIf(0.5)');
+    expect(sql).toContain('step_1_median');
+  });
+
+  it('rewrites created_at refs in step conditions to ts', async () => {
+    const s = new FunnelService({} as any);
+    await (s as any).getFunnelTimingStatsFromMv({
+      ...timingInput,
+      // Simulate a step condition emitted by getFunnelConditions that
+      // includes a created_at reference (the step-1 anchor injection).
+      stepConditions: [
+        "(name = 'Application Installed') AND created_at >= toDateTime('2026-06-15')",
+        "name = 'Counter Bubble: Shown'",
+      ],
+    });
+    const sql = normalizeSql(String(mocks.chQuery.mock.calls[0]?.[0] ?? ''));
+    // The `created_at` in the step-1 condition must be rewritten to `ts`
+    // — otherwise the mv_events subquery (which doesn't expose created_at)
+    // would fail with UNKNOWN_IDENTIFIER.
+    expect(sql).toContain('ts >= toDateTime');
+    expect(sql).not.toMatch(/step_1 AS[^)]*created_at\s*>=/);
+  });
+});
