@@ -146,18 +146,18 @@ export async function getProfiles(ids: string[], projectId: string) {
   }
 
   const data = await chQuery<IClickhouseProfile>(
-    `SELECT 
-      id, 
+    `SELECT
+      id,
       project_id,
-      any(nullIf(first_name, '')) as first_name, 
-      any(nullIf(last_name, '')) as last_name, 
-      any(nullIf(email, '')) as email, 
-      any(nullIf(avatar, '')) as avatar, 
-      last_value(is_external) as is_external, 
-      any(properties) as properties, 
+      any(nullIf(first_name, '')) as first_name,
+      any(nullIf(last_name, '')) as last_name,
+      any(nullIf(email, '')) as email,
+      any(nullIf(avatar, '')) as avatar,
+      last_value(is_external) as is_external,
+      any(properties) as properties,
       any(created_at) as created_at
     FROM ${TABLE_NAMES.profiles}
-    WHERE 
+    WHERE
       project_id = ${sqlstring.escape(projectId)} AND
       id IN (${filteredIds.map((id) => sqlstring.escape(id)).join(',')})
     GROUP BY id, project_id
@@ -192,6 +192,52 @@ export async function getProfiles(ids: string[], projectId: string) {
 }
 
 export const getProfilesCached = cacheable(getProfiles, 60 * 5);
+
+/**
+ * Same as `getProfiles` but skips the extra `profile_traits` scan/merge.
+ *
+ * Motivation: the traits merge fires an unrelated ClickHouse query that
+ * currently scans ~2.5 GiB per event.events call on brainpal (the traits
+ * table is ordered by `key` first, so a sparse `profile_id IN (~40 ids)`
+ * filter still hits many granules). Callers that only need
+ * name/avatar/email — namely the events LISTING view, which does not
+ * render `profile.properties` anywhere — can call this to skip the ~800ms
+ * per-request cost. Kept as a distinct function so the Redis cache stays
+ * partitioned from the trait-merged variant.
+ */
+export async function getProfilesWithoutTraits(
+  ids: string[],
+  projectId: string,
+) {
+  const filteredIds = uniq(ids.filter((id) => id !== ''));
+  if (filteredIds.length === 0) return [];
+
+  const data = await chQuery<IClickhouseProfile>(
+    `SELECT
+      id,
+      project_id,
+      any(nullIf(first_name, '')) as first_name,
+      any(nullIf(last_name, '')) as last_name,
+      any(nullIf(email, '')) as email,
+      any(nullIf(avatar, '')) as avatar,
+      last_value(is_external) as is_external,
+      any(properties) as properties,
+      any(created_at) as created_at
+    FROM ${TABLE_NAMES.profiles}
+    WHERE
+      project_id = ${sqlstring.escape(projectId)} AND
+      id IN (${filteredIds.map((id) => sqlstring.escape(id)).join(',')})
+    GROUP BY id, project_id
+    `,
+  );
+
+  return data.map(transformProfile);
+}
+
+export const getProfilesWithoutTraitsCached = cacheable(
+  getProfilesWithoutTraits,
+  60 * 5,
+);
 
 export async function getProfileList({
   take,

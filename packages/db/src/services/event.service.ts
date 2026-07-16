@@ -21,6 +21,7 @@ import type { IServiceProfile, IServiceUpsertProfile } from './profile.service';
 import {
   getProfileById,
   getProfilesCached,
+  getProfilesWithoutTraitsCached,
   upsertProfile,
 } from './profile.service';
 import type { IClickhouseSession } from './session.service';
@@ -258,6 +259,15 @@ export interface IServiceEventMinimal {
 interface GetEventsOptions {
   profile?: boolean;
   meta?: boolean | Prisma.EventMetaSelect;
+  /**
+   * When `profile: true`, the enrichment normally merges the ~2.5 GiB
+   * profile_traits scan into `profile.properties`. Callers that only
+   * need name/avatar/email (e.g. the events LISTING view) can set this
+   * to `false` to skip the extra scan (~700-800 ms per call on brainpal).
+   * Default: `true` — traits stay included for detail views and any UI
+   * that reads `profile.properties.*`.
+   */
+  includeProfileTraits?: boolean;
 }
 
 function maskString(str: string, mask = '*') {
@@ -343,9 +353,15 @@ export async function getEvents(
       )
     : [];
 
+  // includeProfileTraits defaults to true (backwards-compat). Callers that
+  // don't render `profile.properties` (events listing / conversions feed)
+  // should set it to false to skip the ~800ms profile_traits scan.
+  const profileFetch = options.includeProfileTraits === false
+    ? getProfilesWithoutTraitsCached
+    : getProfilesCached;
   const identifiedProfilesPromise: Promise<IServiceProfile[]> =
     wantProfiles && identifiedIds.length > 0
-      ? getProfilesCached(uniq(identifiedIds), projectId)
+      ? profileFetch(uniq(identifiedIds), projectId)
       : Promise.resolve([]);
   const aliasesPromise: Promise<{ alias: string; profile_id: string }[]> =
     wantProfiles && anonymousIds.length > 0
@@ -382,7 +398,7 @@ export async function getEvents(
     );
     const extraProfiles: IServiceProfile[] =
       missingAliasTargets.length > 0
-        ? await getProfilesCached(missingAliasTargets, projectId)
+        ? await profileFetch(missingAliasTargets, projectId)
         : [];
 
     const profileMap = new Map<string, IServiceProfile>();
@@ -513,6 +529,12 @@ export interface GetEventListOptions {
   select?: SelectHelper<IServiceEvent>;
   custom?: (sb: SqlBuilderObject) => void;
   dateIntervalInDays?: number;
+  /**
+   * Forwarded to getEvents — set to `false` on callers that don't render
+   * `profile.properties.*` (e.g. the events listing table) to skip the
+   * expensive profile_traits enrichment scan. Default true.
+   */
+  includeProfileTraits?: boolean;
 }
 
 export async function getEventList(options: GetEventListOptions) {
@@ -529,6 +551,7 @@ export async function getEventList(options: GetEventListOptions) {
     custom,
     select: incomingSelect,
     dateIntervalInDays = 0.5,
+    includeProfileTraits,
   } = options;
   const { sb, getSql, join } = createSqlBuilder();
 
@@ -750,6 +773,7 @@ export async function getEventList(options: GetEventListOptions) {
   const data = await getEvents(getSql(), {
     profile: select.profile ?? true,
     meta: select.meta ?? true,
+    includeProfileTraits,
   });
 
   // If we dont get any events, try without the cursor window

@@ -148,6 +148,10 @@ export const eventRouter = createTRPCRouter({
           projectId: false,
           revenue: true,
         },
+        // Events listing table renders name/avatar/email — never touches
+        // `profile.properties.*`. Skipping the traits scan drops ~800 ms
+        // of ClickHouse work per call (see scratchpad/events_baseline.md).
+        includeProfileTraits: false,
       });
 
       // Hacky join to get profile for entire session
