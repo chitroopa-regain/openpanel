@@ -1727,6 +1727,52 @@ describe('FunnelService.buildFunnelCteFromMv', () => {
       })
     ).toThrow(/at least one step/);
   });
+
+  it('emits breakdown SELECT + GROUP BY when additionalSelects/GroupBy given', () => {
+    const s = new FunnelService({} as any);
+    const { sql } = s.buildFunnelCteFromMv({
+      projectId: 'brainrot-app',
+      startDate: '2026-06-16 00:00:00',
+      endDate: '2026-07-17 00:00:00',
+      eventSeries: [
+        { name: 'Application Installed', filters: [], segment: 'event' } as any,
+        { name: 'Counter Bubble: Shown', filters: [], segment: 'event' } as any,
+      ],
+      funnelWindowMilliseconds: 86400000,
+      // Simulate what getFunnel passes for a whitelisted breakdown on app_version
+      additionalSelects: ['app_version as b_0'],
+      additionalGroupBy: ['b_0'],
+    });
+    const n = normalizeSql(sql);
+    // b_0 must appear both in SELECT and GROUP BY of the CTE body
+    expect(n).toContain('AS level, app_version as b_0');
+    expect(n).toContain('GROUP BY profile_id, b_0');
+  });
+
+  it('rewrites created_at -> ts inside argMaxIf breakdown selects', () => {
+    const s = new FunnelService({} as any);
+    const { sql } = s.buildFunnelCteFromMv({
+      projectId: 'brainrot-app',
+      startDate: '2026-06-16 00:00:00',
+      endDate: '2026-07-17 00:00:00',
+      eventSeries: [
+        { name: 'Application Installed', filters: [], segment: 'event' } as any,
+        { name: 'Counter Bubble: Shown', filters: [], segment: 'event' } as any,
+      ],
+      funnelWindowMilliseconds: 86400000,
+      // argMaxIf form emitted when breakdownStep is defined
+      additionalSelects: [
+        "argMaxIf(app_version, created_at, name = 'Application Installed') as b_0",
+      ],
+      additionalGroupBy: [],
+    });
+    const n = normalizeSql(sql);
+    expect(n).toContain(
+      "argMaxIf(app_version, ts, name = 'Application Installed') as b_0"
+    );
+    // The old created_at ref inside argMaxIf must NOT survive rewrite
+    expect(n).not.toMatch(/argMaxIf\(app_version, created_at,/);
+  });
 });
 
 describe('FunnelService.getFunnelTimingStatsFromMv (MV timing path)', () => {

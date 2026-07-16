@@ -433,12 +433,23 @@ export class FunnelService {
     endDate,
     eventSeries,
     funnelWindowMilliseconds,
+    additionalSelects = [],
+    additionalGroupBy = [],
   }: {
     projectId: string;
     startDate: string;
     endDate: string;
     eventSeries: ResolvedFunnelStep[];
     funnelWindowMilliseconds: number;
+    /**
+     * Breakdown expression selects like `app_version as b_0` or
+     * `argMaxIf(app_version, created_at, name = 'X') as b_0`. `created_at`
+     * refs are rewritten to `ts` (the arrayJoin output). Since MV
+     * eligibility only whitelists top-level cols (app_version, country),
+     * the expression itself resolves against the MV subquery's projection.
+     */
+    additionalSelects?: string[];
+    additionalGroupBy?: string[];
   }): { sql: string; firstTimeCtes: never[]; traitCtes: never[] } {
     const escapedProject = sqlstring.escape(projectId);
     const escapedStart = sqlstring.escape(startDate);
@@ -474,11 +485,25 @@ export class FunnelService {
     // the timestamp so step conditions like `app_version = '9.8.415'` and
     // WITH FILL breakdowns on `country` resolve to real column refs. If we
     // later widen the whitelist, add columns here AND in the MV schema.
+    //
+    // Breakdown SELECTs (additionalSelects) come from the outer breakdown
+    // builder as `<expr> as b_0` or `argMaxIf(<expr>, created_at, <cond>) as b_0`.
+    // Rewrite `created_at` -> `ts` in both — same as step conditions — so
+    // argMaxIf's timestamp arg resolves to the arrayJoin output. Bare
+    // column refs (app_version, country) pass through unchanged.
+    const rewriteCreatedAt = (expr: string) =>
+      expr.replace(/\bcreated_at\b/g, 'ts');
+    const mvSelects = additionalSelects.map(rewriteCreatedAt);
+    const extraSelectsClause =
+      mvSelects.length > 0 ? `, ${mvSelects.join(', ')}` : '';
+    const extraGroupByClause =
+      additionalGroupBy.length > 0 ? `, ${additionalGroupBy.join(', ')}` : '';
+
     const sql = `SELECT profile_id AS profile_id,
         windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(
           toUInt64(toUnixTimestamp64Milli(ts)),
           ${funnels.join(', ')}
-        ) AS level
+        ) AS level${extraSelectsClause}
       FROM (
         SELECT project_id, name, profile_id, app_version, country,
           arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
@@ -490,7 +515,7 @@ export class FunnelService {
       )
       WHERE ts >= toDateTime64(${escapedStart}, 3)
         AND ts <= addSeconds(toDateTime64(${escapedEnd}, 3), ${funnelWindowSeconds})
-      GROUP BY profile_id`;
+      GROUP BY profile_id${extraGroupByClause}`;
 
     return { sql, firstTimeCtes: [], traitCtes: [] };
   }
@@ -985,6 +1010,8 @@ export class FunnelService {
         endDate: endDate!,
         eventSeries,
         funnelWindowMilliseconds,
+        additionalSelects: breakdownSelects,
+        additionalGroupBy: breakdownGroupBy,
       });
       funnelCte = mv.sql;
       firstTimeCtes = mv.firstTimeCtes;
