@@ -310,46 +310,88 @@ export async function getEvents(
 ): Promise<IServiceEvent[]> {
   const events = await chQuery<IClickhouseEvent>(sql);
   const projectId = events[0]?.project_id;
-  if (options.profile && projectId) {
-    const identifiedIds = events
-      .filter((e) => e.device_id !== e.profile_id)
-      .map((e) => e.profile_id);
+  if (!projectId) {
+    // No events → nothing to enrich; skip the whole profile/meta round-trip
+    return events.map(transformEvent);
+  }
 
-    // Resolve anonymous events via profile_aliases
-    const anonymousIds = uniq(
-      events
-        .filter((e) => e.device_id === e.profile_id && e.device_id !== '')
-        .map((e) => e.device_id)
-    );
+  const wantProfiles = !!options.profile;
+  const wantMetas = !!options.meta;
 
+  // Speculatively kick off the pieces that don't depend on each other:
+  //   - identified profile ids: known from `events` immediately, so we can
+  //     pre-fetch those profiles without waiting on aliases
+  //   - alias resolution: independent of profiles fetch (result gets merged
+  //     into the profile map after both finish)
+  //   - event metas: independent of everything, cached anyway
+  //
+  // Previously all three were sequential awaits, adding ~2× the round-trip
+  // latency on cold refreshes when events listing → aliases → profiles →
+  // metas ran back-to-back. On the /events/events page this was the largest
+  // Node-side wait (~200ms) after the CH events listing itself was already
+  // <10ms; see scratchpad/events_baseline.md.
+  const identifiedIds = wantProfiles
+    ? events
+        .filter((e) => e.device_id !== e.profile_id)
+        .map((e) => e.profile_id)
+    : [];
+  const anonymousIds = wantProfiles
+    ? uniq(
+        events
+          .filter((e) => e.device_id === e.profile_id && e.device_id !== '')
+          .map((e) => e.device_id)
+      )
+    : [];
+
+  const identifiedProfilesPromise: Promise<IServiceProfile[]> =
+    wantProfiles && identifiedIds.length > 0
+      ? getProfilesCached(uniq(identifiedIds), projectId)
+      : Promise.resolve([]);
+  const aliasesPromise: Promise<{ alias: string; profile_id: string }[]> =
+    wantProfiles && anonymousIds.length > 0
+      ? chQuery<{ alias: string; profile_id: string }>(
+          `SELECT alias, argMax(profile_id, created_at) as profile_id
+             FROM ${TABLE_NAMES.alias}
+             WHERE project_id = ${sqlstring.escape(projectId)}
+               AND alias IN (${anonymousIds.map((id) => sqlstring.escape(id)).join(',')})
+             GROUP BY alias`
+        )
+      : Promise.resolve([]);
+  const metasPromise: Promise<EventMeta[]> = wantMetas
+    ? getEventMetasCached(projectId)
+    : Promise.resolve([]);
+
+  const [identifiedProfiles, aliases, metas] = await Promise.all([
+    identifiedProfilesPromise,
+    aliasesPromise,
+    metasPromise,
+  ]);
+
+  if (wantProfiles) {
     const aliasMap = new Map<string, string>();
-    if (anonymousIds.length > 0) {
-      const aliases = await chQuery<{ alias: string; profile_id: string }>(
-        `SELECT alias, argMax(profile_id, created_at) as profile_id
-         FROM ${TABLE_NAMES.alias}
-         WHERE project_id = ${sqlstring.escape(projectId)}
-           AND alias IN (${anonymousIds.map((id) => sqlstring.escape(id)).join(',')})
-         GROUP BY alias`
-      );
-      for (const a of aliases) {
-        aliasMap.set(a.alias, a.profile_id);
-      }
+    for (const a of aliases) {
+      aliasMap.set(a.alias, a.profile_id);
     }
 
-    const allProfileIds = uniq([
-      ...identifiedIds,
-      ...Array.from(aliasMap.values()),
-    ]);
-    const profiles = await getProfilesCached(allProfileIds, projectId);
+    // Fetch profiles for alias-resolved ids that we didn't already speculatively
+    // fetch (identified ids ∪ alias targets). This second lookup is small in
+    // practice (only anonymous events add new ids) and cache-friendly.
+    const aliasTargetIds = uniq(Array.from(aliasMap.values()));
+    const missingAliasTargets = aliasTargetIds.filter(
+      (id) => !identifiedProfiles.some((p) => p.id === id),
+    );
+    const extraProfiles: IServiceProfile[] =
+      missingAliasTargets.length > 0
+        ? await getProfilesCached(missingAliasTargets, projectId)
+        : [];
 
-    const map = new Map<string, IServiceProfile>();
-    for (const profile of profiles) {
-      map.set(profile.id, profile);
-    }
+    const profileMap = new Map<string, IServiceProfile>();
+    for (const p of identifiedProfiles) profileMap.set(p.id, p);
+    for (const p of extraProfiles) profileMap.set(p.id, p);
 
     for (const event of events) {
       const resolvedId = aliasMap.get(event.profile_id) ?? event.profile_id;
-      event.profile = map.get(resolvedId) ?? {
+      event.profile = profileMap.get(resolvedId) ?? {
         id: event.profile_id,
         email: '',
         avatar: '',
@@ -363,16 +405,16 @@ export async function getEvents(
     }
   }
 
-  if (options.meta && projectId) {
-    const metas = await getEventMetasCached(projectId);
-    const map = new Map<string, EventMeta>();
+  if (wantMetas) {
+    const metaMap = new Map<string, EventMeta>();
     for (const meta of metas) {
-      map.set(meta.name, meta);
+      metaMap.set(meta.name, meta);
     }
     for (const event of events) {
-      event.meta = map.get(event.name);
+      event.meta = metaMap.get(event.name);
     }
   }
+
   return events.map(transformEvent);
 }
 
