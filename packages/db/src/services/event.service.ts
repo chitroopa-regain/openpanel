@@ -538,16 +538,26 @@ export async function getEventList(options: GetEventListOptions) {
     dateIntervalInDays,
     MAX_DATE_INTERVAL_IN_DAYS
   );
+  // CH doesn't support fractional `INTERVAL X DAY` (silently truncates X→0,
+  // so `INTERVAL 0.5 DAY` returned 0 rows on every first call, forcing the
+  // auto-retry below to double to `INTERVAL 1 DAY` — wasting one full CH
+  // round-trip per request). Emit HOURs instead; `Math.ceil` preserves the
+  // original semantics (0.5d = 12h, 1d = 24h) while ensuring the value is
+  // a positive integer CH accepts.
+  const safeIntervalHours = Math.max(
+    1,
+    Math.ceil(safeDateIntervalInDays * 24),
+  );
 
   if (typeof cursor === 'number') {
     sb.offset = Math.max(0, (cursor ?? 0) * take);
   } else if (cursor instanceof Date) {
-    sb.where.cursorWindow = `created_at >= toDateTime64(${sqlstring.escape(formatClickhouseDate(cursor))}, 3) - INTERVAL ${safeDateIntervalInDays} DAY`;
+    sb.where.cursorWindow = `created_at >= toDateTime64(${sqlstring.escape(formatClickhouseDate(cursor))}, 3) - INTERVAL ${safeIntervalHours} HOUR`;
     sb.where.cursor = `created_at < ${sqlstring.escape(formatClickhouseDate(cursor))}`;
   }
 
   if (!cursor && !(startDate && endDate)) {
-    sb.where.cursorWindow = `created_at >= toDateTime64(${sqlstring.escape(formatClickhouseDate(new Date()))}, 3) - INTERVAL ${safeDateIntervalInDays} DAY`;
+    sb.where.cursorWindow = `created_at >= toDateTime64(${sqlstring.escape(formatClickhouseDate(new Date()))}, 3) - INTERVAL ${safeIntervalHours} HOUR`;
   }
 
   sb.limit = take;
