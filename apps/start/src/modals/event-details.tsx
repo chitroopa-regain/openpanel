@@ -5,6 +5,7 @@ import { omit } from 'ramda';
 import { useState } from 'react';
 import { popModal } from '.';
 import { ModalContent } from './Modal/Container';
+import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { ProjectLink } from '@/components/links';
 import {
   WidgetButtons,
@@ -114,6 +115,39 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
   const eventQuery = useQuery(
     trpc.event.byId.queryOptions({ id, projectId, createdAt })
   );
+  // Use initialEvent immediately, upgrade to full event when query returns.
+  const event = eventQuery.data ?? (initialEvent as IServiceEvent | undefined);
+  const screenshotContext = event
+    ? {
+        eventName: event.name,
+        filters: Object.entries(event.properties ?? {}).flatMap(
+          ([name, value]) =>
+            value === null ||
+            typeof value === 'string' ||
+            typeof value === 'number' ||
+            typeof value === 'boolean'
+              ? [
+                  {
+                    property: `properties.${name}`,
+                    scope: 'event' as const,
+                    values: [value],
+                  },
+                ]
+              : []
+        ),
+        startDateMs: event.createdAt.getTime() - 5 * 60 * 1000,
+        endDateMs: event.createdAt.getTime() + 5 * 60 * 1000,
+      }
+    : undefined;
+  const eventNamesQuery = useQuery(
+    trpc.chart.events.queryOptions(
+      {
+        projectId,
+        screenshotContexts: screenshotContext ? [screenshotContext] : [],
+      },
+      { enabled: !!event }
+    )
+  );
 
   // Slow: get session details separately (uses bloom filter but FINAL is slow)
   const sessionId = eventQuery.data?.sessionId ?? initialEvent?.sessionId;
@@ -124,9 +158,10 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
     )
   );
 
-  // Use initialEvent immediately, upgrade to full event when query returns
-  const event = eventQuery.data ?? (initialEvent as IServiceEvent | undefined);
   const session = sessionQuery.data;
+  const screenshots = eventNamesQuery.data?.find(
+    (item) => item.name === event?.name
+  )?.screenshots;
 
   if (!event) {
     return <EventDetailsSkeleton />;
@@ -274,6 +309,15 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
         </WidgetButtons>
       </WidgetHead>
       <WidgetBody className="col gap-4 bg-def-100">
+        {!!screenshots?.length && (
+          <section>
+            <div className="mb-2 font-medium">Event screenshots</div>
+            <EventScreenshotPreview
+              eventName={event.name}
+              screenshots={screenshots}
+            />
+          </section>
+        )}
         {profile && (
           <ProjectLink
             className="card col gap-2 p-4 py-2 hover:bg-def-100"

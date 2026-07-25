@@ -43,13 +43,14 @@ import {
 import { PropertiesCombobox } from './PropertiesCombobox';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
-import { buildChangedReportEvent } from './report-series-events';
 import {
   ReportSeriesItem,
   type ReportSeriesItemProps,
 } from './ReportSeriesItem';
+import { buildChangedReportEvent } from './report-series-events';
 import { ColorSquare } from '@/components/color-square';
 import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
+import { buildScreenshotContexts } from '@/components/events/event-screenshot-context';
 import { Button } from '@/components/ui/button';
 import { ComboboxEvents } from '@/components/ui/combobox-events';
 import { InputEnter } from '@/components/ui/input-enter';
@@ -188,11 +189,17 @@ function AddFilterAction({
 export function ReportSeries() {
   const selectedSeries = useSelector((state) => state.report.series);
   const chartType = useSelector((state) => state.report.chartType);
+  const { startDate, endDate } = useSelector((state) => state.report);
   const dispatch = useDispatch();
   const { projectId } = useAppParams();
   const trpc = useTRPC();
   const eventNames = useEventNames({
     projectId,
+    screenshotContexts: buildScreenshotContexts({
+      series: selectedSeries,
+      startDate,
+      endDate,
+    }),
   });
   const customEvents = (useQuery(
     trpc.customEvent.list.queryOptions({ projectId })

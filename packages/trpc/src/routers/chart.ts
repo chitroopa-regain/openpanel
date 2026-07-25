@@ -72,6 +72,11 @@ import {
   getRetentionTimeUnitConfig,
   isRetentionPropertyMeasure,
 } from './chart-retention.utils';
+import {
+  fetchEventScreenshots,
+  screenshotMatchContextSchema,
+} from './chart-events.utils';
+import type { EventScreenshot } from './chart-events.utils';
 
 function utc(date: string | Date) {
   if (typeof date === 'string') {
@@ -272,16 +277,24 @@ export const chartRouter = createTRPCRouter({
       };
     }),
 
-  events: protectedProcedure
+  events: chartProcedure
     .use(cacheMiddleware(60 * 5))
     .input(
       z.object({
         projectId: z.string(),
         includeDropped: z.boolean().default(false),
+        screenshotContexts: z
+          .array(screenshotMatchContextSchema)
+          .max(50)
+          .default([]),
       })
     )
-    .query(async ({ input: { projectId, includeDropped } }) => {
-      const PROTECTED_EVENTS = ['session_start', 'session_end', 'screen_view'];
+    .query(async ({ input: { projectId, includeDropped, screenshotContexts } }) => {
+      const PROTECTED_EVENTS = [
+        'session_start',
+        'session_end',
+        'screen_view',
+      ];
 
       const [events, meta, customEvents] = await Promise.all([
         chQuery<{ name: string; count: number }>(
@@ -296,6 +309,13 @@ export const chartRouter = createTRPCRouter({
           return [];
         }),
       ]);
+      const screenshots =
+        process.env.EVENT_SCREENSHOT_PROJECT_ID === projectId
+          ? await fetchEventScreenshots(
+              events.map((event) => event.name),
+              screenshotContexts
+            )
+          : new Map<string, EventScreenshot[]>();
 
       // Build ClickHouse-present events with metadata
       const activeEvents = events.map((event) => {
@@ -309,6 +329,10 @@ export const chartRouter = createTRPCRouter({
           isProtected: PROTECTED_EVENTS.includes(event.name),
           droppedAt: eventMeta?.droppedAt ?? null,
           clearedAt: eventMeta?.clearedAt ?? null,
+          screenshots: screenshots.get(event.name),
+          screenshotContextRequested: screenshotContexts.some(
+            (context) => context.eventName === event.name
+          ),
         };
       });
 
@@ -325,6 +349,7 @@ export const chartRouter = createTRPCRouter({
             isProtected: false,
             droppedAt: null as Date | null,
             clearedAt: null as Date | null,
+            screenshots: undefined,
           },
           ...customEvents.map((ce) => ({
             name: ce.name,
@@ -340,6 +365,7 @@ export const chartRouter = createTRPCRouter({
             isProtected: false,
             droppedAt: null as Date | null,
             clearedAt: null as Date | null,
+            screenshots: screenshots.get(ce.name),
           })),
           ...activeOnly,
         ];
@@ -358,6 +384,7 @@ export const chartRouter = createTRPCRouter({
           isProtected: PROTECTED_EVENTS.includes(m.name),
           droppedAt: m.droppedAt,
           clearedAt: m.clearedAt,
+          screenshots: screenshots.get(m.name),
         }));
 
       const notDropped = activeEvents.filter((e) => !e.droppedAt);
@@ -375,6 +402,7 @@ export const chartRouter = createTRPCRouter({
           isProtected: false,
           droppedAt: null as Date | null,
           clearedAt: null as Date | null,
+          screenshots: undefined,
         },
         ...customEvents.map((ce) => ({
           name: ce.name,
@@ -390,6 +418,7 @@ export const chartRouter = createTRPCRouter({
           isProtected: false,
           droppedAt: null as Date | null,
           clearedAt: null as Date | null,
+          screenshots: screenshots.get(ce.name),
         })),
         ...notDropped,
         ...dropped,

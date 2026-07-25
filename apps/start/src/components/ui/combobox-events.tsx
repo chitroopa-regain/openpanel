@@ -1,3 +1,15 @@
+import { PopoverPortal } from '@radix-ui/react-popover';
+import {
+  CheckIcon,
+  ChevronsUpDown,
+  GanttChartIcon,
+  LayersIcon,
+} from 'lucide-react';
+import VirtualList from 'rc-virtual-list';
+import * as React from 'react';
+import { EventIcon } from '../events/event-icon';
+import { EventScreenshotPreview } from '../events/event-screenshot-preview';
+import { filterEventSearchItems } from './combobox-events-search';
 import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
 import type { ButtonProps } from '@/components/ui/button';
 import { Button } from '@/components/ui/button';
@@ -15,17 +27,6 @@ import {
 import { useNumber } from '@/hooks/use-numer-formatter';
 import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
-import { PopoverPortal } from '@radix-ui/react-popover';
-import {
-  CheckIcon,
-  ChevronsUpDown,
-  GanttChartIcon,
-  LayersIcon,
-} from 'lucide-react';
-import VirtualList from 'rc-virtual-list';
-import * as React from 'react';
-import { filterEventSearchItems } from './combobox-events-search';
-import { EventIcon } from '../events/event-icon';
 
 /**
  * Type-safe ComboboxEvents component that supports both single and multiple selection.
@@ -153,39 +154,49 @@ export function ComboboxEvents<
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          disabled={disabled}
-          size={size}
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className={cn(
-            'justify-between',
-            !!error && 'border-destructive',
-            className
-          )}
-        >
-          <div className="flex min-w-0 flex-1 items-center">
-            {'isCustomEvent' in (current ?? {}) && current?.isCustomEvent ? (
-              <LayersIcon className="mr-2 h-4 w-4 shrink-0 text-violet-500" />
-            ) : current?.meta ? (
-              <EventIcon
-                name={current.name}
-                meta={current.meta as any}
-                size="xs"
-                className="mr-2 shrink-0"
-              />
-            ) : (
-              <GanttChartIcon size={16} className="mr-2 shrink-0" />
+      <div className={cn('relative', className)}>
+        <PopoverTrigger asChild>
+          <Button
+            disabled={disabled}
+            size={size}
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className={cn(
+              'w-full justify-between',
+              !!current?.screenshots?.length && 'pr-16',
+              !!error && 'border-destructive'
             )}
-            <span className="overflow-hidden text-ellipsis whitespace-nowrap">
-              {renderTriggerContent()}
-            </span>
-          </div>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
+          >
+            <div className="flex min-w-0 flex-1 items-center">
+              {'isCustomEvent' in (current ?? {}) && current?.isCustomEvent ? (
+                <LayersIcon className="mr-2 h-4 w-4 shrink-0 text-violet-500" />
+              ) : current?.meta ? (
+                <EventIcon
+                  name={current.name}
+                  meta={current.meta as any}
+                  size="xs"
+                  className="mr-2 shrink-0"
+                />
+              ) : (
+                <GanttChartIcon size={16} className="mr-2 shrink-0" />
+              )}
+              <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                {renderTriggerContent()}
+              </span>
+            </div>
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        {!!current?.screenshots?.length && (
+          <EventScreenshotPreview
+            className="absolute top-1/2 right-8 -translate-y-1/2"
+            compact
+            eventName={current.name}
+            screenshots={current.screenshots}
+          />
+        )}
+      </div>
       <PopoverPortal>
         <PopoverContent
           className="z-[60] w-full max-w-[33em] max-sm:max-w-[100vw] p-0"
@@ -241,6 +252,19 @@ export function ComboboxEvents<
                     <span className="font-medium flex-1 truncate">
                       {item.name === '*' ? 'Any events' : item.name}
                     </span>
+                    {(!!item.screenshots?.length ||
+                      ('screenshotContextRequested' in item &&
+                        item.screenshotContextRequested)) && (
+                      <EventScreenshotPreview
+                        compact
+                        eventName={item.name}
+                        screenshots={item.screenshots}
+                        showNoMatch={
+                          'screenshotContextRequested' in item &&
+                          item.screenshotContextRequested === true
+                        }
+                      />
+                    )}
                     {'isCustomEvent' in item && item.isCustomEvent && (
                       <span className="text-xs text-violet-500 font-medium">
                         Custom
