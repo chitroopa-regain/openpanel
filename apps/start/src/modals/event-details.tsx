@@ -1,10 +1,16 @@
 import type { IClickhouseEvent, IServiceEvent } from '@openpanel/db';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDownIcon, ChevronUpIcon, FilterIcon, XIcon } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  FilterIcon,
+  XIcon,
+} from 'lucide-react';
 import { omit } from 'ramda';
 import { useState } from 'react';
 import { popModal } from '.';
 import { ModalContent } from './Modal/Container';
+import { utcDayScreenshotRange } from '@/components/events/event-screenshot-context';
 import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { ProjectLink } from '@/components/links';
 import {
@@ -60,7 +66,10 @@ function PropertyValue({ value }: { value: string }) {
   return (
     <div className="flex items-center gap-2 min-w-0">
       <span
-        className={cn('font-mono', expanded ? 'whitespace-pre-wrap break-all' : 'truncate')}
+        className={cn(
+          'font-mono',
+          expanded ? 'whitespace-pre-wrap break-all' : 'truncate'
+        )}
       >
         {value}
       </span>
@@ -95,7 +104,12 @@ export default function EventDetails(props: Props) {
   );
 }
 
-function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) {
+function EventDetailsContent({
+  id,
+  createdAt,
+  projectId,
+  initialEvent,
+}: Props) {
   const [, setEvents] = useEventQueryNamesFilter();
   const [, setFilter] = useEventQueryFilters();
   const TABS = {
@@ -135,8 +149,9 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
                 ]
               : []
         ),
-        startDateMs: event.createdAt.getTime() - 5 * 60 * 1000,
-        endDateMs: event.createdAt.getTime() + 5 * 60 * 1000,
+        // OpenPanel's createdAt can reflect delayed ingestion. Exact scalar
+        // properties keep the match safe while the full UTC day tolerates lag.
+        ...utcDayScreenshotRange(event.createdAt.getTime()),
       }
     : undefined;
   const eventNamesQuery = useQuery(
@@ -154,7 +169,7 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
   const sessionQuery = useQuery(
     trpc.session.byId.queryOptions(
       { sessionId: sessionId!, projectId },
-      { enabled: !!sessionId },
+      { enabled: !!sessionId }
     )
   );
 
@@ -349,12 +364,14 @@ function EventDetailsContent({ id, createdAt, projectId, initialEvent }: Props) 
             </div>
             {sessionQuery.isLoading ? (
               <div className="h-4 w-64 animate-pulse rounded bg-muted" />
-            ) : !!session && (
-              <div className="text-sm">
-                This session has {session.screenViewCount} screen views and{' '}
-                {session.eventCount} events. Visit duration is{' '}
-                {fancyMinutes(session.duration / 1000)}.
-              </div>
+            ) : (
+              !!session && (
+                <div className="text-sm">
+                  This session has {session.screenViewCount} screen views and{' '}
+                  {session.eventCount} events. Visit duration is{' '}
+                  {fancyMinutes(session.duration / 1000)}.
+                </div>
+              )
             )}
           </ProjectLink>
         )}

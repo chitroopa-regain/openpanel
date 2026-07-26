@@ -37,6 +37,19 @@ function inclusiveEndTimestamp(value: string | null | undefined) {
   return date.getTime();
 }
 
+export function utcDayScreenshotRange(milliseconds: number) {
+  const date = new Date(milliseconds);
+  const startDateMs = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate()
+  );
+  return {
+    startDateMs,
+    endDateMs: startDateMs + 24 * 60 * 60 * 1000 - 1,
+  };
+}
+
 export function buildScreenshotContexts({
   series,
   startDate,

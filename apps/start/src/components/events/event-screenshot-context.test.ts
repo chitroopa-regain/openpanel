@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildScreenshotContexts } from './event-screenshot-context';
+import {
+  buildScreenshotContexts,
+  utcDayScreenshotRange,
+} from './event-screenshot-context';
 
 const eventSeries = (filters: unknown[]) =>
   [
@@ -11,6 +14,13 @@ const eventSeries = (filters: unknown[]) =>
   ] as never;
 
 describe('buildScreenshotContexts', () => {
+  it('matches the full UTC event day when ingestion is delayed', () => {
+    expect(utcDayScreenshotRange(Date.UTC(2026, 6, 26, 23, 58))).toEqual({
+      startDateMs: Date.UTC(2026, 6, 26),
+      endDateMs: Date.UTC(2026, 6, 26, 23, 59, 59, 999),
+    });
+  });
+
   it('includes the complete final report day', () => {
     const [context] = buildScreenshotContexts({
       series: eventSeries([]),
