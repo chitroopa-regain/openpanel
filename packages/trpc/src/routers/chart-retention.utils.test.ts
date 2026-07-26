@@ -47,6 +47,31 @@ describe('chart retention utils', () => {
     expect(result[0]?.percentages).toEqual([0.25]);
   });
 
+  it('preserves two-decimal weighted averages for retention property metrics', () => {
+    const result = processCohortData(
+      [
+        {
+          cohort_interval: '2026-07-21',
+          total_first_event_count: 10,
+          interval_0_user_count: 5.54,
+        },
+        {
+          cohort_interval: '2026-07-22',
+          total_first_event_count: 10,
+          interval_0_user_count: 7.04,
+        },
+      ],
+      0,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'property_sum'
+    );
+
+    expect(result[0]?.values).toEqual([6.29]);
+  });
+
   it('keeps retention cohorts separated by ordered breakdown values', () => {
     const result = groupRetentionRowsByBreakdowns([
       {

@@ -2071,6 +2071,10 @@ function processCohortGroupData(
 
   // Calculate weighted averages across every real cohort. Zero-retention cohorts
   // remain in the denominator; only synthetic gap-fill rows are excluded above.
+  const valuePrecision =
+    retentionMetric === 'property_sum' || retentionMetric === 'property_average'
+      ? 2
+      : 0;
   const averageRow = {
     cohort_interval: 'Weighted Average',
     sum:
@@ -2081,7 +2085,7 @@ function processCohortGroupData(
       sum > 0 ? round(weightedSum / sum, 4) : 0
     ),
     values: averageData.values.map(({ sum, weightedSum }) =>
-      sum > 0 ? round(weightedSum / sum, 0) : 0
+      sum > 0 ? round(weightedSum / sum, valuePrecision) : 0
     ),
   };
 
