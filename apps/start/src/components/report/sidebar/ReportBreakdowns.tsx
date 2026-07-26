@@ -10,6 +10,7 @@ import type {
 } from '@openpanel/validation';
 
 import { Button } from '@/components/ui/button';
+import { Tooltiper } from '@/components/ui/tooltip';
 import { addBreakdown, changeBreakdown, removeBreakdown } from '../reportSlice';
 import { PropertiesCombobox } from './PropertiesCombobox';
 import { ReportBreakdownMore } from './ReportBreakdownMore';
@@ -71,6 +72,7 @@ export function ReportBreakdowns() {
                 >
                   {(setOpen) => (
                     <Button
+                      aria-label={item.name}
                       variant={'outline'}
                       onClick={() => setOpen((prev) => !prev)}
                       size={'sm'}
@@ -79,7 +81,15 @@ export function ReportBreakdowns() {
                     >
                       <div className="row min-w-0 flex-1 gap-2 items-center">
                         <SplitIcon className="size-4 shrink-0" />
-                        <span className="min-w-0 truncate">{item.name}</span>
+                        <Tooltiper
+                          asChild
+                          content={item.name}
+                          side="top"
+                          sideOffset={6}
+                          tooltipClassName="max-w-sm break-all"
+                        >
+                          <span className="min-w-0 truncate">{item.name}</span>
+                        </Tooltiper>
                       </div>
                       <ChevronsUpDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>

@@ -24,6 +24,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Tooltiper } from '@/components/ui/tooltip';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
@@ -157,6 +158,7 @@ export function ComboboxEvents<
       <div className={cn('relative', className)}>
         <PopoverTrigger asChild>
           <Button
+            aria-label={renderTriggerContent()}
             disabled={disabled}
             size={size}
             variant="outline"
@@ -181,9 +183,18 @@ export function ComboboxEvents<
               ) : (
                 <GanttChartIcon size={16} className="mr-2 shrink-0" />
               )}
-              <span className="overflow-hidden text-ellipsis whitespace-nowrap">
-                {renderTriggerContent()}
-              </span>
+              <Tooltiper
+                asChild
+                content={renderTriggerContent()}
+                disabled={selectedValues.length === 0}
+                side="top"
+                sideOffset={6}
+                tooltipClassName="max-w-sm break-all"
+              >
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                  {renderTriggerContent()}
+                </span>
+              </Tooltiper>
             </div>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
