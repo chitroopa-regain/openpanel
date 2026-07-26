@@ -32,8 +32,10 @@ import {
   validateShareAccess,
 } from '@openpanel/db';
 import {
+  type IChartBreakdown,
   type IChartEventFilter,
   type ICustomEventComponent,
+  zChartBreakdowns,
   zChartEventFilter,
   zChartSeries,
   zCriteria,
@@ -64,13 +66,16 @@ import {
 } from '../trpc';
 import {
   aggregateRetentionRowsByDisplayInterval,
+  buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
   getRetentionTimeUnitConfig,
+  groupRetentionRowsByBreakdowns,
   isRetentionPropertyMeasure,
+  type RawRetentionCohortRow,
 } from './chart-retention.utils';
 import {
   fetchEventScreenshots,
@@ -280,7 +285,8 @@ export const chartRouter = createTRPCRouter({
   // Screenshot URLs are short-lived capabilities. Do not put this array in the
   // server SWR cache: top-level arrays cannot carry cache-staleness metadata and
   // would continue returning expired image URLs from the hard cache.
-  events: chartProcedure.input(
+  events: chartProcedure
+    .input(
       z.object({
         projectId: z.string(),
         includeDropped: z.boolean().default(false),
@@ -290,56 +296,110 @@ export const chartRouter = createTRPCRouter({
           .default([]),
       })
     )
-    .query(async ({ input: { projectId, includeDropped, screenshotContexts } }) => {
-      const PROTECTED_EVENTS = [
-        'session_start',
-        'session_end',
-        'screen_view',
-      ];
+    .query(
+      async ({ input: { projectId, includeDropped, screenshotContexts } }) => {
+        const PROTECTED_EVENTS = [
+          'session_start',
+          'session_end',
+          'screen_view',
+        ];
 
-      const [events, meta, customEvents] = await Promise.all([
-        chQuery<{ name: string; count: number }>(
-          `SELECT name, count(name) as count FROM ${TABLE_NAMES.event_names_mv} WHERE project_id = ${sqlstring.escape(projectId)} GROUP BY name ORDER BY count DESC, name ASC`
-        ),
-        getEventMetasCached(projectId),
-        db.customEvent.findMany({ where: { projectId } }).catch((error) => {
-          console.warn(
-            'chart.events: failed to load custom events, falling back to event_names_mv only',
-            error
-          );
-          return [];
-        }),
-      ]);
-      const screenshots =
-        process.env.EVENT_SCREENSHOT_PROJECT_ID === projectId
-          ? await fetchEventScreenshots(
-              events.map((event) => event.name),
-              screenshotContexts
-            )
-          : new Map<string, EventScreenshot[]>();
-
-      // Build ClickHouse-present events with metadata
-      const activeEvents = events.map((event) => {
-        const eventMeta = meta.find((m) => m.name === event.name);
-        return {
-          name: event.name,
-          count: event.count,
-          meta: eventMeta,
-          isCustomEvent: false as const,
-          customEventId: undefined as string | undefined,
-          isProtected: PROTECTED_EVENTS.includes(event.name),
-          droppedAt: eventMeta?.droppedAt ?? null,
-          clearedAt: eventMeta?.clearedAt ?? null,
-          screenshots: screenshots.get(event.name),
-          screenshotContextRequested: screenshotContexts.some(
-            (context) => context.eventName === event.name
+        const [events, meta, customEvents] = await Promise.all([
+          chQuery<{ name: string; count: number }>(
+            `SELECT name, count(name) as count FROM ${TABLE_NAMES.event_names_mv} WHERE project_id = ${sqlstring.escape(projectId)} GROUP BY name ORDER BY count DESC, name ASC`
           ),
-        };
-      });
+          getEventMetasCached(projectId),
+          db.customEvent.findMany({ where: { projectId } }).catch((error) => {
+            console.warn(
+              'chart.events: failed to load custom events, falling back to event_names_mv only',
+              error
+            );
+            return [];
+          }),
+        ]);
+        const screenshots =
+          process.env.EVENT_SCREENSHOT_PROJECT_ID === projectId
+            ? await fetchEventScreenshots(
+                events.map((event) => event.name),
+                screenshotContexts
+              )
+            : new Map<string, EventScreenshot[]>();
 
-      if (!includeDropped) {
-        // Default: return only active (non-dropped) events for normal consumers
-        const activeOnly = activeEvents.filter((e) => !e.droppedAt);
+        // Build ClickHouse-present events with metadata
+        const activeEvents = events.map((event) => {
+          const eventMeta = meta.find((m) => m.name === event.name);
+          return {
+            name: event.name,
+            count: event.count,
+            meta: eventMeta,
+            isCustomEvent: false as const,
+            customEventId: undefined as string | undefined,
+            isProtected: PROTECTED_EVENTS.includes(event.name),
+            droppedAt: eventMeta?.droppedAt ?? null,
+            clearedAt: eventMeta?.clearedAt ?? null,
+            screenshots: screenshots.get(event.name),
+            screenshotContextRequested: screenshotContexts.some(
+              (context) => context.eventName === event.name
+            ),
+          };
+        });
+
+        if (!includeDropped) {
+          // Default: return only active (non-dropped) events for normal consumers
+          const activeOnly = activeEvents.filter((e) => !e.droppedAt);
+          return [
+            {
+              name: '*',
+              count: events.reduce((acc, event) => acc + event.count, 0),
+              meta: undefined,
+              isCustomEvent: false as const,
+              customEventId: undefined as string | undefined,
+              isProtected: false,
+              droppedAt: null as Date | null,
+              clearedAt: null as Date | null,
+              screenshots: undefined,
+            },
+            ...customEvents.map((ce) => ({
+              name: ce.name,
+              count: 0,
+              meta: {
+                name: ce.name,
+                color: ce.color,
+                icon: ce.icon,
+                conversion: false,
+              },
+              isCustomEvent: true as const,
+              customEventId: ce.id,
+              isProtected: false,
+              droppedAt: null as Date | null,
+              clearedAt: null as Date | null,
+              screenshots: screenshots.get(ce.name),
+            })),
+            ...activeOnly,
+          ];
+        }
+
+        // includeDropped=true: for EventDropManager settings UI
+        const chEventNames = new Set(events.map((e) => e.name));
+        const droppedNotInCh = meta
+          .filter((m) => m.droppedAt && !chEventNames.has(m.name))
+          .map((m) => ({
+            name: m.name,
+            count: 0,
+            meta: m,
+            isCustomEvent: false as const,
+            customEventId: undefined as string | undefined,
+            isProtected: PROTECTED_EVENTS.includes(m.name),
+            droppedAt: m.droppedAt,
+            clearedAt: m.clearedAt,
+            screenshots: screenshots.get(m.name),
+          }));
+
+        const notDropped = activeEvents.filter((e) => !e.droppedAt);
+        const dropped = activeEvents.filter((e) => e.droppedAt);
+        notDropped.sort((a, b) => b.count - a.count);
+        dropped.sort((a, b) => b.count - a.count);
+
         return [
           {
             name: '*',
@@ -368,64 +428,12 @@ export const chartRouter = createTRPCRouter({
             clearedAt: null as Date | null,
             screenshots: screenshots.get(ce.name),
           })),
-          ...activeOnly,
+          ...notDropped,
+          ...dropped,
+          ...droppedNotInCh,
         ];
       }
-
-      // includeDropped=true: for EventDropManager settings UI
-      const chEventNames = new Set(events.map((e) => e.name));
-      const droppedNotInCh = meta
-        .filter((m) => m.droppedAt && !chEventNames.has(m.name))
-        .map((m) => ({
-          name: m.name,
-          count: 0,
-          meta: m,
-          isCustomEvent: false as const,
-          customEventId: undefined as string | undefined,
-          isProtected: PROTECTED_EVENTS.includes(m.name),
-          droppedAt: m.droppedAt,
-          clearedAt: m.clearedAt,
-          screenshots: screenshots.get(m.name),
-        }));
-
-      const notDropped = activeEvents.filter((e) => !e.droppedAt);
-      const dropped = activeEvents.filter((e) => e.droppedAt);
-      notDropped.sort((a, b) => b.count - a.count);
-      dropped.sort((a, b) => b.count - a.count);
-
-      return [
-        {
-          name: '*',
-          count: events.reduce((acc, event) => acc + event.count, 0),
-          meta: undefined,
-          isCustomEvent: false as const,
-          customEventId: undefined as string | undefined,
-          isProtected: false,
-          droppedAt: null as Date | null,
-          clearedAt: null as Date | null,
-          screenshots: undefined,
-        },
-        ...customEvents.map((ce) => ({
-          name: ce.name,
-          count: 0,
-          meta: {
-            name: ce.name,
-            color: ce.color,
-            icon: ce.icon,
-            conversion: false,
-          },
-          isCustomEvent: true as const,
-          customEventId: ce.id,
-          isProtected: false,
-          droppedAt: null as Date | null,
-          clearedAt: null as Date | null,
-          screenshots: screenshots.get(ce.name),
-        })),
-        ...notDropped,
-        ...dropped,
-        ...droppedNotInCh,
-      ];
-    }),
+    ),
 
   properties: protectedProcedure
     .use(cacheMiddleware(60 * 5))
@@ -976,8 +984,13 @@ export const chartRouter = createTRPCRouter({
         criteria: zCriteria.default('on_or_after'),
         metric: zRetentionMeasure.optional(),
         property: z.string().optional(),
-        propertyAverageDenominatorStep: z.number().int().nonnegative().optional(),
+        propertyAverageDenominatorStep: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional(),
         retentionUnit: zRetentionTimeUnit.default('day'),
+        breakdowns: zChartBreakdowns.default([]),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         interval: zTimeInterval.default('day'),
@@ -1002,6 +1015,7 @@ export const chartRouter = createTRPCRouter({
       let propertyAverageDenominatorStep =
         input.propertyAverageDenominatorStep ?? 0;
       let retentionUnit = input.retentionUnit;
+      let breakdowns: IChartBreakdown[] = input.breakdowns;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
         : input.range;
@@ -1039,6 +1053,7 @@ export const chartRouter = createTRPCRouter({
           retentionOptions?.propertyAverageDenominatorStep ??
           propertyAverageDenominatorStep;
         retentionUnit = retentionOptions?.retentionUnit ?? retentionUnit;
+        breakdowns = ctx.report.breakdowns;
 
         const firstItem = ctx.report.series[0];
         const secondItem = ctx.report.series[1];
@@ -1226,7 +1241,11 @@ export const chartRouter = createTRPCRouter({
             f.name !== 'name'
         );
 
+      const hasEventBreakdown = breakdowns.some(
+        (breakdown) => !breakdown.name.startsWith('profile.')
+      );
       const useEventsFirst =
+        hasEventBreakdown ||
         firstEventFirstTimeFilter ||
         needsEventsTable(firstEventFilters) ||
         needsEventsTable(firstComponentFilters);
@@ -1243,17 +1262,27 @@ export const chartRouter = createTRPCRouter({
         : TABLE_NAMES.cohort_events_mv;
 
       // Build profile JOIN clause (only needed for profile.* filters)
-      const buildProfileJoin = (filters: IChartEventFilter[]) => {
-        const profileFilters = filters
-          .filter((f) => f.name.startsWith('profile.'))
-          .map((f) => f.name.replace('profile.', ''));
+      const buildProfileJoin = (
+        filters: IChartEventFilter[],
+        extraProfileFields: string[] = [],
+        eventAlias?: string
+      ) => {
+        const profileFilters = [
+          ...filters
+            .filter((f) => f.name.startsWith('profile.'))
+            .map((f) => f.name.replace('profile.', '')),
+          ...extraProfileFields,
+        ];
         if (profileFilters.length === 0) {
           return '';
         }
         const columns = uniq(profileFilters.map((f) => f.split('.')[0])).join(
           ', '
         );
-        return `LEFT ANY JOIN (SELECT id, ${columns} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) AS profile ON profile.id = profile_id`;
+        const profileId = eventAlias
+          ? `${eventAlias}.profile_id`
+          : 'profile_id';
+        return `LEFT ANY JOIN (SELECT id, ${columns} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) AS profile ON profile.id = ${profileId}`;
       };
 
       const buildFilterWhere = (filters: IChartEventFilter[]) => {
@@ -1269,10 +1298,56 @@ export const chartRouter = createTRPCRouter({
       };
 
       // Include both outer series filters AND component-level filters for profile JOINs
-      const firstEventJoin = buildProfileJoin([
-        ...firstEventFilters,
-        ...firstComponentFilters,
-      ]);
+      const traitBreakdownDescriptors = Array.from(
+        new Map(
+          breakdowns
+            .map((breakdown) => getTraitBreakdownDescriptor(breakdown.name))
+            .filter(Boolean)
+            .map((descriptor) => [descriptor!.key, descriptor!])
+        ).values()
+      );
+      const scalarProfileBreakdownFields = breakdowns
+        .filter(
+          (breakdown) =>
+            breakdown.name.startsWith('profile.') &&
+            getTraitBreakdownDescriptor(breakdown.name) === null
+        )
+        .map((breakdown) => breakdown.name.replace('profile.', ''));
+      const traitBreakdownCtes = traitBreakdownDescriptors
+        .map(
+          (descriptor) =>
+            `${descriptor.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(descriptor.key)} GROUP BY profile_id),`
+        )
+        .join('\n');
+      const traitBreakdownJoins = traitBreakdownDescriptors
+        .map(
+          (descriptor) =>
+            `LEFT ANY JOIN ${descriptor.cteName} ON ${descriptor.cteName}.profile_id = e.profile_id`
+        )
+        .join('\n');
+      const getRetentionBreakdownExpression = (name: string) => {
+        const descriptor = getTraitBreakdownDescriptor(name);
+        return descriptor ? descriptor.column : getSelectPropertyKey(name);
+      };
+      const breakdownAliases = breakdowns.map((_, index) => `b_${index}`);
+      const normalizedBreakdownExpressions = breakdowns.map(
+        (breakdown) =>
+          `coalesce(nullIf(toString(${getRetentionBreakdownExpression(breakdown.name)}), ''), '(not set)')`
+      );
+      const breakdownSelects = buildRetentionBreakdownSelects(
+        normalizedBreakdownExpressions
+      );
+
+      const firstEventJoin = [
+        buildProfileJoin(
+          [...firstEventFilters, ...firstComponentFilters],
+          scalarProfileBreakdownFields,
+          'e'
+        ),
+        traitBreakdownJoins,
+      ]
+        .filter(Boolean)
+        .join('\n');
       const firstEventWhere = buildFilterWhere(firstEventFilters);
       const secondEventJoin = buildProfileJoin([
         ...secondEventFilters,
@@ -1283,7 +1358,7 @@ export const chartRouter = createTRPCRouter({
       // cohort_events_mv pre-filters to identified users (profile_id != device_id).
       // When falling back to the raw events table, replicate that condition.
       const firstIdentifiedFilter = useEventsFirst
-        ? 'AND profile_id != device_id'
+        ? 'AND e.profile_id != e.device_id'
         : '';
       const secondIdentifiedFilter = useEventsSecond
         ? 'AND profile_id != device_id'
@@ -1322,31 +1397,82 @@ export const chartRouter = createTRPCRouter({
           })}),`
         : '';
       const firstEventFirstTimeJoin = firstEventFirstTimeFilter
-        ? 'INNER JOIN first_event_first_time AS first_ft ON first_ft.ft_profile_id = profile_id AND first_ft.first_created_at = created_at'
+        ? 'INNER JOIN first_event_first_time AS first_ft ON first_ft.ft_profile_id = e.profile_id AND first_ft.first_created_at = e.created_at'
         : '';
       const secondEventFirstTimeJoin = secondEventFirstTimeFilter
         ? 'INNER JOIN second_event_first_time AS second_ft ON second_ft.ft_profile_id = profile_id AND second_ft.first_created_at = created_at'
         : '';
 
+      const breakdownSelectClause = breakdownSelects.length
+        ? `,\n            ${breakdownSelects.join(',\n            ')}`
+        : '';
+      const cohortUsersGroupBy = breakdownSelects.length
+        ? `GROUP BY userID, project_id, cohort_interval`
+        : '';
+      const cohortIntervalSelect = toStartOfCohortInterval('e.created_at');
+      const displayIntervalSelect = breakdownSelects.length
+        ? `any(${toStartOfInterval(cohortIntervalSelect)})`
+        : toStartOfInterval('e.created_at');
+      const topBreakdownsCtes = breakdownAliases.length
+        ? `top_breakdowns AS (
+          SELECT ${breakdownAliases.join(', ')}, count() AS breakdown_users
+          FROM cohort_users
+          GROUP BY ${breakdownAliases.join(', ')}
+          ORDER BY breakdown_users DESC
+          LIMIT 10
+        ),
+        limited_cohort_users AS (
+          SELECT cu.*
+          FROM cohort_users AS cu
+          INNER JOIN top_breakdowns AS tb ON ${breakdownAliases
+            .map((alias) => `cu.${alias} = tb.${alias}`)
+            .join(' AND ')}
+        ),`
+        : '';
+      const cohortUsersSource = breakdownAliases.length
+        ? 'limited_cohort_users'
+        : 'cohort_users';
+      const breakdownColumns = breakdownAliases.length
+        ? `, ${breakdownAliases.join(', ')}`
+        : '';
+      const breakdownColumnsFromFirst = breakdownAliases.length
+        ? `, ${breakdownAliases.map((alias) => `f.${alias}`).join(', ')}`
+        : '';
+      const breakdownColumnsFromCohortSizes = breakdownAliases.length
+        ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
+        : '';
+      const breakdownJoin = breakdownAliases.length
+        ? ` AND ${breakdownAliases
+            .map((alias) => `cs.${alias} = r.${alias}`)
+            .join(' AND ')}`
+        : '';
+      const breakdownOrder = breakdownAliases.length
+        ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
+        : '';
+
       const cohortQuery = `
         WITH
+        ${traitBreakdownCtes}
         ${firstEventFirstTimeCte}
         ${secondEventFirstTimeCte}
         cohort_users AS (
           SELECT
-            profile_id AS userID,
-            project_id,
-            ${toStartOfInterval('created_at')} AS display_interval,
-            ${toStartOfCohortInterval('created_at')} AS cohort_interval
-          FROM ${firstEventTable}
+            e.profile_id AS userID,
+            e.project_id,
+            ${displayIntervalSelect} AS display_interval,
+            ${cohortIntervalSelect} AS cohort_interval
+            ${breakdownSelectClause}
+          FROM ${firstEventTable} AS e
           ${firstEventJoin}
           ${firstEventFirstTimeJoin}
           WHERE ${firstWhereClause}
-            AND project_id = ${sqlstring.escape(projectId)}
-            AND created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
+            AND e.project_id = ${sqlstring.escape(projectId)}
+            AND e.created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
             ${firstIdentifiedFilter}
             ${firstFilterClause}
+          ${cohortUsersGroupBy}
         ),
+        ${topBreakdownsCtes}
         last_event AS
         (
             SELECT
@@ -1368,9 +1494,10 @@ export const chartRouter = createTRPCRouter({
           SELECT
               f.cohort_interval,
               l.profile_id,
+              ${breakdownColumnsFromFirst.replace(/^, /, '')}${breakdownColumnsFromFirst ? ',' : ''}
               ${retentionPropertyExpr ? 'l.retention_property_value,' : ''}
               dateDiff('${sqlInterval}', f.cohort_interval, ${toStartOfRetentionInterval('l.event_date')}) AS x_after_cohort
-          FROM cohort_users AS f
+          FROM ${cohortUsersSource} AS f
           INNER JOIN last_event AS l ON f.userID = l.profile_id
           WHERE (l.event_date >= f.cohort_interval)
           AND (l.event_date <= (f.cohort_interval + INTERVAL ${diffInterval} ${sqlInterval}))
@@ -1380,19 +1507,21 @@ export const chartRouter = createTRPCRouter({
             cohort_interval,
             any(display_interval) AS display_interval,
             COUNT(DISTINCT userID) AS total_first_event_count
-          FROM cohort_users
-          GROUP BY cohort_interval
+            ${breakdownColumns}
+          FROM ${cohortUsersSource}
+          GROUP BY cohort_interval${breakdownColumns}
         )
         SELECT
           cs.display_interval,
           cs.cohort_interval,
           cs.total_first_event_count,
+          ${breakdownColumnsFromCohortSizes.replace(/^, /, '')}${breakdownColumnsFromCohortSizes ? ',' : ''}
           ${countsSelect}
           ${propertyAverageDenominatorSelect}
         FROM cohort_sizes cs
-        LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval
-        GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count
-        ORDER BY cs.cohort_interval ASC
+        LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval${breakdownJoin}
+        GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count${breakdownColumnsFromCohortSizes}
+        ORDER BY cs.cohort_interval ASC${breakdownOrder}
       `;
 
       const cohortData = await chQuery<{
@@ -1792,13 +1921,30 @@ export const chartRouter = createTRPCRouter({
     }),
 });
 
-function processCohortData(
-  data: Array<{
-    display_interval?: string;
-    cohort_interval: string;
-    total_first_event_count: number;
-    [key: string]: any;
-  }>,
+export function processCohortData(
+  data: RawRetentionCohortRow[],
+  diffInterval: number,
+  startDate?: string,
+  endDate?: string,
+  interval?: string,
+  retentionUnit?: string,
+  retentionMetric?: string
+) {
+  return groupRetentionRowsByBreakdowns(data).flatMap((group) =>
+    processCohortGroupData(
+      group.rows,
+      diffInterval,
+      startDate,
+      endDate,
+      interval,
+      retentionUnit,
+      retentionMetric
+    ).map((row) => ({ ...row, breakdowns: group.breakdowns }))
+  );
+}
+
+function processCohortGroupData(
+  data: RawRetentionCohortRow[],
   diffInterval: number,
   startDate?: string,
   endDate?: string,
@@ -1914,20 +2060,17 @@ function processCohortData(
     averageData.totalSum += row.sum;
     row.values.forEach((value, index) => {
       const weight = row.valueWeights?.[index] ?? row.sum;
-      if (value !== 0) {
-        averageData.values[index]!.sum += weight;
-        averageData.values[index]!.weightedSum += value * weight;
-      }
+      averageData.values[index]!.sum += weight;
+      averageData.values[index]!.weightedSum += value * weight;
     });
     row.percentages.forEach((percentage, index) => {
-      if (percentage !== 0) {
-        averageData.percentages[index]!.sum += row.sum;
-        averageData.percentages[index]!.weightedSum += percentage * row.sum;
-      }
+      averageData.percentages[index]!.sum += row.sum;
+      averageData.percentages[index]!.weightedSum += percentage * row.sum;
     });
   });
 
-  // Calculate weighted average values, excluding zeros
+  // Calculate weighted averages across every real cohort. Zero-retention cohorts
+  // remain in the denominator; only synthetic gap-fill rows are excluded above.
   const averageRow = {
     cohort_interval: 'Weighted Average',
     sum:

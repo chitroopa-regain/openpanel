@@ -84,6 +84,7 @@ export function ReportRetentionChart() {
     property,
     propertyAverageDenominatorStep,
     retentionUnit,
+    breakdowns: report.breakdowns,
     interval: report.interval,
     shareId,
     id: 'id' in report ? report.id : undefined,

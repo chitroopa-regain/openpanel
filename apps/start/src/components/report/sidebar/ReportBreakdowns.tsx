@@ -22,14 +22,18 @@ export function ReportBreakdowns() {
   const series = useSelector((state) => state.report.series);
   const dispatch = useDispatch();
 
-  const scopedBreakdownSource =
+  let scopedBreakdownSource: IChartEventItem | undefined;
+  if (chartType === 'retention') {
+    scopedBreakdownSource = series[0];
+  } else if (
     (chartType === 'funnel' || chartType === 'funnel_metric') &&
     options?.type === 'funnel' &&
     options.breakdownStep !== undefined &&
     options.breakdownStep >= 0 &&
     options.breakdownStep < series.length
-      ? series[options.breakdownStep]
-      : undefined;
+  ) {
+    scopedBreakdownSource = series[options.breakdownStep];
+  }
 
   const scopedBreakdownProps = getScopedBreakdownProps(scopedBreakdownSource);
 
@@ -61,7 +65,7 @@ export function ReportBreakdowns() {
                       changeBreakdown({
                         ...item,
                         name: action.value,
-                      }),
+                      })
                     );
                   }}
                 >
@@ -95,7 +99,7 @@ export function ReportBreakdowns() {
             dispatch(
               addBreakdown({
                 name: action.value,
-              }),
+              })
             );
           }}
         >
@@ -120,9 +124,7 @@ export function ReportBreakdowns() {
   );
 }
 
-function getScopedBreakdownProps(
-  source?: IChartEventItem,
-): {
+function getScopedBreakdownProps(source?: IChartEventItem): {
   event?: IChartEvent;
   customEventId?: string;
 } {

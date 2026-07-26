@@ -93,11 +93,13 @@ function ReportSqlContent({ active }: { active: boolean }) {
         ? (secondSeriesItem.filters ?? [])
         : [];
   const firstRetentionFirstTimeFilter =
-    firstSeriesItem?.type === 'event' || firstSeriesItem?.type === 'custom_event'
+    firstSeriesItem?.type === 'event' ||
+    firstSeriesItem?.type === 'custom_event'
       ? !!firstSeriesItem.firstTimeFilter
       : false;
   const secondRetentionFirstTimeFilter =
-    secondSeriesItem?.type === 'event' || secondSeriesItem?.type === 'custom_event'
+    secondSeriesItem?.type === 'event' ||
+    secondSeriesItem?.type === 'custom_event'
       ? !!secondSeriesItem.firstTimeFilter
       : false;
   const retentionOptions =
@@ -157,6 +159,7 @@ function ReportSqlContent({ active }: { active: boolean }) {
         property: retentionOptions?.property,
         propertyAverageDenominatorStep,
         retentionUnit: retentionOptions?.retentionUnit,
+        breakdowns: report.breakdowns,
         interval: report.interval,
         id: 'id' in report ? report.id : undefined,
       },

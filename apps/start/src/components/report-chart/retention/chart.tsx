@@ -3,6 +3,7 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
+  Legend,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -18,6 +19,53 @@ import { getChartColor } from '@/utils/theme';
 
 interface Props {
   data: RouterOutputs['chart']['cohort']['data'];
+}
+
+function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
+  const averageRows = data.filter(
+    (row) => row.cohort_interval === 'Weighted Average'
+  );
+  const averageRow = averageRows[0];
+  const hasBreakdowns = averageRows.some((row) => row.breakdowns.length > 0);
+  const dataSource = isPercentage
+    ? averageRow?.percentages
+    : averageRow?.values;
+  const rechartData = hasBreakdowns
+    ? Array.from({
+        length: Math.max(...averageRows.map((row) => row.values.length), 0),
+      }).map((_, dayIndex) => ({
+        days: dayIndex,
+        ...Object.fromEntries(
+          averageRows.map((row, seriesIndex) => [
+            `series_${seriesIndex}`,
+            isPercentage
+              ? (row.percentages[dayIndex] ?? 0) * 100
+              : (row.values[dayIndex] ?? 0),
+          ])
+        ),
+      }))
+    : dataSource?.map((item, index) => ({
+        days: index,
+        percentage: isPercentage ? item * 100 : item,
+        value: averageRow?.values?.[index],
+        sum: averageRow?.sum,
+      }));
+  const dataMax = hasBreakdowns
+    ? Math.max(
+        ...averageRows.flatMap((row) =>
+          isPercentage
+            ? row.percentages.map((value) => value * 100)
+            : row.values
+        ),
+        0
+      )
+    : Math.max(
+        ...(dataSource?.map((value) =>
+          isPercentage ? value * 100 : value
+        ) ?? [0])
+      );
+
+  return { averageRow, averageRows, dataMax, hasBreakdowns, rechartData };
 }
 
 export function Chart({ data }: Props) {
@@ -38,22 +86,15 @@ export function Chart({ data }: Props) {
     hide: hideYAxis,
     tickFormatter: isPercentage ? (value) => `${value}%` : undefined,
   });
-  const averageRow = data[0];
+  const { averageRow, averageRows, dataMax, hasBreakdowns, rechartData } =
+    getBreakdownChartState(data, isPercentage);
   const averageRetentionRate = isPercentage
     ? average(averageRow?.percentages || [], true) * 100
     : average(averageRow?.values || [], true);
-  const dataSource = isPercentage
-    ? averageRow?.percentages
-    : averageRow?.values;
-  const rechartData = dataSource?.map((item, index) => ({
-    days: index,
-    percentage: isPercentage ? item * 100 : item,
-    value: averageRow?.values?.[index],
-    sum: averageRow?.sum,
-  }));
-
-  // Compute nice Y-axis ticks: pick a step size, generate explicit ticks
-  const dataMax = Math.max(...(rechartData?.map((d) => d.percentage) ?? [0]));
+  const breakdownTooltipFormatter = (value: number | string) => {
+    const roundedValue = round(Number(value), 2);
+    return isPercentage ? `${roundedValue}%` : roundedValue;
+  };
   const niceTicks = (max: number): number[] => {
     if (max <= 0) {
       return isPercentage ? [0, 0.5, 1] : [0, 5, 10];
@@ -76,7 +117,7 @@ export function Chart({ data }: Props) {
     return [0, Math.ceil(max)];
   };
   const yTicks = niceTicks(dataMax);
-  const yMax = yTicks[yTicks.length - 1] ?? 100;
+  const yMax = yTicks.at(-1) ?? 100;
 
   return (
     <>
@@ -112,7 +153,11 @@ export function Chart({ data }: Props) {
               tickCount={31}
               tickFormatter={(value) => value.toString()}
             />
-            <Tooltip content={<RetentionTooltip />} />
+            <Tooltip
+              content={hasBreakdowns ? undefined : <RetentionTooltip />}
+              formatter={hasBreakdowns ? breakdownTooltipFormatter : undefined}
+            />
+            {hasBreakdowns && <Legend verticalAlign="top" />}
             <defs>
               <linearGradient id={'color'} x1="0" x2="0" y1="0" y2="1">
                 <stop
@@ -127,31 +172,48 @@ export function Chart({ data }: Props) {
                 />
               </linearGradient>
             </defs>
-            <ReferenceLine
-              label={{
-                value: isPercentage
-                  ? `Average (${round(averageRetentionRate, 2)} %)`
-                  : `Average (${round(averageRetentionRate, 0)})`,
-                fill: getChartColor(1),
-                position: 'insideBottomRight',
-                fontSize: 12,
-              }}
-              stroke={getChartColor(1)}
-              strokeDasharray="3 3"
-              strokeLinecap="round"
-              strokeOpacity={0.5}
-              strokeWidth={2}
-              y={averageRetentionRate}
-            />
-            <Area
-              dataKey="percentage"
-              fill={'url(#color)'}
-              fillOpacity={0.1}
-              isAnimationActive={false}
-              stroke={getChartColor(0)}
-              strokeWidth={2}
-              type={'monotone'}
-            />
+            {!hasBreakdowns && (
+              <>
+                <ReferenceLine
+                  label={{
+                    value: isPercentage
+                      ? `Average (${round(averageRetentionRate, 2)} %)`
+                      : `Average (${round(averageRetentionRate, 0)})`,
+                    fill: getChartColor(1),
+                    position: 'insideBottomRight',
+                    fontSize: 12,
+                  }}
+                  stroke={getChartColor(1)}
+                  strokeDasharray="3 3"
+                  strokeLinecap="round"
+                  strokeOpacity={0.5}
+                  strokeWidth={2}
+                  y={averageRetentionRate}
+                />
+                <Area
+                  dataKey="percentage"
+                  fill={'url(#color)'}
+                  fillOpacity={0.1}
+                  isAnimationActive={false}
+                  stroke={getChartColor(0)}
+                  strokeWidth={2}
+                  type={'monotone'}
+                />
+              </>
+            )}
+            {hasBreakdowns &&
+              averageRows.map((row, index) => (
+                <Area
+                  dataKey={`series_${index}`}
+                  fill="transparent"
+                  isAnimationActive={false}
+                  key={JSON.stringify(row.breakdowns)}
+                  name={row.breakdowns.join(' / ') || '(not set)'}
+                  stroke={getChartColor(index)}
+                  strokeWidth={2}
+                  type="monotone"
+                />
+              ))}
           </ComposedChart>
         </ResponsiveContainer>
       </div>

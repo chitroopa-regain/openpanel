@@ -1,16 +1,82 @@
 import { describe, expect, it } from 'vitest';
+import { processCohortData } from './chart';
 import {
   aggregateRetentionRowsByDisplayInterval,
+  buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
   getRetentionTimeUnitConfig,
+  groupRetentionRowsByBreakdowns,
   isWildcardEventSelection,
 } from './chart-retention.utils';
 
 describe('chart retention utils', () => {
+  it('extracts multi-property breakdown values from the same cohort event', () => {
+    expect(
+      buildRetentionBreakdownSelects([
+        "coalesce(browser, '(not set)')",
+        "coalesce(version, '(not set)')",
+      ])
+    ).toEqual([
+      "tupleElement(argMin(tuple(coalesce(browser, '(not set)'), coalesce(version, '(not set)')), e.created_at), 1) AS b_0",
+      "tupleElement(argMin(tuple(coalesce(browser, '(not set)'), coalesce(version, '(not set)')), e.created_at), 2) AS b_1",
+    ]);
+  });
+
+  it('keeps zero-retention cohorts in the weighted-average denominator', () => {
+    const result = processCohortData(
+      [
+        {
+          cohort_interval: '2026-07-01',
+          total_first_event_count: 10,
+          interval_0_user_count: 5,
+        },
+        {
+          cohort_interval: '2026-07-02',
+          total_first_event_count: 10,
+          interval_0_user_count: 0,
+        },
+      ],
+      0
+    );
+
+    expect(result[0]?.cohort_interval).toBe('Weighted Average');
+    expect(result[0]?.percentages).toEqual([0.25]);
+  });
+
+  it('keeps retention cohorts separated by ordered breakdown values', () => {
+    const result = groupRetentionRowsByBreakdowns([
+      {
+        cohort_interval: '2026-07-01',
+        total_first_event_count: 4,
+        interval_0_user_count: 2,
+        interval_1_user_count: 1,
+        b_0: 'Chrome',
+        b_1: '1.0',
+      },
+      {
+        cohort_interval: '2026-07-01',
+        total_first_event_count: 2,
+        interval_0_user_count: 1,
+        interval_1_user_count: 1,
+        b_0: 'Safari',
+        b_1: '2.0',
+      },
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result.map((group) => group.breakdowns)).toEqual([
+      ['Chrome', '1.0'],
+      ['Safari', '2.0'],
+    ]);
+    expect(result[0]?.rows).toHaveLength(1);
+    expect(result[0]?.rows[0]?.interval_1_user_count).toBe(1);
+    expect(result[1]?.rows).toHaveLength(1);
+  });
+
   it('detects wildcard any-event selections', () => {
     expect(isWildcardEventSelection(['*'])).toBe(true);
     expect(isWildcardEventSelection(['*', 'New User Identify'])).toBe(true);

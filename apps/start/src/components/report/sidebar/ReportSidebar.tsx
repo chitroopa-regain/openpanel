@@ -21,10 +21,7 @@ export function ReportSidebar({
   const hasFrequencyDistribution = series.some(
     (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
   );
-  const showBreakdown =
-    chartType !== 'retention' &&
-    chartType !== 'sankey' &&
-    !hasFrequencyDistribution;
+  const showBreakdown = chartType !== 'sankey' && !hasFrequencyDistribution;
   const showFixedEvents = chartType === 'sankey';
   return (
     <>

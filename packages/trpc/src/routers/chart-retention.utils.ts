@@ -1,4 +1,4 @@
-import { TABLE_NAMES, getSelectPropertyKey } from '@openpanel/db';
+import { getSelectPropertyKey, TABLE_NAMES } from '@openpanel/db';
 import sqlstring from 'sqlstring';
 
 export type RetentionMeasure =
@@ -9,14 +9,67 @@ export type RetentionMeasure =
 
 export type RetentionTimeUnit = 'day' | 'week' | 'month';
 
-export type ProcessedRetentionCohortRow = {
+export interface ProcessedRetentionCohortRow {
   cohort_interval: string;
   display_interval?: string;
   sum: number;
   values: number[];
   valueWeights?: number[];
   percentages: number[];
-};
+}
+
+export interface RawRetentionCohortRow {
+  display_interval?: string;
+  cohort_interval: string;
+  total_first_event_count: number;
+  [key: string]: any;
+}
+
+const BREAKDOWN_COLUMN_PATTERN = /^b_\d+$/;
+
+export function buildRetentionBreakdownSelects(
+  normalizedExpressions: string[],
+  timestampExpression = 'e.created_at'
+) {
+  const tupleExpression = `tuple(${normalizedExpressions.join(', ')})`;
+  return normalizedExpressions.map((expression, index) =>
+    normalizedExpressions.length === 1
+      ? `argMin(${expression}, ${timestampExpression}) AS b_${index}`
+      : `tupleElement(argMin(${tupleExpression}, ${timestampExpression}), ${index + 1}) AS b_${index}`
+  );
+}
+
+export function groupRetentionRowsByBreakdowns(
+  data: RawRetentionCohortRow[]
+): Array<{ breakdowns: string[]; rows: RawRetentionCohortRow[] }> {
+  const breakdownKeys = Array.from(
+    new Set(
+      data.flatMap((row) =>
+        Object.keys(row).filter((key) => BREAKDOWN_COLUMN_PATTERN.test(key))
+      )
+    )
+  ).sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
+
+  if (breakdownKeys.length === 0) {
+    return [{ breakdowns: [], rows: data }];
+  }
+
+  const groups = new Map<
+    string,
+    { breakdowns: string[]; rows: RawRetentionCohortRow[] }
+  >();
+  for (const row of data) {
+    const breakdowns = breakdownKeys.map((key) =>
+      String(row[key] ?? '(not set)')
+    );
+    const signature = JSON.stringify(breakdowns);
+    const group = groups.get(signature) ?? { breakdowns, rows: [] };
+    group.rows.push(row);
+    groups.set(signature, group);
+  }
+
+  return Array.from(groups.values());
+}
 
 export function aggregateRetentionRowsByDisplayInterval(
   rows: ProcessedRetentionCohortRow[],
@@ -58,8 +111,7 @@ export function aggregateRetentionRowsByDisplayInterval(
         valueMode === 'weighted_average'
           ? group.weightedValues.map((value, index) =>
               (group.valueWeights[index] ?? 0) > 0
-                ? Math.round((value / group.valueWeights[index]!) * 100) /
-                  100
+                ? Math.round((value / group.valueWeights[index]!) * 100) / 100
                 : 0
             )
           : group.values;

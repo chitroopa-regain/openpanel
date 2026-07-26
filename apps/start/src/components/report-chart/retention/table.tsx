@@ -3,6 +3,7 @@ import { useReportChartContext } from '../context';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
+import { getPropertyLabel } from '@/translations/properties';
 
 type CohortData = RouterOutputs['chart']['cohort']['data'];
 
@@ -12,7 +13,7 @@ type CohortTableProps = {
 
 const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   const {
-    report: { unit, options },
+    report: { unit, options, breakdowns },
   } = useReportChartContext();
   const retentionUnit =
     options?.type === 'retention' ? (options.retentionUnit ?? 'day') : 'day';
@@ -74,6 +75,14 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
                     <div className="center-center -mt-3 h-10">Date</div>
                   </div>
                 </th>
+                {breakdowns.map((breakdown) => (
+                  <th
+                    className={cn(thClassName, 'px-3 text-left')}
+                    key={breakdown.id}
+                  >
+                    {getPropertyLabel(breakdown.name)}
+                  </th>
+                ))}
                 <th className={cn(thClassName, 'pr-1')}>Total profiles</th>
                 {data[0]?.values.map((column, index) => (
                   <th
@@ -89,12 +98,22 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
               {data.map((row) => {
                 const values = isPercentage ? row.percentages : row.values;
                 return (
-                  <tr key={row.cohort_interval}>
+                  <tr
+                    key={`${JSON.stringify(row.breakdowns)}:${row.cohort_interval}`}
+                  >
                     <td className="sticky left-0 z-10 w-36 bg-card p-0">
                       <div className="center-center h-10 px-4 font-medium text-muted-foreground">
                         {row.cohort_interval}
                       </div>
                     </td>
+                    {breakdowns.map((breakdown, index) => (
+                      <td
+                        className="min-w-28 px-3 font-medium"
+                        key={breakdown.id}
+                      >
+                        {row.breakdowns?.[index] ?? '(not set)'}
+                      </td>
+                    ))}
                     <td className="min-w-12 p-0">
                       <div className={cn('rounded px-3 font-medium font-mono')}>
                         {number.format(row?.sum)}
