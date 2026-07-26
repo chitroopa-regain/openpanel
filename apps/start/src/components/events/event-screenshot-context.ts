@@ -25,6 +25,18 @@ function timestamp(value: string | null | undefined) {
   return Number.isFinite(result) ? result : undefined;
 }
 
+function inclusiveEndTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  date.setUTCHours(23, 59, 59, 999);
+  return date.getTime();
+}
+
 export function buildScreenshotContexts({
   series,
   startDate,
@@ -37,11 +49,14 @@ export function buildScreenshotContexts({
   breakdownValue?: BreakdownValueContext;
 }): ScreenshotContext[] {
   const startDateMs = timestamp(startDate);
-  const endDateMs = timestamp(endDate);
+  const endDateMs = inclusiveEndTimestamp(endDate);
   return series.flatMap((item) => {
     if (item.type !== 'event') {
       return [];
     }
+    const matchable = item.filters.every(
+      (filter) => filter.operator === 'is' && filter.value.length > 0
+    );
     const filters = item.filters.flatMap<ScreenshotFilter>((filter) => {
       if (filter.operator !== 'is' || filter.value.length === 0) {
         return [];
@@ -63,6 +78,7 @@ export function buildScreenshotContexts({
           }
         : undefined;
     if (
+      matchable &&
       filters.length === 0 &&
       !breakdown &&
       startDateMs === undefined &&
@@ -77,6 +93,7 @@ export function buildScreenshotContexts({
         breakdown,
         startDateMs,
         endDateMs,
+        matchable,
       },
     ];
   });

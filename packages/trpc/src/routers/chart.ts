@@ -277,9 +277,10 @@ export const chartRouter = createTRPCRouter({
       };
     }),
 
-  events: chartProcedure
-    .use(cacheMiddleware(60 * 5))
-    .input(
+  // Screenshot URLs are short-lived capabilities. Do not put this array in the
+  // server SWR cache: top-level arrays cannot carry cache-staleness metadata and
+  // would continue returning expired image URLs from the hard cache.
+  events: chartProcedure.input(
       z.object({
         projectId: z.string(),
         includeDropped: z.boolean().default(false),

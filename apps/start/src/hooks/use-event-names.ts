@@ -16,7 +16,9 @@ export function useEventNames(params: {
       },
       {
         enabled: !!params.projectId,
-        staleTime: 1000 * 60 * 10,
+        // Refresh before Regain's ten-minute signed screenshot URLs expire.
+        staleTime: 1000 * 60 * 4,
+        refetchInterval: 1000 * 60 * 4,
       }
     )
   );

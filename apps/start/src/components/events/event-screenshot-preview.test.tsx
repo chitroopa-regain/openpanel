@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventScreenshotPreview } from './event-screenshot-preview';
 
 const APP_METADATA = /ai\.regain\.app · 2\.4\.0/;
@@ -16,6 +16,8 @@ const screenshot = {
   eventProperties: { source: 'home', attempt: 2 },
   userProperties: { plan: 'pro' },
 };
+
+afterEach(cleanup);
 
 describe('EventScreenshotPreview', () => {
   it('stops row selection and opens an accessible preview with both property scopes', () => {
@@ -118,5 +120,24 @@ describe('EventScreenshotPreview', () => {
         name: 'No matching screenshot sampled yet',
       })
     ).toBeTruthy();
+  });
+
+  it('replaces an unavailable signed image with a non-broken status', () => {
+    const { container } = render(
+      <EventScreenshotPreview
+        eventName="Paywall: Shown"
+        screenshots={[screenshot]}
+        showNoMatch
+      />
+    );
+
+    const image = container.querySelector('img');
+    expect(image).not.toBeNull();
+    fireEvent.error(image as HTMLImageElement);
+
+    const status = container.querySelector('[role="status"]');
+    expect(status?.getAttribute('aria-label')).toBe(
+      'No matching screenshot sampled yet'
+    );
   });
 });

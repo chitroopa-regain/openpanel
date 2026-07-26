@@ -42,6 +42,7 @@ describe('event screenshot metadata', () => {
           variants: [
             { ...validVariant, capture_id: 'older', captured_at_ms: 100 },
             validVariant,
+            { ...validVariant },
             {
               ...validVariant,
               capture_id: 'unsafe',
@@ -213,6 +214,107 @@ describe('event screenshot metadata', () => {
       }
     );
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('merges exact samples for multi-value is filters', async () => {
+    const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const variant = body.event_property_filters.variant;
+      return Promise.resolve(
+        Response.json({
+          events: [
+            {
+              event_name: 'Paywall: Shown',
+              variants: [
+                {
+                  ...validVariant,
+                  capture_id: `capture-${variant}`,
+                  captured_at_ms: variant === 'B' ? 200 : 100,
+                  event_properties: { variant },
+                },
+              ],
+            },
+          ],
+        })
+      );
+    });
+
+    const screenshots = await fetchEventScreenshots(
+      ['Paywall: Shown'],
+      [
+        {
+          eventName: 'Paywall: Shown',
+          filters: [
+            {
+              property: 'properties.variant',
+              scope: 'event',
+              values: ['A', 'B'],
+            },
+          ],
+        },
+      ],
+      {
+        metadataUrl: 'https://metadata.internal',
+        readToken: 'read-token',
+        fetchImpl,
+      }
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(
+      screenshots.get('Paywall: Shown')?.map((item) => item.captureId)
+    ).toEqual(['capture-B', 'capture-A']);
+  });
+
+  it('keeps successful lookup chunks when another chunk fails', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce(
+        Response.json({
+          events: [
+            {
+              event_name: 'Event 100',
+              variants: [validVariant],
+            },
+          ],
+        })
+      );
+
+    const screenshots = await fetchEventScreenshots(
+      Array.from({ length: 101 }, (_, index) => `Event ${index}`),
+      [],
+      {
+        metadataUrl: 'https://metadata.internal',
+        readToken: 'read-token',
+        fetchImpl,
+      }
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(screenshots.get('Event 100')).toHaveLength(1);
+  });
+
+  it('does not fall back to an unfiltered screenshot for an unmatchable context', async () => {
+    const fetchImpl = vi.fn();
+    const screenshots = await fetchEventScreenshots(
+      ['Paywall: Shown'],
+      [
+        {
+          eventName: 'Paywall: Shown',
+          filters: [],
+          matchable: false,
+        },
+      ],
+      {
+        metadataUrl: 'https://metadata.internal',
+        readToken: 'read-token',
+        fetchImpl,
+      }
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(screenshots).toEqual(new Map());
   });
 
   it.each([

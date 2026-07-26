@@ -4,6 +4,8 @@ const SCREENSHOT_LOOKUP_TIMEOUT_MS = 2000;
 const TRAILING_SLASHES = /\/+$/;
 const MAX_SCREENSHOTS_PER_EVENT = 5;
 const MAX_EVENT_NAMES_PER_LOOKUP = 100;
+const MAX_CONTEXT_REQUESTS = 20;
+const MAX_TOTAL_CONTEXT_REQUESTS = 100;
 const REGAIN_SCREENSHOT_ORIGINS = new Set([
   'https://api.regainapp.ai',
   'https://staging.regainapp.ai',
@@ -60,6 +62,7 @@ export const screenshotMatchContextSchema = z.object({
   breakdown: screenshotMatchFilterSchema.optional(),
   startDateMs: z.number().finite().optional(),
   endDateMs: z.number().finite().optional(),
+  matchable: z.boolean().optional(),
 });
 
 export type ScreenshotMatchContext = z.infer<
@@ -175,44 +178,65 @@ function utcDate(milliseconds?: number) {
     : new Date(milliseconds).toISOString().slice(0, 10);
 }
 
-function requestForContext(context: ScreenshotMatchContext) {
+function requestsForContext(context: ScreenshotMatchContext) {
+  if (context.matchable === false) {
+    return [];
+  }
   const filters = [
     ...context.filters,
     ...(context.breakdown ? [context.breakdown] : []),
   ];
-  if (filters.some((filter) => filter.values.length !== 1)) {
+  if (filters.some((filter) => filter.values.length === 0)) {
     return null;
   }
-  const eventPropertyFilters: Record<
-    string,
-    z.infer<typeof jsonScalarSchema>
-  > = {};
-  const userPropertyFilters: Record<
-    string,
-    z.infer<typeof jsonScalarSchema>
-  > = {};
+  let requests = [
+    {
+      event_names: [context.eventName],
+      report_start_date: utcDate(context.startDateMs),
+      report_end_date: utcDate(context.endDateMs),
+      event_property_filters: {} as Record<
+        string,
+        z.infer<typeof jsonScalarSchema>
+      >,
+      user_property_filters: {} as Record<
+        string,
+        z.infer<typeof jsonScalarSchema>
+      >,
+    },
+  ];
   for (const filter of filters) {
-    const destination =
-      filter.scope === 'user' ? userPropertyFilters : eventPropertyFilters;
-    const value = filter.values[0];
-    if (value === undefined) {
-      return null;
+    const property = normalizedPropertyName(filter.property);
+    const expanded = requests.flatMap((request) =>
+      filter.values.map((value) => ({
+        ...request,
+        event_property_filters:
+          filter.scope === 'event'
+            ? { ...request.event_property_filters, [property]: value }
+            : request.event_property_filters,
+        user_property_filters:
+          filter.scope === 'user'
+            ? { ...request.user_property_filters, [property]: value }
+            : request.user_property_filters,
+      }))
+    );
+    if (expanded.length > MAX_CONTEXT_REQUESTS) {
+      return [];
     }
-    destination[normalizedPropertyName(filter.property)] = value;
+    requests = expanded;
   }
-  return {
-    event_names: [context.eventName],
-    report_start_date: utcDate(context.startDateMs),
-    report_end_date: utcDate(context.endDateMs),
+  return requests.map((request) => ({
+    event_names: request.event_names,
+    report_start_date: request.report_start_date,
+    report_end_date: request.report_end_date,
     event_property_filters:
-      Object.keys(eventPropertyFilters).length > 0
-        ? eventPropertyFilters
+      Object.keys(request.event_property_filters).length > 0
+        ? request.event_property_filters
         : undefined,
     user_property_filters:
-      Object.keys(userPropertyFilters).length > 0
-        ? userPropertyFilters
+      Object.keys(request.user_property_filters).length > 0
+        ? request.user_property_filters
         : undefined,
-  };
+  }));
 }
 
 function scalarEquals(
@@ -266,6 +290,29 @@ export function selectEventScreenshotSamples(
     .slice(0, MAX_SCREENSHOTS_PER_EVENT);
 }
 
+function selectEventScreenshotSamplesForContexts(
+  samples: EventScreenshot[],
+  contexts: Omit<ScreenshotMatchContext, 'eventName'>[]
+) {
+  if (contexts.length === 0) {
+    return selectEventScreenshotSamples(samples);
+  }
+  return [...samples]
+    .sort(
+      (left, right) =>
+        (right.capturedAtMs ?? Number.NEGATIVE_INFINITY) -
+        (left.capturedAtMs ?? Number.NEGATIVE_INFINITY)
+    )
+    .filter((sample) =>
+      contexts.some(
+        (context) =>
+          context.matchable !== false &&
+          selectEventScreenshotSamples([sample], context).length > 0
+      )
+    )
+    .slice(0, MAX_SCREENSHOTS_PER_EVENT);
+}
+
 export function indexEventScreenshots(
   value: unknown,
   contexts: ScreenshotMatchContext[] = []
@@ -301,17 +348,30 @@ export function indexEventScreenshots(
       userProperties: parseProperties(row.user_properties),
     };
     const existing = screenshots.get(row.original_event_name) ?? [];
-    existing.push(screenshot);
+    const duplicate = existing.some((item) =>
+      screenshot.captureId
+        ? item.captureId === screenshot.captureId
+        : !item.captureId && item.url === screenshot.url
+    );
+    if (!duplicate) {
+      existing.push(screenshot);
+    }
     screenshots.set(row.original_event_name, existing);
   }
 
-  const contextsByEvent = new Map(
-    contexts.map((context) => [context.eventName, context])
-  );
+  const contextsByEvent = new Map<string, ScreenshotMatchContext[]>();
+  for (const context of contexts) {
+    const existing = contextsByEvent.get(context.eventName) ?? [];
+    existing.push(context);
+    contextsByEvent.set(context.eventName, existing);
+  }
   for (const [eventName, samples] of screenshots) {
     screenshots.set(
       eventName,
-      selectEventScreenshotSamples(samples, contextsByEvent.get(eventName))
+      selectEventScreenshotSamplesForContexts(
+        samples,
+        contextsByEvent.get(eventName) ?? []
+      )
     );
   }
   return screenshots;
@@ -336,13 +396,6 @@ export async function fetchEventScreenshots(
   }
 
   const uniqueEventNames = [...new Set(eventNames)];
-  const contextCount = new Map<string, number>();
-  for (const context of contexts) {
-    contextCount.set(
-      context.eventName,
-      (contextCount.get(context.eventName) ?? 0) + 1
-    );
-  }
   const contextualEventNames = new Set(
     contexts.map((context) => context.eventName)
   );
@@ -362,14 +415,17 @@ export async function fetchEventScreenshots(
       ),
     });
   }
+  let contextRequestCount = 0;
   for (const context of contexts) {
-    if (contextCount.get(context.eventName) !== 1) {
+    const contextRequests = requestsForContext(context) ?? [];
+    if (
+      contextRequestCount + contextRequests.length >
+      MAX_TOTAL_CONTEXT_REQUESTS
+    ) {
       continue;
     }
-    const request = requestForContext(context);
-    if (request) {
-      requests.push(request);
-    }
+    requests.push(...contextRequests);
+    contextRequestCount += contextRequests.length;
   }
   if (requests.length === 0) {
     return new Map<string, EventScreenshot[]>();
@@ -382,7 +438,7 @@ export async function fetchEventScreenshots(
   );
 
   try {
-    const responses = await Promise.all(
+    const responses = await Promise.allSettled(
       requests.map((request) =>
         (options.fetchImpl ?? fetch)(
           `${metadataUrl.replace(TRAILING_SLASHES, '')}/event_screenshots/internal/lookup`,
@@ -398,13 +454,17 @@ export async function fetchEventScreenshots(
         )
       )
     );
-    const payloads = await Promise.all(
-      responses
-        .filter((response) => response.ok)
-        .map((response) => response.json())
+    const payloads = await Promise.allSettled(
+      responses.flatMap((response) =>
+        response.status === 'fulfilled' && response.value.ok
+          ? [response.value.json()]
+          : []
+      )
     );
-    const rows = payloads.flatMap(
-      (payload) => normalizeResponse(payload) ?? []
+    const rows = payloads.flatMap((payload) =>
+      payload.status === 'fulfilled'
+        ? (normalizeResponse(payload.value) ?? [])
+        : []
     );
     return indexEventScreenshots(rows, contexts);
   } catch (error) {

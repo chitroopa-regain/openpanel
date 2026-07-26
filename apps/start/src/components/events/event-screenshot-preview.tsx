@@ -74,7 +74,7 @@ export function EventScreenshotPreview({
   compact = false,
   showNoMatch = false,
 }: EventScreenshotPreviewProps) {
-  const safeScreenshots = useMemo(
+  const validatedScreenshots = useMemo(
     () =>
       (screenshots ?? [])
         .map((screenshot) => ({
@@ -89,11 +89,20 @@ export function EventScreenshotPreview({
   );
   const [open, setOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
+  const safeScreenshots = useMemo(
+    () => validatedScreenshots.filter((item) => !failedUrls.has(item.url)),
+    [failedUrls, validatedScreenshots]
+  );
   useEffect(() => {
     if (selectedIndex >= safeScreenshots.length) {
       setSelectedIndex(0);
     }
   }, [safeScreenshots.length, selectedIndex]);
+
+  const markFailed = (url: string) => {
+    setFailedUrls((current) => new Set(current).add(url));
+  };
 
   if (!safeScreenshots.length) {
     if (showNoMatch) {
@@ -148,12 +157,13 @@ export function EventScreenshotPreview({
         type="button"
         variant="ghost"
       >
-        {/* biome-ignore lint/performance/noImgElement: trusted dynamic screenshot URLs are not supported by an image optimizer */}
+        {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions lint/performance/noImgElement: image load failure updates the surrounding preview control */}
         <img
           alt=""
           className="size-full object-cover"
           height={40}
           loading="lazy"
+          onError={() => markFailed(safeScreenshots[0].url)}
           referrerPolicy="no-referrer"
           src={safeScreenshots[0].url}
           width={64}
@@ -182,11 +192,12 @@ export function EventScreenshotPreview({
           </DialogDescription>
         </DialogHeader>
         <div className="relative flex min-h-0 items-center justify-center">
-          {/* biome-ignore lint/performance/noImgElement: preserve the screenshot's native aspect ratio in the full-size preview */}
+          {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions lint/performance/noImgElement: image load failure updates the surrounding preview dialog */}
           <img
             alt={`${eventName} event screenshot`}
             className="max-h-[calc(95vh-15rem)] w-full rounded object-contain"
             height={1600}
+            onError={() => markFailed(selected.url)}
             referrerPolicy="no-referrer"
             src={selected.url}
             width={900}
@@ -240,11 +251,12 @@ export function EventScreenshotPreview({
                 onClick={() => setSelectedIndex(index)}
                 type="button"
               >
-                {/* biome-ignore lint/performance/noImgElement: trusted dynamic screenshot URLs are not supported by an image optimizer */}
+                {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions lint/performance/noImgElement: image load failure updates the surrounding gallery control */}
                 <img
                   alt=""
                   className="size-full object-cover"
                   height={48}
+                  onError={() => markFailed(item.url)}
                   src={item.url}
                   width={80}
                 />
