@@ -43,6 +43,7 @@ export function OverviewFilterButton(props: OverviewFiltersProps) {
 
 interface FilterPillProps {
   filter: IChartEventFilter;
+  eventName: string;
   nuqsOptions?: NuqsOptions;
   onRemove: () => void;
   onChangeOperator: (operator: IChartEventFilterOperator) => void;
@@ -51,6 +52,7 @@ interface FilterPillProps {
 
 function FilterPill({
   filter,
+  eventName,
   nuqsOptions,
   onRemove,
   onChangeOperator,
@@ -58,7 +60,7 @@ function FilterPill({
 }: FilterPillProps) {
   const { projectId } = useAppParams();
   const potentialValues = usePropertyValues({
-    event: '*',
+    event: eventName,
     property: filter.name,
     projectId,
   });
@@ -147,6 +149,7 @@ export function OverviewFiltersButtons({
         <FilterPill
           key={filter.name}
           filter={filter}
+          eventName={events.length === 1 ? events[0]! : '*'}
           nuqsOptions={nuqsOptions}
           onRemove={() => removeFilter(filter.name)}
           onChangeOperator={(operator) =>

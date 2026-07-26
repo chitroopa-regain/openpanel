@@ -625,13 +625,15 @@ export const chartRouter = createTRPCRouter({
           values.push(...res.map((e) => e.property_value));
         } else {
           const query = clix(ch)
+            // DISTINCT already collapses the value set before the safety limit.
+            // Sorting by created_at is undefined for a distinct-only result and
+            // forces ClickHouse to add an unnecessary sort stage.
             .select<{ values: string[] }>([
               `distinct ${getSelectPropertyKey(property)} as values`,
             ])
             .from(TABLE_NAMES.events)
             .where('project_id', '=', projectId)
             .where('created_at', '>', clix.exp('now() - INTERVAL 30 DAY'))
-            .orderBy('created_at', 'DESC')
             .limit(100_000);
 
           if (eventNames.length === 1) {

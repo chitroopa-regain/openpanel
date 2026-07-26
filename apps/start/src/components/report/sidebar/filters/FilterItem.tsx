@@ -94,8 +94,22 @@ export function FilterItem({ filter, event }: FilterProps) {
   };
 
   const dispatch = useDispatch();
+  const rawEventName =
+    'name' in event ? event.name : (event.displayName ?? '*');
+  const nameFilter = event.filters?.find(
+    (item) =>
+      item.name === 'name' &&
+      item.operator === 'is' &&
+      item.value.length === 1 &&
+      typeof item.value[0] === 'string',
+  );
+  // Retention represents its selected event as `name = <event>` on a wildcard
+  // series. Use that concrete name for property-value lookups so ClickHouse can
+  // prune by the events table's `(project_id, date, name, ...)` sorting key.
   const eventName =
-    'name' in event ? event.name : event.displayName ?? '*';
+    rawEventName === '*' && nameFilter
+      ? String(nameFilter.value[0])
+      : rawEventName;
   const customEventId =
     'customEventId' in event ? event.customEventId : undefined;
 
