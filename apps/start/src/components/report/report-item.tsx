@@ -523,7 +523,7 @@ export function ReportItem({
       {isLastInRow && typeof rowIdx === 'number' && onAddAt && (
         <AddToRowButton side="end" rowIdx={rowIdx} onAddAt={onAddAt} />
       )}
-      <div className="flex items-center justify-between border-border border-b p-4 leading-none hover:bg-muted/50 [&_svg]:hover:opacity-100">
+      <div className="flex items-center justify-between border-border border-b p-4 leading-normal hover:bg-muted/50 [&_svg]:hover:opacity-100">
         <div
           className="-m-4 min-w-0 flex-1 cursor-grab p-4 active:cursor-grabbing"
           data-drag-handle
@@ -697,7 +697,7 @@ export function ReportItemReadOnly({
 
   return (
     <div className="card flex h-full flex-col">
-      <div className="flex items-center justify-between border-border border-b p-4 leading-none">
+      <div className="flex items-center justify-between border-border border-b p-4 leading-normal">
         <div className="min-w-0 flex-1" title={report.name}>
           <div className="truncate font-medium">{report.name}</div>
           {chartRange !== null && (
