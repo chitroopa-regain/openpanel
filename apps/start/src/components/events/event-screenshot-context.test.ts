@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildEventDetailScreenshotContext,
   buildScreenshotContexts,
   utcDayScreenshotRange,
 } from './event-screenshot-context';
@@ -16,6 +17,20 @@ const eventSeries = (filters: unknown[]) =>
 describe('buildScreenshotContexts', () => {
   it('matches the full UTC event day when ingestion is delayed', () => {
     expect(utcDayScreenshotRange(Date.UTC(2026, 6, 26, 23, 58))).toEqual({
+      startDateMs: Date.UTC(2026, 6, 26),
+      endDateMs: Date.UTC(2026, 6, 26, 23, 59, 59, 999),
+    });
+  });
+
+  it('does not treat enriched detail properties as report filters', () => {
+    expect(
+      buildEventDetailScreenshotContext(
+        'BL: Block Feature Screen Shown',
+        Date.UTC(2026, 6, 26, 14, 21)
+      )
+    ).toEqual({
+      eventName: 'BL: Block Feature Screen Shown',
+      filters: [],
       startDateMs: Date.UTC(2026, 6, 26),
       endDateMs: Date.UTC(2026, 6, 26, 23, 59, 59, 999),
     });

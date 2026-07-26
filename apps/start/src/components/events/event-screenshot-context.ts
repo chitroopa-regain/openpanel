@@ -50,6 +50,20 @@ export function utcDayScreenshotRange(milliseconds: number) {
   };
 }
 
+export function buildEventDetailScreenshotContext(
+  eventName: string,
+  milliseconds: number
+): ScreenshotContext {
+  return {
+    eventName,
+    // Event detail properties include OpenPanel/Jitsu enrichment that is not
+    // part of Android's event-specific capture metadata. Detail previews are
+    // representative; report contexts remain exact and fail closed below.
+    filters: [],
+    ...utcDayScreenshotRange(milliseconds),
+  };
+}
+
 export function buildScreenshotContexts({
   series,
   startDate,

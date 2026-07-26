@@ -10,7 +10,7 @@ import { omit } from 'ramda';
 import { useState } from 'react';
 import { popModal } from '.';
 import { ModalContent } from './Modal/Container';
-import { utcDayScreenshotRange } from '@/components/events/event-screenshot-context';
+import { buildEventDetailScreenshotContext } from '@/components/events/event-screenshot-context';
 import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { ProjectLink } from '@/components/links';
 import {
@@ -132,27 +132,7 @@ function EventDetailsContent({
   // Use initialEvent immediately, upgrade to full event when query returns.
   const event = eventQuery.data ?? (initialEvent as IServiceEvent | undefined);
   const screenshotContext = event
-    ? {
-        eventName: event.name,
-        filters: Object.entries(event.properties ?? {}).flatMap(
-          ([name, value]) =>
-            value === null ||
-            typeof value === 'string' ||
-            typeof value === 'number' ||
-            typeof value === 'boolean'
-              ? [
-                  {
-                    property: `properties.${name}`,
-                    scope: 'event' as const,
-                    values: [value],
-                  },
-                ]
-              : []
-        ),
-        // OpenPanel's createdAt can reflect delayed ingestion. Exact scalar
-        // properties keep the match safe while the full UTC day tolerates lag.
-        ...utcDayScreenshotRange(event.createdAt.getTime()),
-      }
+    ? buildEventDetailScreenshotContext(event.name, event.createdAt.getTime())
     : undefined;
   const eventNamesQuery = useQuery(
     trpc.chart.events.queryOptions(
