@@ -33,7 +33,8 @@ For small urgent fixes that Nizam wants deployed immediately, commit directly to
 
 ## Deployment model
 
-Both staging and prod use images built from the `dashboard-plus` branch.
+Regain has one active OpenPanel deployment. It uses images built from the
+`dashboard-plus` branch. There is no separate staging/prod OpenPanel pair.
 
 The relevant GitHub Actions workflow is:
 
@@ -62,9 +63,7 @@ There is also an inherited upstream workflow:
 
 That workflow may try to push `ghcr.io/openpanel-dev/*` and can fail with `403 Forbidden` from this fork. Do **not** treat that as a Regain deploy blocker unless Nizam explicitly asks to fix upstream publishing. The Regain deploy path is the `Build and Push to GHCR` workflow above.
 
-## Staging and prod hosts
-
-Staging:
+## Active OpenPanel host
 
 ```text
 Public URL: https://openpanel.regainapp.ai
@@ -72,19 +71,14 @@ SSH host: jitsu-dashboard1-regain
 Compose dir: /root/regainapp.ai/server/jitsu/ha_setup/dashboard-1
 ```
 
-Prod:
-
-```text
-Public URL: https://openpanel-prod.regainapp.ai
-SSH host: jitsu-prod-dashboard1-regain
-Compose dir: /root/regainapp.ai/server/jitsu/prod_ha_setup/dashboard-1
-```
-
-Both are reachable over Tailscale from this Hermes host. SSH as root generally works without specifying a key:
+This is the production OpenPanel service despite the historical `ha_setup`
+directory name. The former `openpanel-prod.regainapp.ai` and
+`jitsu-prod-dashboard1-regain` deployment was intentionally decommissioned;
+do not target it. The active host is reachable over Tailscale from this Hermes
+host. SSH as root generally works without specifying a key:
 
 ```bash
 ssh root@jitsu-dashboard1-regain hostname
-ssh root@jitsu-prod-dashboard1-regain hostname
 ```
 
 ## Normal change workflow
@@ -144,11 +138,10 @@ ssh root@jitsu-prod-dashboard1-regain hostname
 
    The required run is `Build and Push to GHCR`. It must complete with `success` for the commit being deployed.
 
-## Deploy to staging and prod
+## Deploy the active OpenPanel setup
 
-After `Build and Push to GHCR` succeeds for the `dashboard-plus` commit, deploy both hosts.
-
-Staging:
+After `Build and Push to GHCR` succeeds for the `dashboard-plus` commit, deploy
+the single active host:
 
 ```bash
 ssh root@jitsu-dashboard1-regain '
@@ -159,20 +152,9 @@ ssh root@jitsu-dashboard1-regain '
 '
 ```
 
-Prod:
-
-```bash
-ssh root@jitsu-prod-dashboard1-regain '
-  set -euo pipefail
-  cd /root/regainapp.ai/server/jitsu/prod_ha_setup/dashboard-1
-  docker compose --env-file /etc/infisical/secrets/.env pull openpanel-api openpanel-worker openpanel-dashboard
-  docker compose --env-file /etc/infisical/secrets/.env up -d --no-deps --force-recreate openpanel-api openpanel-worker openpanel-dashboard
-'
-```
-
 ## Verify deployment
 
-Run on each host after recreation:
+Run on the active host after recreation:
 
 ```bash
 cd <compose-dir>
@@ -193,12 +175,9 @@ From the Hermes host verify the public pages:
 
 ```bash
 curl -sS -I -L --max-time 20 https://openpanel.regainapp.ai | sed -n '1,12p'
-curl -sS -I -L --max-time 20 https://openpanel-prod.regainapp.ai | sed -n '1,12p'
 ```
 
 Expected public behavior is usually `307 -> /login -> 200`.
-
-Also confirm staging and prod API/dashboard/worker image IDs match. If they differ, one host did not deploy the same build.
 
 ## Retention/property metric semantics
 
@@ -256,7 +235,8 @@ Then verify status, image ID, local health, and public URL as above.
 
 - Do not make changes in an unrelated checkout when `/root/openpanel` is available.
 - Do not assume `main`; Regain deploys from `dashboard-plus`.
-- Do not stop after pushing code; wait for `Build and Push to GHCR`, deploy both staging and prod, then verify.
+- Do not stop after pushing code; wait for `Build and Push to GHCR`, deploy the single active OpenPanel host, then verify.
+- Do not attempt an OpenPanel deployment to `openpanel-prod.regainapp.ai` or `jitsu-prod-dashboard1-regain`; that separate setup was decommissioned.
 - Do not deploy only dashboard if API/worker code changed. Pull/recreate API, worker, and dashboard unless you are certain only dashboard changed.
 - Do not call upstream `openpanel-dev` GHCR failures an app failure. Check the Regain GHCR workflow instead.
 - Do not overwrite dirty work in the main checkout. Use a worktree.
