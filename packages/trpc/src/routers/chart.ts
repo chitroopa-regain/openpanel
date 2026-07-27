@@ -15,6 +15,7 @@ import {
   getCustomEventWhereClause,
   getEventFiltersWhereClause,
   getEventMetasCached,
+  getProfilesForUserListCached,
   getProfilesCached,
   getProfileTraitsKeysCached,
   getReportById,
@@ -1906,18 +1907,23 @@ export const chartRouter = createTRPCRouter({
         return [];
       }
 
-      // Fetch profile details in batches to avoid exceeding ClickHouse max_query_size
-      // when there are many profile IDs to pass in the IN(...) clause
-      const ids = profileIdsResult.map((p) => p.profile_id).filter(Boolean);
+      // The user drawer only renders identity fields plus country/city/OS/
+      // browser. Avoid getProfilesCached's full profile_traits scan and fetch
+      // only those display traits. Run the bounded batches concurrently too.
+      // Stable ordering makes the five-minute batch cache reusable even when
+      // ClickHouse returns the DISTINCT audience in a different order.
+      const ids = profileIdsResult
+        .map((p) => p.profile_id)
+        .filter(Boolean)
+        .sort();
       const BATCH_SIZE = 500;
-      const profiles = [];
+      const profileBatches: Promise<IServiceProfile[]>[] = [];
       for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
-        const batchProfiles = await getProfilesCached(batch, projectId);
-        profiles.push(...batchProfiles);
+        profileBatches.push(getProfilesForUserListCached(batch, projectId));
       }
 
-      return profiles;
+      return (await Promise.all(profileBatches)).flat();
     }),
 });
 

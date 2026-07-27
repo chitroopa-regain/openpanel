@@ -202,8 +202,9 @@ export const getProfilesCached = cacheable(getProfiles, 60 * 5);
  * filter still hits many granules). Callers that only need
  * name/avatar/email — namely the events LISTING view, which does not
  * render `profile.properties` anywhere — can call this to skip the ~800ms
- * per-request cost. Kept as a distinct function so the Redis cache stays
- * partitioned from the trait-merged variant.
+ * per-request cost. It is also the base primitive for callers that merge a
+ * small, explicitly selected trait set. Kept distinct so its Redis cache
+ * stays partitioned from the fully trait-merged variant.
  */
 export async function getProfilesWithoutTraits(
   ids: string[],
@@ -236,6 +237,66 @@ export async function getProfilesWithoutTraits(
 
 export const getProfilesWithoutTraitsCached = cacheable(
   getProfilesWithoutTraits,
+  60 * 5,
+);
+
+const USER_LIST_TRAIT_KEYS = ['country', 'city', 'os', 'browser'] as const;
+
+/**
+ * Fetches the compact profile shape rendered by chart user drawers.
+ *
+ * Unlike getProfiles, this only merges the few traits the row UI displays.
+ * profile_traits is ordered by (project_id, key, profile_id), so constraining
+ * the key avoids scanning every trait for every selected profile.
+ */
+export async function getProfilesForUserList(
+  ids: string[],
+  projectId: string,
+) {
+  const filteredIds = uniq(ids.filter((id) => id !== ''));
+  if (filteredIds.length === 0) return [];
+
+  const escapedIds = filteredIds
+    .map((id) => sqlstring.escape(id))
+    .join(',');
+  const escapedKeys = USER_LIST_TRAIT_KEYS.map((key) =>
+    sqlstring.escape(key),
+  ).join(',');
+
+  const [profiles, traits] = await Promise.all([
+    getProfilesWithoutTraits(filteredIds, projectId),
+    chQuery<{ profile_id: string; key: string; value: string }>(
+      `SELECT profile_id, key, argMax(value, updated_at) as value
+       FROM ${TABLE_NAMES.profile_traits}
+       WHERE project_id = ${sqlstring.escape(projectId)}
+         AND key IN (${escapedKeys})
+         AND profile_id IN (${escapedIds})
+       GROUP BY profile_id, key`,
+    ),
+  ]);
+
+  const traitsByProfile = new Map<string, Record<string, string>>();
+  for (const trait of traits) {
+    const profileTraits = traitsByProfile.get(trait.profile_id) ?? {};
+    profileTraits[trait.key] = trait.value;
+    traitsByProfile.set(trait.profile_id, profileTraits);
+  }
+
+  for (const profile of profiles) {
+    const profileTraits = traitsByProfile.get(profile.id);
+    if (profileTraits) {
+      profile.properties = {
+        ...(typeof profile.properties === 'object' ? profile.properties : {}),
+        ...profileTraits,
+      };
+    }
+  }
+
+  return profiles;
+}
+
+export const getProfilesForUserListCached = cacheable(
+  getProfilesForUserList,
   60 * 5,
 );
 
