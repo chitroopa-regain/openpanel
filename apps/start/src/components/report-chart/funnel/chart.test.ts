@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   FunnelTooltipRows,
+  getFunnelAudienceQuery,
   getFunnelBarSize,
+  getFunnelDropoffChartPercent,
   getFunnelLabelLayout,
   getFunnelMeasureLabel,
   getFunnelPreviewSummaryItems,
@@ -222,6 +224,24 @@ describe('funnel chart adaptive layout', () => {
       droppedOffUsers: 0,
       droppedOffPercent: 0,
     });
+  });
+
+  it('creates a clickable drop-off chart region between consecutive steps', () => {
+    expect(getFunnelDropoffChartPercent(62.56, 100)).toBeCloseTo(37.44);
+    expect(getFunnelDropoffChartPercent(110, 100)).toBe(0);
+    expect(getFunnelDropoffChartPercent(Number.NaN, 100)).toBe(0);
+  });
+
+  it('maps converted and dropped-off chart regions to the correct funnel audience query', () => {
+    expect(getFunnelAudienceQuery(1, 'converted')).toEqual({
+      stepIndex: 1,
+      showDropoffs: false,
+    });
+    expect(getFunnelAudienceQuery(1, 'dropped-off')).toEqual({
+      stepIndex: 0,
+      showDropoffs: true,
+    });
+    expect(getFunnelAudienceQuery(0, 'dropped-off')).toBeNull();
   });
 
   it('labels property average without ARPU wording', () => {

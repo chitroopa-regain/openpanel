@@ -1,7 +1,17 @@
 import { getPreviousMetric } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import { ChevronRightIcon, InfoIcon, UsersIcon } from 'lucide-react';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import {
   Bar,
@@ -52,6 +62,30 @@ type FunnelStep =
   RouterOutputs['chart']['funnel']['current'][number]['lastStep'];
 
 type FunnelTooltipStepLike = Pick<FunnelStep, 'count' | 'previousCount'>;
+
+type FunnelAudience = 'converted' | 'dropped-off';
+
+export function getFunnelDropoffChartPercent(
+  currentPercent: number | undefined,
+  previousPercent: number | undefined
+) {
+  if (!(Number.isFinite(currentPercent) && Number.isFinite(previousPercent))) {
+    return 0;
+  }
+  return Math.max(0, (previousPercent ?? 0) - (currentPercent ?? 0));
+}
+
+export function getFunnelAudienceQuery(
+  chartStepIndex: number,
+  audience: FunnelAudience
+) {
+  if (audience === 'dropped-off') {
+    return chartStepIndex > 0
+      ? { stepIndex: chartStepIndex - 1, showDropoffs: true }
+      : null;
+  }
+  return { stepIndex: chartStepIndex, showDropoffs: false };
+}
 
 export function getFunnelTooltipMetrics(
   step: FunnelTooltipStepLike,
@@ -538,6 +572,7 @@ type RechartData = {
   stepIndex: number;
   name: string;
   [key: `step:percent:${number}`]: number | null;
+  [key: `step:dropoffPercent:${number}`]: number;
   [key: `step:data:${number}`]:
     | (RouterOutputs['chart']['funnel']['current'][number] & {
         step: RouterOutputs['chart']['funnel']['current'][number]['steps'][number];
@@ -595,13 +630,20 @@ const useRechartData = ({
           }
 
           const diff = previous?.[originalIndex];
+          const currentStep = visibleItem.steps[stepIndex];
+          const previousStep =
+            stepIndex > 0 ? visibleItem.steps[stepIndex - 1] : undefined;
+          const dropoffPercent = getFunnelDropoffChartPercent(
+            currentStep?.percent,
+            previousStep?.percent
+          );
           return {
             ...acc,
-            [`step:percent:${visibleIdx}`]:
-              visibleItem.steps[stepIndex]?.percent ?? null,
+            [`step:percent:${visibleIdx}`]: currentStep?.percent ?? null,
+            [`step:dropoffPercent:${visibleIdx}`]: dropoffPercent,
             [`step:data:${visibleIdx}`]: {
               ...visibleItem,
-              step: visibleItem.steps[stepIndex],
+              step: currentStep,
             },
             [`prev_step:percent:${visibleIdx}`]:
               diff?.steps[stepIndex]?.percent ?? null,
@@ -1015,10 +1057,14 @@ function FunnelBarLabel({
 }
 
 type FunnelBarShapeProps = FunnelBarLabelProps & {
+  'aria-label'?: string;
   fill?: string;
   stroke?: string;
   value?: number;
   isActive?: boolean;
+  onKeyDown?: (event: ReactKeyboardEvent<SVGElement>) => void;
+  role?: string;
+  tabIndex?: number;
 };
 
 function FunnelBarShape(props: FunnelBarShapeProps) {
@@ -1073,10 +1119,45 @@ function FunnelBarShape(props: FunnelBarShapeProps) {
         ].join(' ');
 
   return (
-    <g>
-      <path d={topRoundedPath} stroke="none" fill={resolvedFill} />
+    <g
+      aria-label={props['aria-label']}
+      onKeyDown={props.onKeyDown}
+      role={props.role}
+      tabIndex={props.tabIndex}
+    >
+      <path d={topRoundedPath} fill={resolvedFill} stroke="none" />
       <FunnelBarLabel {...props} />
     </g>
+  );
+}
+
+function FunnelDropoffBarShape(props: FunnelBarShapeProps) {
+  const { x, y, width, height, fill } = props;
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number' ||
+    height <= 0
+  ) {
+    return null;
+  }
+
+  return (
+    <rect
+      aria-label={props['aria-label']}
+      className="cursor-pointer transition-opacity hover:opacity-40"
+      fill={fill}
+      height={height}
+      onKeyDown={props.onKeyDown}
+      opacity={0.18}
+      role={props.role}
+      rx={3}
+      tabIndex={props.tabIndex}
+      width={width}
+      x={x}
+      y={y}
+    />
   );
 }
 
@@ -1120,7 +1201,12 @@ function FunnelBreakdownBarShape({
   ].join(' ');
 
   return (
-    <g>
+    <g
+      aria-label={props['aria-label']}
+      onKeyDown={props.onKeyDown}
+      role={props.role}
+      tabIndex={props.tabIndex}
+    >
       <path d={topRoundedPath} fill={resolvedFill} stroke="none" />
       {showLabel && (
         <FunnelBarLabel {...props} breakdownIndex={breakdownIndex} />
@@ -1309,6 +1395,92 @@ export function getFunnelResponsiveBarSize({
   );
 }
 
+type FunnelDrilldownSelection = {
+  audience: FunnelAudience;
+  chartStepIndex: number;
+  breakdownIndex: number;
+  x: number;
+  y: number;
+};
+
+function FunnelDrilldownPopover({
+  selection,
+  variant,
+  onClose,
+  onViewUsers,
+}: {
+  selection: FunnelDrilldownSelection;
+  variant: NonNullable<RechartData[`step:data:${number}`]>;
+  onClose: () => void;
+  onViewUsers: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const number = useNumber();
+  const metrics = getFunnelTooltipMetrics(
+    variant.step,
+    selection.chartStepIndex === 0
+  );
+  const isDropoff = selection.audience === 'dropped-off';
+  const title = variant.breakdowns?.length
+    ? variant.breakdowns.join(' / ')
+    : 'Overall';
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!panelRef.current?.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  const left = Math.min(selection.x + 8, window.innerWidth - 328);
+  const top = Math.min(selection.y + 8, window.innerHeight - 220);
+
+  return createPortal(
+    <div
+      aria-label={`${isDropoff ? 'Dropped-off' : 'Converted'} funnel users`}
+      className="fixed z-[1000] w-80 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl"
+      ref={panelRef}
+      role="dialog"
+      style={{ left: Math.max(8, left), top: Math.max(8, top) }}
+    >
+      <div className="mb-3 font-semibold">{title}</div>
+      <div className="mb-4 col gap-1">
+        <div className="font-medium">
+          {number.formatWithUnit(
+            (isDropoff ? metrics.droppedOffPercent : metrics.convertedPercent) /
+              100,
+            '%'
+          )}{' '}
+          {isDropoff ? 'dropped off' : 'completed this step'}
+        </div>
+        <div className="text-sm text-muted-foreground">
+          {number.format(
+            isDropoff ? metrics.droppedOffUsers : metrics.convertedUsers
+          )}{' '}
+          users
+        </div>
+      </div>
+      <Button className="w-full" onClick={onViewUsers} variant="outline">
+        <UsersIcon className="mr-2 size-4" />
+        View Users
+      </Button>
+    </div>,
+    document.body
+  );
+}
+
 export function Chart({
   data,
   visibleBreakdowns,
@@ -1316,8 +1488,97 @@ export function Chart({
   data: RouterOutputs['chart']['funnel'];
   visibleBreakdowns: RouterOutputs['chart']['funnel']['current'];
 }) {
-  const { options } = useReportChartContext();
+  const { options, report } = useReportChartContext();
   const rechartData = useRechartData({ ...data, visibleBreakdowns });
+  const [drilldownSelection, setDrilldownSelection] =
+    useState<FunnelDrilldownSelection | null>(null);
+  const selectedVariant = drilldownSelection
+    ? rechartData[drilldownSelection.chartStepIndex]?.[
+        `step:data:${drilldownSelection.breakdownIndex}`
+      ]
+    : null;
+  const handleAudienceClick = useCallback(
+    (audience: FunnelAudience, breakdownIndex: number) =>
+      (
+        _data: unknown,
+        chartStepIndex: number,
+        event: ReactMouseEvent<SVGPathElement>
+      ) => {
+        if (!getFunnelAudienceQuery(chartStepIndex, audience)) {
+          return;
+        }
+        event.stopPropagation();
+        setDrilldownSelection({
+          audience,
+          breakdownIndex,
+          chartStepIndex,
+          x: event.clientX,
+          y: event.clientY,
+        });
+      },
+    []
+  );
+  const handleAudienceKeyDown = useCallback(
+    (
+      audience: FunnelAudience,
+      breakdownIndex: number,
+      chartStepIndex: number
+    ) =>
+      (event: ReactKeyboardEvent<SVGElement>) => {
+        if (
+          !['Enter', ' '].includes(event.key) ||
+          !getFunnelAudienceQuery(chartStepIndex, audience)
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        setDrilldownSelection({
+          audience,
+          breakdownIndex,
+          chartStepIndex,
+          x: bounds.right,
+          y: bounds.top + bounds.height / 2,
+        });
+      },
+    []
+  );
+  const handleViewUsers = useCallback(() => {
+    if (!drilldownSelection || !selectedVariant || !report.projectId) {
+      return;
+    }
+    const query = getFunnelAudienceQuery(
+      drilldownSelection.chartStepIndex,
+      drilldownSelection.audience
+    );
+    if (!query) {
+      return;
+    }
+    const funnelOptions =
+      report.options?.type === 'funnel' ? report.options : undefined;
+    pushModal('ViewChartUsers', {
+      type: 'funnel',
+      report: {
+        projectId: report.projectId,
+        series: report.series,
+        breakdowns: report.breakdowns || [],
+        interval: report.interval || 'day',
+        startDate: report.startDate,
+        endDate: report.endDate,
+        range: report.range,
+        previous: report.previous,
+        chartType: 'funnel',
+        metric: 'sum',
+        options: funnelOptions,
+        dateConfig: report.dateConfig,
+      },
+      stepIndex: query.stepIndex,
+      initialShowDropoffs: query.showDropoffs,
+      breakdownValues: selectedVariant.breakdowns,
+    });
+    setDrilldownSelection(null);
+  }, [drilldownSelection, report, selectedVariant]);
   const xAxisProps = useXAxisProps();
   const yAxisProps = useYAxisProps();
   const hasBreakdowns = data.current.length > 1;
@@ -1514,41 +1775,116 @@ export function Chart({
                     const colorIndex =
                       stableIndex >= 0 ? stableIndex : breakdownIndex;
                     return (
-                      <Bar
-                        barSize={funnelBarSize}
-                        dataKey={`step:percent:${breakdownIndex}`}
-                        key={`step:percent:${item.id}`}
-                        shape={
-                          <FunnelBreakdownBarShape
-                            showLabel={showBreakdownPreviewLabels}
-                            breakdownIndex={breakdownIndex}
-                          />
-                        }
-                      >
-                        {rechartData.map((row, stepIndex) => (
-                          <Cell
-                            fill={getChartColor(colorIndex)}
-                            key={`${row.name}-${breakdownIndex}`}
-                            stroke={getChartColor(colorIndex)}
-                          />
-                        ))}
-                      </Bar>
+                      <Fragment key={item.id}>
+                        <Bar
+                          barSize={funnelBarSize}
+                          dataKey={`step:percent:${breakdownIndex}`}
+                          onClick={handleAudienceClick(
+                            'converted',
+                            breakdownIndex
+                          )}
+                          shape={
+                            <FunnelBreakdownBarShape
+                              showLabel={showBreakdownPreviewLabels}
+                              breakdownIndex={breakdownIndex}
+                            />
+                          }
+                          stackId={`funnel-${breakdownIndex}`}
+                        >
+                          {rechartData.map((row, stepIndex) => (
+                            <Cell
+                              aria-label={`View users who completed step ${stepIndex + 1}: ${row.name}${item.breakdowns?.length ? `, ${item.breakdowns.join(' / ')}` : ''}`}
+                              className="cursor-pointer"
+                              fill={getChartColor(colorIndex)}
+                              key={`${row.name}-${breakdownIndex}`}
+                              onKeyDown={handleAudienceKeyDown(
+                                'converted',
+                                breakdownIndex,
+                                stepIndex
+                              )}
+                              role="button"
+                              stroke={getChartColor(colorIndex)}
+                              tabIndex={0}
+                            />
+                          ))}
+                        </Bar>
+                        <Bar
+                          barSize={funnelBarSize}
+                          dataKey={`step:dropoffPercent:${breakdownIndex}`}
+                          onClick={handleAudienceClick(
+                            'dropped-off',
+                            breakdownIndex
+                          )}
+                          shape={<FunnelDropoffBarShape />}
+                          stackId={`funnel-${breakdownIndex}`}
+                        >
+                          {rechartData.map((row, stepIndex) => (
+                            <Cell
+                              aria-label={`View users who dropped off before step ${stepIndex + 1}: ${row.name}${item.breakdowns?.length ? `, ${item.breakdowns.join(' / ')}` : ''}`}
+                              fill={getChartColor(colorIndex)}
+                              key={`dropoff-${row.name}-${breakdownIndex}`}
+                              onKeyDown={handleAudienceKeyDown(
+                                'dropped-off',
+                                breakdownIndex,
+                                stepIndex
+                              )}
+                              role="button"
+                              tabIndex={stepIndex > 0 ? 0 : -1}
+                            />
+                          ))}
+                        </Bar>
+                      </Fragment>
                     );
                   })}
                 {!hasBreakdowns && (
-                  <Bar
-                    barSize={funnelBarSize}
-                    dataKey="step:percent:0"
-                    shape={<FunnelBarShape />}
-                  >
-                    {rechartData.map((item, index) => (
-                      <Cell
-                        fill={getChartColor(0)}
-                        key={item.name}
-                        stroke={getChartColor(0)}
-                      />
-                    ))}
-                  </Bar>
+                  <>
+                    <Bar
+                      barSize={funnelBarSize}
+                      dataKey="step:percent:0"
+                      onClick={handleAudienceClick('converted', 0)}
+                      shape={<FunnelBarShape />}
+                      stackId="funnel-0"
+                    >
+                      {rechartData.map((item, stepIndex) => (
+                        <Cell
+                          aria-label={`View users who completed step ${stepIndex + 1}: ${item.name}`}
+                          className="cursor-pointer"
+                          fill={getChartColor(0)}
+                          key={item.name}
+                          onKeyDown={handleAudienceKeyDown(
+                            'converted',
+                            0,
+                            stepIndex
+                          )}
+                          role="button"
+                          stroke={getChartColor(0)}
+                          tabIndex={0}
+                        />
+                      ))}
+                    </Bar>
+                    <Bar
+                      barSize={funnelBarSize}
+                      dataKey="step:dropoffPercent:0"
+                      onClick={handleAudienceClick('dropped-off', 0)}
+                      shape={<FunnelDropoffBarShape />}
+                      stackId="funnel-0"
+                    >
+                      {rechartData.map((item, stepIndex) => (
+                        <Cell
+                          aria-label={`View users who dropped off before step ${stepIndex + 1}: ${item.name}`}
+                          fill={getChartColor(0)}
+                          key={`dropoff-${item.name}`}
+                          onKeyDown={handleAudienceKeyDown(
+                            'dropped-off',
+                            0,
+                            stepIndex
+                          )}
+                          role="button"
+                          tabIndex={stepIndex > 0 ? 0 : -1}
+                        />
+                      ))}
+                    </Bar>
+                  </>
                 )}
                 {showPreviousBars && (
                   <Bar
@@ -1572,6 +1908,16 @@ export function Chart({
           </div>
         </div>
       </div>
+      {drilldownSelection &&
+        selectedVariant &&
+        typeof document !== 'undefined' && (
+          <FunnelDrilldownPopover
+            onClose={() => setDrilldownSelection(null)}
+            onViewUsers={handleViewUsers}
+            selection={drilldownSelection}
+            variant={selectedVariant}
+          />
+        )}
     </TooltipProvider>
   );
 }
@@ -1599,7 +1945,7 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
   // bar's payload item. Extract the breakdown index from its dataKey.
   const hoveredDataKey = items[0]?.dataKey as string | undefined;
   const hoveredBreakdownIndex =
-    hoveredDataKey?.match(/^step:percent:(\d+)$/)?.[1];
+    hoveredDataKey?.match(/^step:(?:percent|dropoffPercent):(\d+)$/)?.[1];
 
   // Filter variants to only show visible breakdowns
   const visibleVariants = variants.filter((key) => {

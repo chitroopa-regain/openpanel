@@ -1,7 +1,20 @@
+import type { IReportInput } from '@openpanel/validation';
+import { useQuery } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { SearchIcon } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ModalHeader } from './Modal/Container';
+import {
+  ScrollableModal,
+  ScrollableSheet,
+  useScrollableModal,
+} from './Modal/scrollable-modal';
 import { ProjectLink } from '@/components/links';
 import { ProfileAvatar } from '@/components/profiles/profile-avatar';
 import { SerieIcon } from '@/components/report-chart/common/serie-icon';
+import { Button } from '@/components/ui/button';
 import { DropdownMenuShortcut } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -13,32 +26,27 @@ import { useTRPC } from '@/integrations/trpc/react';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getProfileName } from '@/utils/getters';
-import type { IReportInput } from '@openpanel/validation';
-import { useQuery } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect, useMemo, useState } from 'react';
-import { popModal } from '.';
-import { ModalHeader } from './Modal/Container';
-import { ScrollableModal, useScrollableModal } from './Modal/scrollable-modal';
 
 const ProfileItem = ({ profile }: { profile: any }) => {
+  const profileName = getProfileName(profile, false);
   return (
     <ProjectLink
       preload={false}
       href={`/profiles/${encodeURIComponent(profile.id)}/events`}
-      title={getProfileName(profile, false)}
-      className="col gap-2 rounded-lg border p-2 bg-card"
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey) {
-          return;
-        }
-        popModal();
-      }}
+      target="_blank"
+      rel="noreferrer"
+      title={profileName}
+      className="col gap-2 rounded-lg border p-2 bg-card hover:bg-def-100"
     >
       <div className="row gap-2 items-center">
         <ProfileAvatar {...profile} />
-        <div className="flex-1">
-          <div className="font-medium">{getProfileName(profile)}</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono font-medium">{profile.id}</div>
+          {profileName !== profile.id && (
+            <div className="truncate text-sm text-muted-foreground">
+              {profileName}
+            </div>
+          )}
         </div>
       </div>
 
@@ -99,6 +107,7 @@ function ProfileList({ profiles }: { profiles: any[] }) {
     if (isScrollReady && scrollAreaRef.current) {
       // Small delay to ensure DOM is ready
       const timeoutId = setTimeout(() => {
+        virtualizer.scrollToOffset(0);
         virtualizer.measure();
       }, 0);
       return () => clearTimeout(timeoutId);
@@ -159,15 +168,15 @@ interface ChartUsersViewProps {
 function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
   const trpc = useTRPC();
   const [selectedSerieId, setSelectedSerieId] = useState<string | null>(
-    report.series[0]?.id || null,
+    report.series[0]?.id || null
   );
   const [selectedBreakdownId, setSelectedBreakdownId] = useState<string | null>(
-    null,
+    null
   );
 
   const selectedReportSerie = useMemo(
     () => report.series.find((s) => s.id === selectedSerieId),
-    [report.series, selectedSerieId],
+    [report.series, selectedSerieId]
   );
 
   // Get all chart series that match the selected report serie
@@ -201,8 +210,8 @@ function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
       },
       {
         enabled: !!selectedReportSerie && selectedReportSerie.type === 'event',
-      },
-    ),
+      }
+    )
   );
 
   const profiles = profilesQuery.data ?? [];
@@ -249,7 +258,7 @@ function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
                       .map((serie) => (
                         <SelectItem key={serie.id} value={serie.id}>
                           {Object.values(serie.event.breakdowns ?? {}).join(
-                            ', ',
+                            ', '
                           )}
                           <DropdownMenuShortcut className="ml-auto">
                             ({serie.data.find((d) => d.date === date)?.count})
@@ -281,12 +290,19 @@ function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
 interface FunnelUsersViewProps {
   report: IReportInput;
   stepIndex: number;
+  initialShowDropoffs?: boolean;
   breakdownValues?: string[];
 }
 
-function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersViewProps) {
+function FunnelUsersView({
+  report,
+  stepIndex,
+  initialShowDropoffs = false,
+  breakdownValues,
+}: FunnelUsersViewProps) {
   const trpc = useTRPC();
-  const [showDropoffs, setShowDropoffs] = useState(false);
+  const [showDropoffs, setShowDropoffs] = useState(initialShowDropoffs);
+  const [search, setSearch] = useState('');
 
   const profilesQuery = useQuery(
     trpc.chart.getFunnelProfiles.queryOptions(
@@ -320,18 +336,31 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
       },
       {
         enabled: stepIndex !== undefined,
-      },
-    ),
+      }
+    )
   );
 
   const profiles = profilesQuery.data ?? [];
+  const visibleProfiles = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) {
+      return profiles;
+    }
+    return profiles.filter((profile) => {
+      const name = getProfileName(profile, false);
+      return [profile.id, profile.email, name]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(needle));
+    });
+  }, [profiles, search]);
   const isLastStep = stepIndex === report.series.length - 1;
 
   return (
-    <ScrollableModal
+    <ScrollableSheet
       header={
         <div className="flex flex-col gap-2">
           <ModalHeader
+            onClose={false}
             title="View Users"
             text={
               showDropoffs
@@ -348,7 +377,7 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
                   'px-3 py-1.5 text-sm rounded-md transition-colors',
                   !showDropoffs
                     ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 )}
               >
                 Completed
@@ -360,11 +389,25 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
                   'px-3 py-1.5 text-sm rounded-md transition-colors',
                   showDropoffs
                     ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 )}
               >
                 Dropped Off
               </button>
+            </div>
+          )}
+          <div className="relative">
+            <SearchIcon className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search users by ID, name, or email"
+              value={search}
+            />
+          </div>
+          {!profilesQuery.isLoading && !profilesQuery.isError && (
+            <div className="text-xs text-muted-foreground">
+              Showing {visibleProfiles.length} of {profiles.length} loaded users
             </div>
           )}
         </div>
@@ -375,11 +418,23 @@ function FunnelUsersView({ report, stepIndex, breakdownValues }: FunnelUsersView
           <div className="flex items-center justify-center py-8">
             <div className="text-muted-foreground">Loading users...</div>
           </div>
+        ) : profilesQuery.isError ? (
+          <div className="flex flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+            <div>
+              <div className="font-medium">Unable to load users</div>
+              <div className="text-sm text-muted-foreground">
+                The funnel audience query failed. Try again.
+              </div>
+            </div>
+            <Button onClick={() => profilesQuery.refetch()} variant="outline">
+              Try again
+            </Button>
+          </div>
         ) : (
-          <ProfileList profiles={profiles} />
+          <ProfileList profiles={visibleProfiles} />
         )}
       </div>
-    </ScrollableModal>
+    </ScrollableSheet>
   );
 }
 
@@ -395,6 +450,7 @@ type ViewChartUsersProps =
       type: 'funnel';
       report: IReportInput;
       stepIndex: number;
+      initialShowDropoffs?: boolean;
       breakdownValues?: string[];
     };
 
@@ -405,6 +461,7 @@ export default function ViewChartUsers(props: ViewChartUsersProps) {
       <FunnelUsersView
         report={props.report}
         stepIndex={props.stepIndex}
+        initialShowDropoffs={props.initialShowDropoffs}
         breakdownValues={props.breakdownValues}
       />
     );
