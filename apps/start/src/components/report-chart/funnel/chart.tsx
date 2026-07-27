@@ -2,7 +2,6 @@ import { getPreviousMetric } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import { ChevronRightIcon, InfoIcon, UsersIcon } from 'lucide-react';
 import {
-  Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   useCallback,
@@ -591,7 +590,7 @@ type FunnelBarLabelProps = {
   y?: number;
   width?: number;
   height?: number;
-  value?: number | string | null;
+  value?: number | number[] | string | null;
   payload?: RechartData;
 };
 
@@ -902,7 +901,7 @@ export function getFunnelLabelLayout({
   x: number;
   y: number;
   width: number;
-  value?: number | string | null;
+  value?: number | number[] | string | null;
   percentText: string;
   countText: string;
 }) {
@@ -956,10 +955,11 @@ function getFunnelBarGeometry({
 }: {
   y: number;
   height: number;
-  value?: number | string | null;
+  value?: number | number[] | string | null;
 }) {
-  const numericValue =
-    typeof value === 'number'
+  const numericValue = Array.isArray(value)
+    ? Math.max(0, (value[1] ?? 0) - (value[0] ?? 0))
+    : typeof value === 'number'
       ? value
       : typeof value === 'string'
         ? Number(value)
@@ -1767,125 +1767,127 @@ export function Chart({
                   type={'category'}
                 />
                 <YAxis {...yAxisProps} />
+                {/* Recharts ignores Bar children nested in React.Fragment. Keep
+                    converted/drop-off bars as flat direct chart children. */}
                 {hasBreakdowns &&
-                  visibleBreakdowns.map((item, breakdownIndex) => {
+                  visibleBreakdowns.flatMap((item, breakdownIndex) => {
                     const stableIndex = data.current.findIndex(
                       (b) => b.id === item.id
                     );
                     const colorIndex =
                       stableIndex >= 0 ? stableIndex : breakdownIndex;
-                    return (
-                      <Fragment key={item.id}>
-                        <Bar
-                          barSize={funnelBarSize}
-                          dataKey={`step:percent:${breakdownIndex}`}
-                          onClick={handleAudienceClick(
-                            'converted',
-                            breakdownIndex
-                          )}
-                          shape={
-                            <FunnelBreakdownBarShape
-                              showLabel={showBreakdownPreviewLabels}
-                              breakdownIndex={breakdownIndex}
-                            />
-                          }
-                          stackId={`funnel-${breakdownIndex}`}
-                        >
-                          {rechartData.map((row, stepIndex) => (
-                            <Cell
-                              aria-label={`View users who completed step ${stepIndex + 1}: ${row.name}${item.breakdowns?.length ? `, ${item.breakdowns.join(' / ')}` : ''}`}
-                              className="cursor-pointer"
-                              fill={getChartColor(colorIndex)}
-                              key={`${row.name}-${breakdownIndex}`}
-                              onKeyDown={handleAudienceKeyDown(
-                                'converted',
-                                breakdownIndex,
-                                stepIndex
-                              )}
-                              role="button"
-                              stroke={getChartColor(colorIndex)}
-                              tabIndex={0}
-                            />
-                          ))}
-                        </Bar>
-                        <Bar
-                          barSize={funnelBarSize}
-                          dataKey={`step:dropoffPercent:${breakdownIndex}`}
-                          onClick={handleAudienceClick(
-                            'dropped-off',
-                            breakdownIndex
-                          )}
-                          shape={<FunnelDropoffBarShape />}
-                          stackId={`funnel-${breakdownIndex}`}
-                        >
-                          {rechartData.map((row, stepIndex) => (
-                            <Cell
-                              aria-label={`View users who dropped off before step ${stepIndex + 1}: ${row.name}${item.breakdowns?.length ? `, ${item.breakdowns.join(' / ')}` : ''}`}
-                              fill={getChartColor(colorIndex)}
-                              key={`dropoff-${row.name}-${breakdownIndex}`}
-                              onKeyDown={handleAudienceKeyDown(
-                                'dropped-off',
-                                breakdownIndex,
-                                stepIndex
-                              )}
-                              role="button"
-                              tabIndex={stepIndex > 0 ? 0 : -1}
-                            />
-                          ))}
-                        </Bar>
-                      </Fragment>
-                    );
+                    return [
+                      <Bar
+                        barSize={funnelBarSize}
+                        dataKey={`step:percent:${breakdownIndex}`}
+                        key={`converted-${item.id}`}
+                        onClick={handleAudienceClick(
+                          'converted',
+                          breakdownIndex
+                        )}
+                        shape={
+                          <FunnelBreakdownBarShape
+                            showLabel={showBreakdownPreviewLabels}
+                            breakdownIndex={breakdownIndex}
+                          />
+                        }
+                        stackId={`funnel-${breakdownIndex}`}
+                      >
+                        {rechartData.map((row, stepIndex) => (
+                          <Cell
+                            aria-label={`View users who completed step ${stepIndex + 1}: ${row.name}${item.breakdowns?.length ? `, ${item.breakdowns.join(' / ')}` : ''}`}
+                            className="cursor-pointer"
+                            fill={getChartColor(colorIndex)}
+                            key={`converted-${breakdownIndex}-${stepIndex}`}
+                            onKeyDown={handleAudienceKeyDown(
+                              'converted',
+                              breakdownIndex,
+                              stepIndex
+                            )}
+                            role="button"
+                            stroke={getChartColor(colorIndex)}
+                            tabIndex={0}
+                          />
+                        ))}
+                      </Bar>,
+                      <Bar
+                        barSize={funnelBarSize}
+                        dataKey={`step:dropoffPercent:${breakdownIndex}`}
+                        key={`dropoff-${item.id}`}
+                        onClick={handleAudienceClick(
+                          'dropped-off',
+                          breakdownIndex
+                        )}
+                        shape={<FunnelDropoffBarShape />}
+                        stackId={`funnel-${breakdownIndex}`}
+                      >
+                        {rechartData.map((row, stepIndex) => (
+                          <Cell
+                            aria-label={`View users who dropped off before step ${stepIndex + 1}: ${row.name}${item.breakdowns?.length ? `, ${item.breakdowns.join(' / ')}` : ''}`}
+                            fill={getChartColor(colorIndex)}
+                            key={`dropoff-${breakdownIndex}-${stepIndex}`}
+                            onKeyDown={handleAudienceKeyDown(
+                              'dropped-off',
+                              breakdownIndex,
+                              stepIndex
+                            )}
+                            role="button"
+                            tabIndex={stepIndex > 0 ? 0 : -1}
+                          />
+                        ))}
+                      </Bar>,
+                    ];
                   })}
-                {!hasBreakdowns && (
-                  <>
-                    <Bar
-                      barSize={funnelBarSize}
-                      dataKey="step:percent:0"
-                      onClick={handleAudienceClick('converted', 0)}
-                      shape={<FunnelBarShape />}
-                      stackId="funnel-0"
-                    >
-                      {rechartData.map((item, stepIndex) => (
-                        <Cell
-                          aria-label={`View users who completed step ${stepIndex + 1}: ${item.name}`}
-                          className="cursor-pointer"
-                          fill={getChartColor(0)}
-                          key={item.name}
-                          onKeyDown={handleAudienceKeyDown(
-                            'converted',
-                            0,
-                            stepIndex
-                          )}
-                          role="button"
-                          stroke={getChartColor(0)}
-                          tabIndex={0}
-                        />
-                      ))}
-                    </Bar>
-                    <Bar
-                      barSize={funnelBarSize}
-                      dataKey="step:dropoffPercent:0"
-                      onClick={handleAudienceClick('dropped-off', 0)}
-                      shape={<FunnelDropoffBarShape />}
-                      stackId="funnel-0"
-                    >
-                      {rechartData.map((item, stepIndex) => (
-                        <Cell
-                          aria-label={`View users who dropped off before step ${stepIndex + 1}: ${item.name}`}
-                          fill={getChartColor(0)}
-                          key={`dropoff-${item.name}`}
-                          onKeyDown={handleAudienceKeyDown(
-                            'dropped-off',
-                            0,
-                            stepIndex
-                          )}
-                          role="button"
-                          tabIndex={stepIndex > 0 ? 0 : -1}
-                        />
-                      ))}
-                    </Bar>
-                  </>
-                )}
+                {!hasBreakdowns && [
+                  <Bar
+                    barSize={funnelBarSize}
+                    dataKey="step:percent:0"
+                    key="converted-overall"
+                    onClick={handleAudienceClick('converted', 0)}
+                    shape={<FunnelBarShape />}
+                    stackId="funnel-0"
+                  >
+                    {rechartData.map((item, stepIndex) => (
+                      <Cell
+                        aria-label={`View users who completed step ${stepIndex + 1}: ${item.name}`}
+                        className="cursor-pointer"
+                        fill={getChartColor(0)}
+                        key={`converted-overall-${stepIndex}`}
+                        onKeyDown={handleAudienceKeyDown(
+                          'converted',
+                          0,
+                          stepIndex
+                        )}
+                        role="button"
+                        stroke={getChartColor(0)}
+                        tabIndex={0}
+                      />
+                    ))}
+                  </Bar>,
+                  <Bar
+                    barSize={funnelBarSize}
+                    dataKey="step:dropoffPercent:0"
+                    key="dropoff-overall"
+                    onClick={handleAudienceClick('dropped-off', 0)}
+                    shape={<FunnelDropoffBarShape />}
+                    stackId="funnel-0"
+                  >
+                    {rechartData.map((item, stepIndex) => (
+                      <Cell
+                        aria-label={`View users who dropped off before step ${stepIndex + 1}: ${item.name}`}
+                        fill={getChartColor(0)}
+                        key={`dropoff-overall-${stepIndex}`}
+                        onKeyDown={handleAudienceKeyDown(
+                          'dropped-off',
+                          0,
+                          stepIndex
+                        )}
+                        role="button"
+                        tabIndex={stepIndex > 0 ? 0 : -1}
+                      />
+                    ))}
+                  </Bar>,
+                ]}
                 {showPreviousBars && (
                   <Bar
                     barSize={funnelBarSize}
@@ -1895,7 +1897,7 @@ export function Chart({
                     {rechartData.map((item, index) => (
                       <Cell
                         fill={getChartTranslucentColor(index)}
-                        key={`prev-${item.name}`}
+                        key={`prev-${index}`}
                         stroke={getChartColor(index)}
                       />
                     ))}
@@ -1944,8 +1946,9 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
   // In breakdown mode with shared={false}, Recharts sends only the hovered
   // bar's payload item. Extract the breakdown index from its dataKey.
   const hoveredDataKey = items[0]?.dataKey as string | undefined;
-  const hoveredBreakdownIndex =
-    hoveredDataKey?.match(/^step:(?:percent|dropoffPercent):(\d+)$/)?.[1];
+  const hoveredBreakdownIndex = hoveredDataKey?.match(
+    /^step:(?:percent|dropoffPercent):(\d+)$/
+  )?.[1];
 
   // Filter variants to only show visible breakdowns
   const visibleVariants = variants.filter((key) => {
