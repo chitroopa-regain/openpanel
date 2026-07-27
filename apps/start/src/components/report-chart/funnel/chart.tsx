@@ -51,6 +51,37 @@ type FunnelMeasure =
 type FunnelStep =
   RouterOutputs['chart']['funnel']['current'][number]['lastStep'];
 
+type FunnelTooltipStepLike = Pick<FunnelStep, 'count' | 'previousCount'>;
+
+export function getFunnelTooltipMetrics(
+  step: FunnelTooltipStepLike,
+  isFirstStep = false
+) {
+  const convertedUsers =
+    Number.isFinite(step.count) && step.count > 0 ? step.count : 0;
+  const previousStepUsers =
+    Number.isFinite(step.previousCount) && step.previousCount > 0
+      ? step.previousCount
+      : 0;
+  const droppedOffUsers = isFirstStep
+    ? 0
+    : Math.max(0, previousStepUsers - convertedUsers);
+
+  return {
+    convertedUsers,
+    convertedPercent: isFirstStep
+      ? 100
+      : previousStepUsers > 0
+        ? (convertedUsers / previousStepUsers) * 100
+        : 0,
+    droppedOffUsers,
+    droppedOffPercent:
+      !isFirstStep && previousStepUsers > 0
+        ? (droppedOffUsers / previousStepUsers) * 100
+        : 0,
+  };
+}
+
 type FunnelMeasureStepLike = {
   count?: number;
   percent?: number;
@@ -215,6 +246,38 @@ function ChartName({
           </>
         );
       })}
+    </div>
+  );
+}
+
+export function FunnelTooltipRows({
+  step,
+  isFirstStep = false,
+}: {
+  step: FunnelTooltipStepLike;
+  isFirstStep?: boolean;
+}) {
+  const number = useNumber();
+  const metrics = getFunnelTooltipMetrics(step, isFirstStep);
+
+  return (
+    <div className="col gap-1 font-medium font-mono">
+      <div className="flex items-center justify-between gap-8">
+        <span className="font-sans text-muted-foreground">Converted users</span>
+        <span>
+          {number.format(metrics.convertedUsers)} (
+          {number.formatWithUnit(metrics.convertedPercent / 100, '%')})
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-8">
+        <span className="font-sans text-muted-foreground">
+          Dropped-off users
+        </span>
+        <span>
+          {number.format(metrics.droppedOffUsers)} (
+          {number.formatWithUnit(metrics.droppedOffPercent / 100, '%')})
+        </span>
+      </div>
     </div>
   );
 }
@@ -1523,7 +1586,6 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
   }
 >(({ data: dataArray, items, context, ...props }) => {
   const data = dataArray[0];
-  const number = useNumber();
   if (!data) {
     return null;
   }
@@ -1568,22 +1630,23 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
     return (
       <>
         <div className="text-muted-foreground">{data.name}</div>
-        <div className="col gap-1.5">
-          <div className="flex justify-between gap-8 font-medium font-mono">
-            <span className="text-muted-foreground">Current</span>
-            <span>
-              {number.format(currentVariant.step.count)} (
-              {number.formatWithUnit(currentVariant.step.percent / 100, '%')})
-            </span>
+        <div className="col gap-2">
+          <div className="col gap-1">
+            <div className="font-medium text-xs">Current</div>
+            <FunnelTooltipRows
+              isFirstStep={index === 0}
+              step={currentVariant.step}
+            />
           </div>
           {previousVariant?.step && (
-            <div className="flex justify-between gap-8 font-medium font-mono text-muted-foreground">
-              <span>Previous</span>
-              <span>
-                {number.format(previousVariant.step.count)} (
-                {number.formatWithUnit(previousVariant.step.percent / 100, '%')}
-                )
-              </span>
+            <div className="col gap-1 border-border border-t pt-2">
+              <div className="font-medium text-muted-foreground text-xs">
+                Previous
+              </div>
+              <FunnelTooltipRows
+                isFirstStep={index === 0}
+                step={previousVariant.step}
+              />
             </div>
           )}
           {metric && metric.diff != null && (
@@ -1637,16 +1700,11 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
               <div className="flex items-center gap-1">
                 <ChartName breakdowns={variant.breakdowns ?? []} />
               </div>
-              <div className="flex items-center justify-between gap-4 font-mono font-medium">
-                <div className="col gap-0.5">
-                  <span>
-                    {number.formatWithUnit(variant.step.percent / 100, '%')}
-                  </span>
-                  <span className="text-muted-foreground text-xs">
-                    ({number.format(variant.step.count)})
-                  </span>
-                </div>
-
+              <div className="flex items-center gap-4">
+                <FunnelTooltipRows
+                  isFirstStep={index === 0}
+                  step={variant.step}
+                />
                 <PreviousDiffIndicatorPure
                   {...getPreviousMetric(
                     variant.step.percent,

@@ -1,10 +1,14 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  FunnelTooltipRows,
   getFunnelBarSize,
   getFunnelLabelLayout,
   getFunnelMeasureLabel,
   getFunnelPreviewSummaryItems,
   getFunnelResponsiveBarSize,
+  getFunnelTooltipMetrics,
 } from './chart';
 
 describe('funnel chart adaptive layout', () => {
@@ -115,6 +119,109 @@ describe('funnel chart adaptive layout', () => {
     });
 
     expect(label.labelY).toBeGreaterThanOrEqual(4);
+  });
+
+  it('shows converted and dropped-off users relative to the previous step', () => {
+    expect(
+      getFunnelTooltipMetrics({
+        count: 750,
+        previousCount: 1000,
+      })
+    ).toEqual({
+      convertedUsers: 750,
+      convertedPercent: 75,
+      droppedOffUsers: 250,
+      droppedOffPercent: 25,
+    });
+  });
+
+  it('surfaces an inconsistent count above the previous step instead of capping it', () => {
+    expect(
+      getFunnelTooltipMetrics({
+        count: 125,
+        previousCount: 100,
+      })
+    ).toEqual({
+      convertedUsers: 125,
+      convertedPercent: 125,
+      droppedOffUsers: 0,
+      droppedOffPercent: 0,
+    });
+  });
+
+  it('renders both funnel hover metrics with counts and percentages', () => {
+    const html = renderToStaticMarkup(
+      createElement(FunnelTooltipRows, {
+        step: { count: 750, previousCount: 1000 },
+      })
+    );
+
+    expect(html).toContain('Converted users');
+    expect(html).toContain('750 (75.00 %)');
+    expect(html).toContain('Dropped-off users');
+    expect(html).toContain('250 (25.00 %)');
+  });
+
+  it('shows the first funnel step as fully converted with no drop-off', () => {
+    expect(
+      getFunnelTooltipMetrics(
+        {
+          count: 1000,
+          previousCount: 1000,
+        },
+        true
+      )
+    ).toEqual({
+      convertedUsers: 1000,
+      convertedPercent: 100,
+      droppedOffUsers: 0,
+      droppedOffPercent: 0,
+    });
+  });
+
+  it('keeps an empty first step at 100% to match the funnel bar label', () => {
+    expect(
+      getFunnelTooltipMetrics(
+        {
+          count: 0,
+          previousCount: 0,
+        },
+        true
+      )
+    ).toEqual({
+      convertedUsers: 0,
+      convertedPercent: 100,
+      droppedOffUsers: 0,
+      droppedOffPercent: 0,
+    });
+  });
+
+  it('normalizes non-finite tooltip counts instead of rendering NaN', () => {
+    expect(
+      getFunnelTooltipMetrics({
+        count: Number.NaN,
+        previousCount: Number.POSITIVE_INFINITY,
+      })
+    ).toEqual({
+      convertedUsers: 0,
+      convertedPercent: 0,
+      droppedOffUsers: 0,
+      droppedOffPercent: 0,
+    });
+  });
+
+  it('uses a zero denominator when only the previous count is invalid', () => {
+    expect(
+      getFunnelTooltipMetrics({
+        count: 100,
+        previousCount: Number.NaN,
+      })
+    ).toEqual({
+      convertedUsers: 100,
+      convertedPercent: 0,
+      droppedOffUsers: 0,
+      droppedOffPercent: 0,
+    });
   });
 
   it('labels property average without ARPU wording', () => {
