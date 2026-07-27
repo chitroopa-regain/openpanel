@@ -4,7 +4,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../ui/button';
 import {
   Dialog,
@@ -27,6 +27,7 @@ interface EventScreenshotPreviewProps {
   className?: string;
   compact?: boolean;
   showNoMatch?: boolean;
+  onImageError?: () => void;
 }
 
 function propertyEntries(properties: Record<string, unknown>) {
@@ -73,6 +74,7 @@ export function EventScreenshotPreview({
   className,
   compact = false,
   showNoMatch = false,
+  onImageError,
 }: EventScreenshotPreviewProps) {
   const validatedScreenshots = useMemo(
     () =>
@@ -90,6 +92,7 @@ export function EventScreenshotPreview({
   const [open, setOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
+  const notifiedFailedUrls = useRef<Set<string>>(new Set());
   const safeScreenshots = useMemo(
     () => validatedScreenshots.filter((item) => !failedUrls.has(item.url)),
     [failedUrls, validatedScreenshots]
@@ -99,9 +102,21 @@ export function EventScreenshotPreview({
       setSelectedIndex(0);
     }
   }, [safeScreenshots.length, selectedIndex]);
+  const screenshotUrlsKey = validatedScreenshots
+    .map((item) => item.url)
+    .join('\u0000');
+  useEffect(() => {
+    setFailedUrls(new Set());
+    notifiedFailedUrls.current.clear();
+  }, [screenshotUrlsKey]);
 
   const markFailed = (url: string) => {
+    if (notifiedFailedUrls.current.has(url)) {
+      return;
+    }
+    notifiedFailedUrls.current.add(url);
     setFailedUrls((current) => new Set(current).add(url));
+    onImageError?.();
   };
 
   if (!safeScreenshots.length) {

@@ -80,6 +80,7 @@ import {
 } from './chart-retention.utils';
 import {
   fetchEventScreenshots,
+  getMissingScreenshotContextEventNames,
   screenshotMatchContextSchema,
 } from './chart-events.utils';
 import type { EventScreenshot } from './chart-events.utils';
@@ -318,10 +319,14 @@ export const chartRouter = createTRPCRouter({
             return [];
           }),
         ]);
+        const screenshotEventNames =
+          screenshotContexts.length > 0
+            ? screenshotContexts.map((context) => context.eventName)
+            : events.map((event) => event.name);
         const screenshots =
           process.env.EVENT_SCREENSHOT_PROJECT_ID === projectId
             ? await fetchEventScreenshots(
-                events.map((event) => event.name),
+                screenshotEventNames,
                 screenshotContexts
               )
             : new Map<string, EventScreenshot[]>();
@@ -344,6 +349,25 @@ export const chartRouter = createTRPCRouter({
             ),
           };
         });
+        const contextOnlyEvents = (representedEventNames: Iterable<string>) =>
+          getMissingScreenshotContextEventNames(
+            screenshotContexts,
+            representedEventNames
+          ).map((name) => {
+            const eventMeta = meta.find((item) => item.name === name);
+            return {
+              name,
+              count: 0,
+              meta: eventMeta,
+              isCustomEvent: false as const,
+              customEventId: undefined as string | undefined,
+              isProtected: PROTECTED_EVENTS.includes(name),
+              droppedAt: eventMeta?.droppedAt ?? null,
+              clearedAt: eventMeta?.clearedAt ?? null,
+              screenshots: screenshots.get(name),
+              screenshotContextRequested: true,
+            };
+          });
 
         if (!includeDropped) {
           // Default: return only active (non-dropped) events for normal consumers
@@ -377,6 +401,16 @@ export const chartRouter = createTRPCRouter({
               screenshots: screenshots.get(ce.name),
             })),
             ...activeOnly,
+            ...contextOnlyEvents([
+              ...customEvents.map((event) => event.name),
+              // Known dropped events remain represented here so the fallback
+              // cannot reintroduce them into includeDropped=false results,
+              // whether or not the ClickHouse event-name MV still has a row.
+              ...activeEvents.map((event) => event.name),
+              ...meta
+                .filter((eventMeta) => eventMeta.droppedAt)
+                .map((eventMeta) => eventMeta.name),
+            ]),
           ];
         }
 
@@ -432,6 +466,12 @@ export const chartRouter = createTRPCRouter({
           ...notDropped,
           ...dropped,
           ...droppedNotInCh,
+          ...contextOnlyEvents([
+            ...customEvents.map((event) => event.name),
+            ...notDropped.map((event) => event.name),
+            ...dropped.map((event) => event.name),
+            ...droppedNotInCh.map((event) => event.name),
+          ]),
         ];
       }
     ),

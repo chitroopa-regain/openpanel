@@ -3,6 +3,7 @@ import {
   type EventScreenshot,
   fetchEventScreenshots,
   getAllowedEventScreenshotUrl,
+  getMissingScreenshotContextEventNames,
   indexEventScreenshots,
   selectEventScreenshotSamples,
 } from './chart-events.utils';
@@ -34,6 +35,40 @@ afterEach(() => {
 });
 
 describe('event screenshot metadata', () => {
+  it('retains requested context names missing from the event-name union', () => {
+    const contexts = [
+      { eventName: 'MV Lagging Event', filters: [] },
+      { eventName: 'Dropped Event', filters: [] },
+      { eventName: 'MV Lagging Event', filters: [] },
+    ];
+
+    expect(getMissingScreenshotContextEventNames(contexts, [])).toEqual([
+      'MV Lagging Event',
+      'Dropped Event',
+    ]);
+    expect(
+      getMissingScreenshotContextEventNames(contexts, ['MV Lagging Event'])
+    ).toEqual(['Dropped Event']);
+    expect(
+      getMissingScreenshotContextEventNames(contexts, ['Dropped Event'])
+    ).toEqual(['MV Lagging Event']);
+    expect(
+      getMissingScreenshotContextEventNames(contexts, [
+        'MV Lagging Event',
+        'Dropped Event',
+      ])
+    ).toEqual([]);
+  });
+
+  it('does not synthesize a metadata-only dropped context when represented', () => {
+    expect(
+      getMissingScreenshotContextEventNames(
+        [{ eventName: 'Dropped Without MV Row', filters: [] }],
+        ['Dropped Without MV Row']
+      )
+    ).toEqual([]);
+  });
+
   it('normalizes the protected Regain response and sorts newest first', () => {
     const screenshots = indexEventScreenshots({
       events: [

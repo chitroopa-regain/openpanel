@@ -79,6 +79,16 @@ export interface EventScreenshot {
   userProperties: Record<string, unknown>;
 }
 
+export function getMissingScreenshotContextEventNames(
+  contexts: ScreenshotMatchContext[],
+  representedEventNames: Iterable<string>
+) {
+  const represented = new Set(representedEventNames);
+  return [...new Set(contexts.map((context) => context.eventName))].filter(
+    (eventName) => !represented.has(eventName)
+  );
+}
+
 function hasAllowedScreenshotPath(url: URL) {
   return url.pathname.startsWith('/event_screenshots/');
 }

@@ -123,9 +123,11 @@ describe('EventScreenshotPreview', () => {
   });
 
   it('replaces an unavailable signed image with a non-broken status', () => {
-    const { container } = render(
+    const onImageError = vi.fn();
+    const { container, rerender } = render(
       <EventScreenshotPreview
         eventName="Paywall: Shown"
+        onImageError={onImageError}
         screenshots={[screenshot]}
         showNoMatch
       />
@@ -134,10 +136,28 @@ describe('EventScreenshotPreview', () => {
     const image = container.querySelector('img');
     expect(image).not.toBeNull();
     fireEvent.error(image as HTMLImageElement);
+    fireEvent.error(image as HTMLImageElement);
 
     const status = container.querySelector('[role="status"]');
     expect(status?.getAttribute('aria-label')).toBe(
       'No matching screenshot sampled yet'
+    );
+    expect(onImageError).toHaveBeenCalledTimes(1);
+
+    const refreshed = {
+      ...screenshot,
+      url: `${screenshot.url}-refreshed`,
+    };
+    rerender(
+      <EventScreenshotPreview
+        eventName="Paywall: Shown"
+        onImageError={onImageError}
+        screenshots={[refreshed]}
+        showNoMatch
+      />
+    );
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(
+      refreshed.url
     );
   });
 });

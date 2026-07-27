@@ -1,10 +1,14 @@
 import type { IChartEventItem } from '@openpanel/validation';
-import type { RouterInputs } from '@/trpc/client';
+import type { RouterInputs, RouterOutputs } from '@/trpc/client';
 
 type ScreenshotContext = NonNullable<
   RouterInputs['chart']['events']['screenshotContexts']
 >[number];
 type ScreenshotFilter = NonNullable<ScreenshotContext['filters']>[number];
+type ChartEvent = RouterOutputs['chart']['events'][number];
+export type EventScreenshots = ChartEvent['screenshots'];
+const MAX_EVENT_TABLE_SCREENSHOT_CONTEXTS = 50;
+export const EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS = 8 * 60 * 1000;
 const USER_PROPERTY_PREFIX = /^(?:profile|user)(?:\.|$)/;
 
 interface BreakdownValueContext {
@@ -62,6 +66,100 @@ export function buildEventDetailScreenshotContext(
     filters: [],
     ...utcDayScreenshotRange(milliseconds),
   };
+}
+
+export function buildEventTableScreenshotContextBatches(
+  events: { name: string; createdAt: Date }[]
+): ScreenshotContext[][] {
+  const contexts = new Map<string, ScreenshotContext>();
+  for (const event of events) {
+    const milliseconds = event.createdAt.getTime();
+    if (!(event.name && Number.isFinite(milliseconds))) {
+      continue;
+    }
+    const context = buildEventDetailScreenshotContext(event.name, milliseconds);
+    const key = `${event.name}\u0000${context.startDateMs}`;
+    if (!contexts.has(key)) {
+      contexts.set(key, context);
+    }
+  }
+  const values = [...contexts.values()];
+  const batches: ScreenshotContext[][] = [];
+  for (
+    let offset = 0;
+    offset < values.length;
+    offset += MAX_EVENT_TABLE_SCREENSHOT_CONTEXTS
+  ) {
+    batches.push(
+      values.slice(offset, offset + MAX_EVENT_TABLE_SCREENSHOT_CONTEXTS)
+    );
+  }
+  return batches;
+}
+
+function screenshotKey(
+  screenshot: NonNullable<EventScreenshots>[number]
+): string {
+  return screenshot.captureId ?? screenshot.url;
+}
+
+function mergeEventScreenshots(
+  current: EventScreenshots,
+  incoming: EventScreenshots
+): EventScreenshots {
+  const screenshots = [...(current ?? [])];
+  const keys = new Set(screenshots.map(screenshotKey));
+  for (const screenshot of incoming ?? []) {
+    const key = screenshotKey(screenshot);
+    if (!keys.has(key)) {
+      keys.add(key);
+      screenshots.push(screenshot);
+    }
+  }
+  screenshots.sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0));
+  return screenshots.length > 0 ? screenshots : undefined;
+}
+
+export function mergeEventScreenshotCatalogs(
+  catalogs: (RouterOutputs['chart']['events'] | undefined)[]
+): RouterOutputs['chart']['events'] {
+  const events = new Map<string, ChartEvent>();
+  for (const catalog of catalogs) {
+    for (const event of catalog ?? []) {
+      const existing = events.get(event.name);
+      const screenshots = mergeEventScreenshots(
+        existing?.screenshots,
+        event.screenshots
+      );
+      events.set(
+        event.name,
+        screenshots
+          ? ({ ...(existing ?? event), screenshots } as ChartEvent)
+          : (existing ?? event)
+      );
+    }
+  }
+  return [...events.values()];
+}
+
+export function eventScreenshotsForUtcDay(
+  catalog: RouterOutputs['chart']['events'] | undefined,
+  eventName: string,
+  milliseconds: number
+): EventScreenshots {
+  const screenshots = catalog?.find(
+    (event) => event.name === eventName
+  )?.screenshots;
+  if (!(screenshots?.length && Number.isFinite(milliseconds))) {
+    return undefined;
+  }
+  const { startDateMs, endDateMs } = utcDayScreenshotRange(milliseconds);
+  return screenshots.filter(
+    (screenshot) =>
+      screenshot.capturedAtMs !== undefined &&
+      screenshot.capturedAtMs >= startDateMs &&
+      screenshot.capturedAtMs <= endDateMs
+  );
 }
 
 export function buildScreenshotContexts({

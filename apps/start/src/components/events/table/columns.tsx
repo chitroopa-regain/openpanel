@@ -1,4 +1,9 @@
 import { EventIcon } from '@/components/events/event-icon';
+import {
+  eventScreenshotsForUtcDay,
+  type EventScreenshots,
+} from '@/components/events/event-screenshot-context';
+import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { ProjectLink } from '@/components/links';
 import { SerieIcon } from '@/components/report-chart/common/serie-icon';
 import { useNumber } from '@/hooks/use-numer-formatter';
@@ -9,9 +14,13 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { ColumnCreatedAt } from '@/components/column-created-at';
 import { ProfileAvatar } from '@/components/profiles/profile-avatar';
 import { KeyValueGrid } from '@/components/ui/key-value-grid';
+import type { RouterOutputs } from '@/trpc/client';
 import type { IServiceEvent } from '@openpanel/db';
 
-export function useColumns() {
+export function useColumns(
+  screenshotCatalog?: RouterOutputs['chart']['events'],
+  onScreenshotError?: (eventName: string, milliseconds: number) => void
+) {
   const number = useNumber();
   const columns: ColumnDef<IServiceEvent>[] = [
     {
@@ -28,7 +37,12 @@ export function useColumns() {
       accessorKey: 'name',
       header: 'Name',
       cell({ row }) {
-        const { name, path, duration, properties, revenue } = row.original;
+        const { name, path, duration, revenue } = row.original;
+        const screenshots: EventScreenshots = eventScreenshotsForUtcDay(
+          screenshotCatalog,
+          name,
+          row.original.createdAt.getTime()
+        );
         const renderName = () => {
           if (name === 'screen_view') {
             if (path.includes('/')) {
@@ -96,6 +110,14 @@ export function useColumns() {
               </button>
               {renderDuration()}
             </span>
+            <EventScreenshotPreview
+              compact
+              eventName={name}
+              onImageError={() =>
+                onScreenshotError?.(name, row.original.createdAt.getTime())
+              }
+              screenshots={screenshots}
+            />
           </div>
         );
       },

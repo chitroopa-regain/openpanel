@@ -10,7 +10,10 @@ import { omit } from 'ramda';
 import { useState } from 'react';
 import { popModal } from '.';
 import { ModalContent } from './Modal/Container';
-import { buildEventDetailScreenshotContext } from '@/components/events/event-screenshot-context';
+import {
+  buildEventDetailScreenshotContext,
+  EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+} from '@/components/events/event-screenshot-context';
 import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { ProjectLink } from '@/components/links';
 import {
@@ -137,10 +140,14 @@ function EventDetailsContent({
   const eventNamesQuery = useQuery(
     trpc.chart.events.queryOptions(
       {
+        includeDropped: true,
         projectId,
         screenshotContexts: screenshotContext ? [screenshotContext] : [],
       },
-      { enabled: !!event }
+      {
+        enabled: !!event,
+        refetchInterval: EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+      }
     )
   );
 
@@ -309,6 +316,7 @@ function EventDetailsContent({
             <div className="mb-2 font-medium">Event screenshots</div>
             <EventScreenshotPreview
               eventName={event.name}
+              onImageError={() => eventNamesQuery.refetch()}
               screenshots={screenshots}
             />
           </section>

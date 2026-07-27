@@ -9,11 +9,12 @@ import { useDataTableColumnVisibility } from '@/components/ui/data-table/data-ta
 import { DataTableToolbarContainer } from '@/components/ui/data-table/data-table-toolbar';
 import { DataTableViewOptions } from '@/components/ui/data-table/data-table-view-options';
 import { useAppParams } from '@/hooks/use-app-params';
+import { useTRPC } from '@/integrations/trpc/react';
 import { pushModal } from '@/modals';
 import type { RouterInputs, RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import type { IServiceEvent } from '@openpanel/db';
-import type { UseInfiniteQueryResult } from '@tanstack/react-query';
+import { useQueries, type UseInfiniteQueryResult } from '@tanstack/react-query';
 import type { Table } from '@tanstack/react-table';
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
@@ -25,6 +26,11 @@ import { last } from 'ramda';
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { useInViewport } from 'react-in-viewport';
 import EventListener from '../event-listener';
+import {
+  buildEventTableScreenshotContextBatches,
+  EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+  mergeEventScreenshotCatalogs,
+} from '../event-screenshot-context';
 import { useColumns } from './columns';
 
 type Props = {
@@ -39,11 +45,13 @@ type Props = {
 
 const LOADING_DATA = [{}, {}, {}, {}, {}, {}, {}, {}, {}] as IServiceEvent[];
 const ROW_HEIGHT = 40;
+const SCREENSHOT_ERROR_REFETCH_THROTTLE_MS = 5_000;
 
 interface VirtualizedEventsTableProps {
   table: Table<IServiceEvent>;
   data: IServiceEvent[];
   isLoading: boolean;
+  renderRevision: string;
 }
 
 interface VirtualRowProps {
@@ -53,6 +61,7 @@ interface VirtualRowProps {
   scrollMargin: number;
   isLoading: boolean;
   headerColumnsHash: string;
+  renderRevision: string;
 }
 
 const VirtualRow = memo(
@@ -113,7 +122,8 @@ const VirtualRow = memo(
       prevProps.virtualRow.start === nextProps.virtualRow.start &&
       prevProps.virtualRow.size === nextProps.virtualRow.size &&
       prevProps.isLoading === nextProps.isLoading &&
-      prevProps.headerColumnsHash === nextProps.headerColumnsHash
+      prevProps.headerColumnsHash === nextProps.headerColumnsHash &&
+      prevProps.renderRevision === nextProps.renderRevision
     );
   },
 );
@@ -122,6 +132,7 @@ const VirtualizedEventsTable = ({
   table,
   data,
   isLoading,
+  renderRevision,
 }: VirtualizedEventsTableProps) => {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -207,6 +218,7 @@ const VirtualizedEventsTable = ({
               headerColumnsHash={headerColumnsHash}
               scrollMargin={rowVirtualizer.options.scrollMargin}
               isLoading={isLoading}
+              renderRevision={renderRevision}
             />
           );
         })}
@@ -217,7 +229,8 @@ const VirtualizedEventsTable = ({
 
 export const EventsTable = ({ query }: Props) => {
   const { isLoading } = query;
-  const columns = useColumns();
+  const { projectId } = useAppParams();
+  const trpc = useTRPC();
 
   const data = useMemo(() => {
     if (isLoading) {
@@ -226,6 +239,54 @@ export const EventsTable = ({ query }: Props) => {
 
     return query.data?.pages?.flatMap((p) => p.data) ?? [];
   }, [query.data, isLoading]);
+  const screenshotContextBatches = useMemo(
+    () => (isLoading ? [] : buildEventTableScreenshotContextBatches(data)),
+    [data, isLoading]
+  );
+  const screenshotCatalogQueries = useQueries({
+    queries: screenshotContextBatches.map((screenshotContexts) =>
+      trpc.chart.events.queryOptions(
+        { includeDropped: true, projectId, screenshotContexts },
+        {
+          enabled: screenshotContexts.length > 0,
+          refetchInterval: EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+        }
+      )
+    ),
+  });
+  const screenshotCatalog = mergeEventScreenshotCatalogs(
+    screenshotCatalogQueries.map((item) => item.data)
+  );
+  const screenshotCatalogRevision = screenshotCatalogQueries
+    .map((item) => item.dataUpdatedAt)
+    .join(',');
+  const screenshotBatchRefreshedAt = useRef(new Map<number, number>());
+  const columns = useColumns(screenshotCatalog, (eventName, milliseconds) => {
+    const batchIndex = screenshotContextBatches.findIndex((batch) =>
+      batch.some(
+        (context) =>
+          context.eventName === eventName &&
+          context.startDateMs !== undefined &&
+          context.endDateMs !== undefined &&
+          milliseconds >= context.startDateMs &&
+          milliseconds <= context.endDateMs
+      )
+    );
+    const screenshotCatalogQuery = screenshotCatalogQueries[batchIndex];
+    const now = Date.now();
+    const lastRefreshedAt =
+      screenshotBatchRefreshedAt.current.get(batchIndex) ?? 0;
+    if (
+      batchIndex < 0 ||
+      !screenshotCatalogQuery ||
+      screenshotCatalogQuery.isFetching ||
+      now - lastRefreshedAt < SCREENSHOT_ERROR_REFETCH_THROTTLE_MS
+    ) {
+      return;
+    }
+    screenshotBatchRefreshedAt.current.set(batchIndex, now);
+    screenshotCatalogQuery.refetch();
+  });
 
   const { columnVisibility, setColumnVisibility, columnOrder, setColumnOrder } =
     useDataTableColumnVisibility(columns, 'events');
@@ -273,7 +334,12 @@ export const EventsTable = ({ query }: Props) => {
   return (
     <>
       <EventsTableToolbar query={query} table={table} />
-      <VirtualizedEventsTable table={table} data={data} isLoading={isLoading} />
+      <VirtualizedEventsTable
+        table={table}
+        data={data}
+        isLoading={isLoading}
+        renderRevision={screenshotCatalogRevision}
+      />
       <div className="w-full h-10 center-center pt-4" ref={inViewportRef}>
         <div
           className={cn(
@@ -295,7 +361,6 @@ function EventsTableToolbar({
   query: Props['query'];
   table: Table<IServiceEvent>;
 }) {
-  const { projectId } = useAppParams();
   const [startDate, setStartDate] = useQueryState(
     'startDate',
     parseAsIsoDateTime,
