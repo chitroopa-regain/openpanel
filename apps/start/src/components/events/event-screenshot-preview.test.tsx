@@ -50,11 +50,23 @@ describe('EventScreenshotPreview', () => {
     expect(screen.getByText('home')).toBeTruthy();
     expect(screen.getByText('plan')).toBeTruthy();
     expect(screen.getByText('pro')).toBeTruthy();
+    const dialog = screen.getByRole('dialog');
+    const image = screen.getByRole('img', {
+      name: 'Paywall: Shown event screenshot',
+    });
+    expect(image.getAttribute('src')).toBe(screenshot.url);
+    expect(image.className).toContain('object-contain');
+    expect(dialog.className).toContain('overflow-hidden');
+    expect(dialog.className).toContain('bg-def-100');
+    expect(image.parentElement?.parentElement?.className).toContain(
+      'grid-rows-[minmax(0,1fr)_auto]'
+    );
     expect(
-      screen
-        .getByRole('img', { name: 'Paywall: Shown event screenshot' })
-        .getAttribute('src')
-    ).toBe(screenshot.url);
+      document.body.querySelector('[data-slot="dialog-overlay"]')
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('shows one latest-image trigger and navigates all returned samples in the gallery', () => {
