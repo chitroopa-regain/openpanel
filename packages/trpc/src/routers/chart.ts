@@ -15,8 +15,8 @@ import {
   getCustomEventWhereClause,
   getEventFiltersWhereClause,
   getEventMetasCached,
-  getProfilesForUserListCached,
   getProfilesCached,
+  getProfilesForUserListCached,
   getProfileTraitsKeysCached,
   getReportById,
   getSelectPropertyKey,
@@ -65,12 +65,20 @@ import {
   protectedProcedure,
   publicProcedure,
 } from '../trpc';
+import type { EventScreenshot } from './chart-events.utils';
+import {
+  fetchEventScreenshots,
+  getMissingScreenshotContextEventNames,
+  screenshotMatchContextSchema,
+} from './chart-events.utils';
 import {
   aggregateRetentionRowsByDisplayInterval,
   buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
+  getRetentionElapsedIntervalExpression,
+  getRetentionIntervalMaturityExpression,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
   getRetentionTimeUnitConfig,
@@ -78,12 +86,6 @@ import {
   isRetentionPropertyMeasure,
   type RawRetentionCohortRow,
 } from './chart-retention.utils';
-import {
-  fetchEventScreenshots,
-  getMissingScreenshotContextEventNames,
-  screenshotMatchContextSchema,
-} from './chart-events.utils';
-import type { EventScreenshot } from './chart-events.utils';
 
 function utc(date: string | Date) {
   if (typeof date === 'string') {
@@ -1195,21 +1197,12 @@ export const chartRouter = createTRPCRouter({
         month: () => differenceInMonths(dates.endDate, dates.startDate),
       }[retentionTimeUnitConfig.diffUnit]();
       const sqlInterval = retentionTimeUnitConfig.sqlInterval;
+      const retentionWindowEndInterval = diffInterval + 1;
 
       // toStartOfWeek/toStartOfMonth need DateTime input for timezone arg.
       // When col is already a Date (e.g. event_date), cast to DateTime first.
       const toStartOfInterval = (col: string) => {
         switch (interval) {
-          case 'week':
-            return `toStartOfWeek(toDateTime(${col}), 0, '${timezone}')`;
-          case 'month':
-            return `toStartOfMonth(toDateTime(${col}), '${timezone}')`;
-          default:
-            return `toDate(${col}, '${timezone}')`;
-        }
-      };
-      const toStartOfRetentionInterval = (col: string) => {
-        switch (retentionUnit) {
           case 'week':
             return `toStartOfWeek(toDateTime(${col}), 0, '${timezone}')`;
           case 'month':
@@ -1254,6 +1247,12 @@ export const chartRouter = createTRPCRouter({
             measure: retentionMetric,
             propertyExpression: retentionPropertyExpr,
             propertyAverageDenominatorStep,
+            maturityExpression: getRetentionIntervalMaturityExpression({
+              index,
+              unit: retentionUnit,
+              cohortExpression: 'cs.cohort_interval',
+              asOfExpression: `toDate(now('${timezone}'))`,
+            }),
           })
         )
         .join(',\n');
@@ -1420,7 +1419,7 @@ export const chartRouter = createTRPCRouter({
 
       const firstTimeStartExpression = `toDate('${utc(dates.startDate)}', '${timezone}')`;
       const firstTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}')`;
-      const secondTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${diffInterval} ${sqlInterval}`;
+      const secondTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval} - INTERVAL 1 SECOND`;
       const firstEventFirstTimeCte = firstEventFirstTimeFilter
         ? `first_event_first_time AS (${buildRetentionFirstTimeCteSql({
             projectId,
@@ -1448,7 +1447,7 @@ export const chartRouter = createTRPCRouter({
         ? `,\n            ${breakdownSelects.join(',\n            ')}`
         : '';
       const cohortUsersGroupBy = breakdownSelects.length
-        ? `GROUP BY userID, project_id, cohort_interval`
+        ? 'GROUP BY userID, project_id, cohort_interval'
         : '';
       const cohortIntervalSelect = toStartOfCohortInterval('e.created_at');
       const displayIntervalSelect = breakdownSelects.length
@@ -1526,7 +1525,8 @@ export const chartRouter = createTRPCRouter({
             ${secondEventFirstTimeJoin}
             WHERE ${secondWhereClause}
             AND project_id = ${sqlstring.escape(projectId)}
-            AND created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${diffInterval} ${sqlInterval}
+            AND created_at >= toDate('${utc(dates.startDate)}', '${timezone}')
+            AND created_at < toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}
             ${secondIdentifiedFilter}
             ${secondFilterClause}
         ),
@@ -1537,11 +1537,15 @@ export const chartRouter = createTRPCRouter({
               l.profile_id,
               ${breakdownColumnsFromFirst.replace(/^, /, '')}${breakdownColumnsFromFirst ? ',' : ''}
               ${retentionPropertyExpr ? 'l.retention_property_value,' : ''}
-              dateDiff('${sqlInterval}', f.cohort_interval, ${toStartOfRetentionInterval('l.event_date')}) AS x_after_cohort
+              ${getRetentionElapsedIntervalExpression(
+                retentionUnit,
+                'f.cohort_interval',
+                'l.event_date'
+              )} AS x_after_cohort
           FROM ${cohortUsersSource} AS f
           INNER JOIN last_event AS l ON f.userID = l.profile_id
           WHERE (l.event_date >= f.cohort_interval)
-          AND (l.event_date <= (f.cohort_interval + INTERVAL ${diffInterval} ${sqlInterval}))
+          AND (l.event_date < (f.cohort_interval + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}))
         ),
         cohort_sizes AS (
           SELECT
@@ -2002,14 +2006,15 @@ function processCohortGroupData(
     cohort_interval: string;
     display_interval?: string;
     sum: number;
-    values: number[];
+    values: Array<number | null>;
     valueWeights?: number[];
-    percentages: number[];
+    percentages: Array<number | null>;
   }> = data.map((row) => {
     const sum = row.total_first_event_count;
-    const values = range(0, diffInterval + 1).map(
-      (index) => (row[`interval_${index}_user_count`] || 0) as number
-    );
+    const values = range(0, diffInterval + 1).map((index) => {
+      const value = row[`interval_${index}_user_count`];
+      return value === null || value === undefined ? null : Number(value);
+    });
     const valueWeights = range(0, diffInterval + 1).map(
       (index) =>
         (row[`interval_${index}_denominator_count`] ??
@@ -2022,7 +2027,9 @@ function processCohortGroupData(
       sum,
       values,
       valueWeights,
-      percentages: values.map((value) => (sum > 0 ? round(value / sum, 4) : 0)),
+      percentages: values.map((value) =>
+        value === null ? null : sum > 0 ? round(value / sum, 4) : 0
+      ),
     };
   });
 
@@ -2105,13 +2112,20 @@ function processCohortGroupData(
     nonZeroRowCount++;
     averageData.totalSum += row.sum;
     row.values.forEach((value, index) => {
+      if (value === null) {
+        return;
+      }
       const weight = row.valueWeights?.[index] ?? row.sum;
       averageData.values[index]!.sum += weight;
       averageData.values[index]!.weightedSum += value * weight;
     });
     row.percentages.forEach((percentage, index) => {
-      averageData.percentages[index]!.sum += row.sum;
-      averageData.percentages[index]!.weightedSum += percentage * row.sum;
+      if (percentage === null) {
+        return;
+      }
+      const weight = row.valueWeights?.[index] ?? row.sum;
+      averageData.percentages[index]!.sum += weight;
+      averageData.percentages[index]!.weightedSum += percentage * weight;
     });
   });
 
@@ -2128,10 +2142,10 @@ function processCohortGroupData(
         ? round(averageData.totalSum / nonZeroRowCount, 0)
         : 0,
     percentages: averageData.percentages.map(({ sum, weightedSum }) =>
-      sum > 0 ? round(weightedSum / sum, 4) : 0
+      sum > 0 ? round(weightedSum / sum, 4) : null
     ),
     values: averageData.values.map(({ sum, weightedSum }) =>
-      sum > 0 ? round(weightedSum / sum, valuePrecision) : 0
+      sum > 0 ? round(weightedSum / sum, valuePrecision) : null
     ),
   };
 

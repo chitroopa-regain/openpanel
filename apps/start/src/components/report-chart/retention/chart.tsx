@@ -21,6 +21,35 @@ interface Props {
   data: RouterOutputs['chart']['cohort']['data'];
 }
 
+function toChartValue(value: number | null | undefined, isPercentage: boolean) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return isPercentage ? value * 100 : value;
+}
+
+function getNiceTicks(max: number, isPercentage: boolean): number[] {
+  if (max <= 0) {
+    return isPercentage ? [0, 0.5, 1] : [0, 5, 10];
+  }
+  const steps = isPercentage
+    ? [0.25, 0.5, 1, 2, 5, 10, 20, 25, 50]
+    : [1, 2, 5, 10, 20, 50, 100, 200, 500];
+  for (const step of steps) {
+    const top = Math.ceil(max / step) * step;
+    if (top >= max * 1.05) {
+      const ticks: number[] = [];
+      for (let value = 0; value <= top; value += step) {
+        ticks.push(value);
+      }
+      if (ticks.length >= 3 && ticks.length <= 8) {
+        return ticks;
+      }
+    }
+  }
+  return [0, Math.ceil(max)];
+}
+
 function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
   const averageRows = data.filter(
     (row) => row.cohort_interval === 'Weighted Average'
@@ -38,15 +67,18 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
         ...Object.fromEntries(
           averageRows.map((row, seriesIndex) => [
             `series_${seriesIndex}`,
-            isPercentage
-              ? (row.percentages[dayIndex] ?? 0) * 100
-              : (row.values[dayIndex] ?? 0),
+            toChartValue(
+              isPercentage
+                ? row.percentages[dayIndex]
+                : row.values[dayIndex],
+              isPercentage
+            ),
           ])
         ),
       }))
     : dataSource?.map((item, index) => ({
         days: index,
-        percentage: isPercentage ? item * 100 : item,
+        percentage: toChartValue(item, isPercentage),
         value: averageRow?.values?.[index],
         sum: averageRow?.sum,
       }));
@@ -54,15 +86,17 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
     ? Math.max(
         ...averageRows.flatMap((row) =>
           isPercentage
-            ? row.percentages.map((value) => value * 100)
-            : row.values
+            ? row.percentages
+                .filter((value): value is number => value !== null)
+                .map((value) => value * 100)
+            : row.values.filter((value): value is number => value !== null)
         ),
         0
       )
     : Math.max(
-        ...(dataSource?.map((value) =>
-          isPercentage ? value * 100 : value
-        ) ?? [0])
+        ...(dataSource
+          ?.filter((value): value is number => value !== null)
+          .map((value) => (isPercentage ? value * 100 : value)) ?? [0])
       );
 
   return { averageRow, averageRows, dataMax, hasBreakdowns, rechartData };
@@ -89,34 +123,22 @@ export function Chart({ data }: Props) {
   const { averageRow, averageRows, dataMax, hasBreakdowns, rechartData } =
     getBreakdownChartState(data, isPercentage);
   const averageRetentionRate = isPercentage
-    ? average(averageRow?.percentages || [], true) * 100
-    : average(averageRow?.values || [], true);
+    ? average(
+        averageRow?.percentages.filter(
+          (value): value is number => value !== null
+        ) || [],
+        true
+      ) * 100
+    : average(
+        averageRow?.values.filter((value): value is number => value !== null) ||
+          [],
+        true
+      );
   const breakdownTooltipFormatter = (value: number | string) => {
     const roundedValue = round(Number(value), 2);
     return isPercentage ? `${roundedValue}%` : roundedValue;
   };
-  const niceTicks = (max: number): number[] => {
-    if (max <= 0) {
-      return isPercentage ? [0, 0.5, 1] : [0, 5, 10];
-    }
-    const steps = isPercentage
-      ? [0.25, 0.5, 1, 2, 5, 10, 20, 25, 50]
-      : [1, 2, 5, 10, 20, 50, 100, 200, 500];
-    for (const step of steps) {
-      const top = Math.ceil(max / step) * step;
-      if (top >= max * 1.05) {
-        const ticks: number[] = [];
-        for (let v = 0; v <= top; v += step) {
-          ticks.push(v);
-        }
-        if (ticks.length >= 3 && ticks.length <= 8) {
-          return ticks;
-        }
-      }
-    }
-    return [0, Math.ceil(max)];
-  };
-  const yTicks = niceTicks(dataMax);
+  const yTicks = getNiceTicks(dataMax, isPercentage);
   const yMax = yTicks.at(-1) ?? 100;
 
   return (

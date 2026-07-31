@@ -153,6 +153,26 @@ describe('retention breakdown table groups', () => {
     expect(screen.getByText('2026-07-22')).toBeTruthy();
   });
 
+  it('renders immature intervals as unavailable instead of zero', () => {
+    const data: CohortData = [
+      {
+        ...row('Weighted Average', [], 20),
+        percentages: [null],
+        values: [null],
+      },
+      {
+        ...row('2026-07-31', [], 20),
+        percentages: [null],
+        values: [null],
+      },
+    ];
+
+    render(createElement(CohortTable, { data }));
+
+    expect(screen.getAllByText('—')).toHaveLength(2);
+    expect(screen.queryByText('0%')).toBeNull();
+  });
+
   it('collapses matching groups when refreshed data arrives', async () => {
     const initialData: CohortData = [
       row('Weighted Average', ['control'], 20),

@@ -6,6 +6,8 @@ import {
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
   getConcreteEventNameWhereClause,
+  getRetentionElapsedIntervalExpression,
+  getRetentionIntervalMaturityExpression,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
   getRetentionTimeUnitConfig,
@@ -14,6 +16,100 @@ import {
 } from './chart-retention.utils';
 
 describe('chart retention utils', () => {
+  it('uses rolling elapsed windows instead of calendar week boundaries', () => {
+    expect(
+      getRetentionElapsedIntervalExpression('week', 'cohort_date', 'event_date')
+    ).toBe("intDiv(dateDiff('DAY', cohort_date, event_date), 7)");
+    expect(
+      getRetentionElapsedIntervalExpression(
+        'month',
+        'cohort_date',
+        'event_date'
+      )
+    ).toBe(
+      "dateDiff('MONTH', cohort_date, event_date) - if(event_date < addMonths(cohort_date, dateDiff('MONTH', cohort_date, event_date)), 1, 0)"
+    );
+  });
+
+  it('builds interval maturity checks in the selected conversion-window unit', () => {
+    expect(
+      getRetentionIntervalMaturityExpression({
+        index: 2,
+        unit: 'week',
+        cohortExpression: 'cs.cohort_interval',
+        asOfExpression: "today('Asia/Calcutta')",
+      })
+    ).toBe("addWeeks(cs.cohort_interval, 2) <= today('Asia/Calcutta')");
+  });
+
+  it('preserves immature intervals as null and excludes them from weighted averages', () => {
+    const result = processCohortData(
+      [
+        {
+          cohort_interval: '2026-07-25',
+          total_first_event_count: 10,
+          interval_0_user_count: 5,
+          interval_1_user_count: 0,
+        },
+        {
+          cohort_interval: '2026-07-26',
+          total_first_event_count: 20,
+          interval_0_user_count: 10,
+          interval_1_user_count: null,
+        },
+      ],
+      1
+    );
+
+    expect(result[0]?.percentages).toEqual([0.5, 0]);
+    expect(result[2]?.values).toEqual([10, null]);
+    expect(result[2]?.percentages).toEqual([0.5, null]);
+  });
+
+  it('preserves mature weights through mixed display and conversion intervals', () => {
+    const result = processCohortData(
+      [
+        {
+          cohort_interval: '2026-07-20',
+          display_interval: '2026-07-19',
+          total_first_event_count: 100,
+          interval_0_user_count: 50,
+        },
+        {
+          cohort_interval: '2026-07-21',
+          display_interval: '2026-07-19',
+          total_first_event_count: 300,
+          interval_0_user_count: null,
+        },
+        {
+          cohort_interval: '2026-07-27',
+          display_interval: '2026-07-26',
+          total_first_event_count: 200,
+          interval_0_user_count: 50,
+        },
+      ],
+      0,
+      undefined,
+      undefined,
+      'week',
+      'day'
+    );
+
+    expect(result[0]?.percentages).toEqual([0.3333]);
+  });
+
+  it('wraps interval aggregates with a maturity guard', () => {
+    expect(
+      buildRetentionMeasureIntervalSelect({
+        index: 1,
+        criteria: '=',
+        maturityExpression: "addDays(cs.cohort_interval, 1) <= today('UTC')",
+      })
+    ).toBe(
+      "if(addDays(cs.cohort_interval, 1) <= today('UTC'), uniqExactIf(r.profile_id, r.x_after_cohort = 1), NULL) AS interval_1_user_count"
+    );
+  });
+
   it('extracts multi-property breakdown values from the same cohort event', () => {
     expect(
       buildRetentionBreakdownSelects([
@@ -277,7 +373,39 @@ describe('chart retention utils', () => {
         cohort_interval: '2026-05-31',
         sum: 400,
         values: [8, 10],
+        valueWeights: [400, 400],
         percentages: [0.02, 0.025],
+      },
+    ]);
+  });
+
+  it('excludes immature cohorts from aggregated retention-rate denominators', () => {
+    expect(
+      aggregateRetentionRowsByDisplayInterval(
+        [
+          {
+            cohort_interval: '2026-07-25',
+            display_interval: '2026-07-20',
+            sum: 100,
+            values: [50],
+            percentages: [0.5],
+          },
+          {
+            cohort_interval: '2026-07-26',
+            display_interval: '2026-07-20',
+            sum: 300,
+            values: [null],
+            percentages: [null],
+          },
+        ],
+        'sum'
+      )
+    ).toMatchObject([
+      {
+        cohort_interval: '2026-07-20',
+        sum: 400,
+        values: [50],
+        percentages: [0.5],
       },
     ]);
   });

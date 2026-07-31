@@ -13,9 +13,9 @@ export interface ProcessedRetentionCohortRow {
   cohort_interval: string;
   display_interval?: string;
   sum: number;
-  values: number[];
+  values: Array<number | null>;
   valueWeights?: number[];
-  percentages: number[];
+  percentages: Array<number | null>;
 }
 
 export interface RawRetentionCohortRow {
@@ -82,6 +82,7 @@ export function aggregateRetentionRowsByDisplayInterval(
       values: number[];
       weightedValues: number[];
       valueWeights: number[];
+      hasValues: boolean[];
     }
   >();
 
@@ -89,14 +90,19 @@ export function aggregateRetentionRowsByDisplayInterval(
     const key = row.display_interval ?? row.cohort_interval;
     const group = groups.get(key) ?? {
       sum: 0,
-      values: Array(row.values.length).fill(0) as number[],
-      weightedValues: Array(row.values.length).fill(0) as number[],
-      valueWeights: Array(row.values.length).fill(0) as number[],
+      values: new Array(row.values.length).fill(0) as number[],
+      weightedValues: new Array(row.values.length).fill(0) as number[],
+      valueWeights: new Array(row.values.length).fill(0) as number[],
+      hasValues: new Array(row.values.length).fill(false) as boolean[],
     };
 
     group.sum += row.sum;
     row.values.forEach((value, index) => {
+      if (value === null) {
+        return;
+      }
       const weight = row.valueWeights?.[index] ?? row.sum;
+      group.hasValues[index] = true;
       group.values[index] = (group.values[index] ?? 0) + value;
       group.valueWeights[index] = (group.valueWeights[index] ?? 0) + weight;
       group.weightedValues[index] =
@@ -109,20 +115,31 @@ export function aggregateRetentionRowsByDisplayInterval(
     .map(([cohort_interval, group]) => {
       const values =
         valueMode === 'weighted_average'
-          ? group.weightedValues.map((value, index) =>
-              (group.valueWeights[index] ?? 0) > 0
-                ? Math.round((value / group.valueWeights[index]!) * 100) / 100
-                : 0
-            )
-          : group.values;
+          ? group.weightedValues.map((value, index) => {
+              if (!group.hasValues[index]) {
+                return null;
+              }
+              const weight = group.valueWeights[index] ?? 0;
+              return weight > 0 ? Math.round((value / weight) * 100) / 100 : 0;
+            })
+          : group.values.map((value, index) =>
+              group.hasValues[index] ? value : null
+            );
 
       return {
         cohort_interval,
         sum: group.sum,
         values,
-        percentages: values.map((value) =>
-          group.sum > 0 ? Math.round((value / group.sum) * 10000) / 10000 : 0
-        ),
+        valueWeights: group.valueWeights,
+        percentages: values.map((value, index) => {
+          if (value === null) {
+            return null;
+          }
+          const observedProfiles = group.valueWeights[index] ?? 0;
+          return observedProfiles > 0
+            ? Math.round((value / observedProfiles) * 10_000) / 10_000
+            : 0;
+        }),
       };
     })
     .sort((a, b) => a.cohort_interval.localeCompare(b.cohort_interval));
@@ -142,6 +159,42 @@ export function getRetentionTimeUnitConfig(unit: RetentionTimeUnit): {
   >;
 
   return config[unit];
+}
+
+export function getRetentionElapsedIntervalExpression(
+  unit: RetentionTimeUnit,
+  cohortExpression: string,
+  eventExpression: string
+) {
+  if (unit === 'week') {
+    return `intDiv(dateDiff('DAY', ${cohortExpression}, ${eventExpression}), 7)`;
+  }
+
+  if (unit === 'month') {
+    const calendarMonths = `dateDiff('MONTH', ${cohortExpression}, ${eventExpression})`;
+    return `${calendarMonths} - if(${eventExpression} < addMonths(${cohortExpression}, ${calendarMonths}), 1, 0)`;
+  }
+
+  return `dateDiff('DAY', ${cohortExpression}, ${eventExpression})`;
+}
+
+export function getRetentionIntervalMaturityExpression({
+  index,
+  unit,
+  cohortExpression,
+  asOfExpression,
+}: {
+  index: number;
+  unit: RetentionTimeUnit;
+  cohortExpression: string;
+  asOfExpression: string;
+}) {
+  const addFunction = {
+    day: 'addDays',
+    week: 'addWeeks',
+    month: 'addMonths',
+  }[unit];
+  return `${addFunction}(${cohortExpression}, ${index}) <= ${asOfExpression}`;
 }
 
 export function isWildcardEventSelection(events: string[]) {
@@ -201,26 +254,32 @@ export function buildRetentionMeasureIntervalSelect({
   measure,
   propertyExpression,
   propertyAverageDenominatorStep = 0,
+  maturityExpression,
 }: {
   index: number;
   criteria: '>=' | '=' | '<=';
   measure?: RetentionMeasure;
   propertyExpression?: string;
   propertyAverageDenominatorStep?: number;
+  maturityExpression?: string;
 }) {
   const predicate = `r.x_after_cohort ${criteria} ${index}`;
+  let aggregateExpression: string;
 
   if (measure === 'property_average' && propertyExpression) {
     const denominator =
       propertyAverageDenominatorStep > 0
         ? `uniqExactIf(r.profile_id, ${predicate})`
         : 'any(cs.total_first_event_count)';
-    return `round(sumIf(r.retention_property_value, ${predicate}) / nullIf(${denominator}, 0), 2) AS interval_${index}_user_count`;
+    aggregateExpression = `round(sumIf(r.retention_property_value, ${predicate}) / nullIf(${denominator}, 0), 2)`;
+  } else if (measure === 'property_sum' && propertyExpression) {
+    aggregateExpression = `round(sumIf(r.retention_property_value, ${predicate}), 2)`;
+  } else {
+    aggregateExpression = `uniqExactIf(r.profile_id, ${predicate})`;
   }
 
-  if (measure === 'property_sum' && propertyExpression) {
-    return `round(sumIf(r.retention_property_value, ${predicate}), 2) AS interval_${index}_user_count`;
-  }
-
-  return `uniqExactIf(r.profile_id, ${predicate}) AS interval_${index}_user_count`;
+  const expression = maturityExpression
+    ? `if(${maturityExpression}, ${aggregateExpression}, NULL)`
+    : aggregateExpression;
+  return `${expression} AS interval_${index}_user_count`;
 }

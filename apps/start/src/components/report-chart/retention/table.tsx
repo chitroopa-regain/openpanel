@@ -71,8 +71,11 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   );
   const hasBreakdowns = data.some((row) => row.breakdowns.length > 0);
   const breakdownGroups = hasBreakdowns ? getCohortBreakdownGroups(data) : [];
-  const highestValue = max(data.map((row) => max(row.values)));
-  const lowestValue = min(data.map((row) => min(row.values)));
+  const observedValues = data
+    .flatMap((row) => row.values)
+    .filter((value): value is number => value !== null);
+  const highestValue = observedValues.length > 0 ? max(observedValues) : 0;
+  const lowestValue = observedValues.length > 0 ? min(observedValues) : 0;
   const rowWithHigestSum = data.find(
     (row) => row.sum === max(data.map((row) => row.sum))
   );
@@ -87,8 +90,8 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
     return index === 0 ? `< 1 ${unitLabel}` : `${unitLabel} ${index}`;
   };
 
-  const getBackground = (value: number | undefined) => {
-    if (!value) {
+  const getBackground = (value: number | null | undefined) => {
+    if (value === null || value === undefined || value === 0) {
       return {
         backgroundClassName: '',
         opacity: 0,
@@ -156,11 +159,13 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
                   style={{ opacity }}
                 />
                 <div className="relative">
-                  {number.formatWithUnit(
-                    value,
-                    isPropertyMeasure ? undefined : unit
-                  )}
-                  {value === highestValue && ' 🚀'}
+                  {value === null
+                    ? '—'
+                    : number.formatWithUnit(
+                        value,
+                        isPropertyMeasure ? undefined : unit
+                      )}
+                  {value !== null && value === highestValue && ' 🚀'}
                 </div>
               </div>
             </td>
