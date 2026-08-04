@@ -30,6 +30,10 @@ export interface OverviewFiltersProps {
   mode?: 'events' | 'profile';
 }
 
+export function resolvePropertyValuesEventName(eventNames: string[]) {
+  return eventNames.length === 1 ? eventNames[0]! : '*';
+}
+
 const Seperator = () => <div className="h-px bg-border -mx-6" />
 const Heading = ({ title, icon: Icon }: { title: string, icon: LucideIcon }) => (
   <div className="row items-center gap-2">
@@ -91,7 +95,7 @@ export default function OverviewFilters({
             return (
               <PureFilterItem
                 className="border-t p-4 first:border-0"
-                eventName="screen_view"
+                eventName={resolvePropertyValuesEventName(event)}
                 key={filter.name}
                 filter={filter}
                 onRemove={() => {
