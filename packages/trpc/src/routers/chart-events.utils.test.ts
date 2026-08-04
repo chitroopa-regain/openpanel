@@ -212,7 +212,7 @@ describe('event screenshot metadata', () => {
           'Content-Type': 'application/json',
           'X-Event-Screenshot-Token': 'read-token',
         },
-        body: '{"event_names":["Paywall: Shown"],"variants_per_event":12}',
+        body: '{"event_names":["Paywall: Shown"],"variants_per_event":12,"variants_per_version":3}',
       })
     );
     expect(screenshots.get('Paywall: Shown')).toHaveLength(1);

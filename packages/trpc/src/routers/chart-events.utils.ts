@@ -444,6 +444,7 @@ export async function fetchEventScreenshots(
         offset + MAX_EVENT_NAMES_PER_LOOKUP
       ),
       variants_per_event: REPRESENTATIVE_LOOKUP_VARIANTS_PER_EVENT,
+      variants_per_version: REPRESENTATIVE_SCREENSHOTS_PER_VERSION,
     });
   }
   let contextRequestCount = 0;
