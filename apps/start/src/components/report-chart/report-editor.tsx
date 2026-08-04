@@ -510,11 +510,18 @@ export default function ReportEditor({
     } else {
       dispatch(ready());
     }
-
-    return () => {
-      dispatch(reset());
-    };
   }, [dispatch, initialReport, organizationId, projectId, router]);
+
+  // Reset the editor only when it actually unmounts. Keeping this cleanup in
+  // the hydration effect resets Redux to the 30-day initial state every time
+  // report.get refetches (including immediately after Update), which briefly
+  // reruns the chart with 30d and can leave the editor showing the default.
+  useEffect(
+    () => () => {
+      dispatch(reset());
+    },
+    [dispatch]
+  );
 
   useEffect(() => {
     draftTokenRef.current = search?.draft ?? null;
