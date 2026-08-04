@@ -3,6 +3,12 @@ import { z } from 'zod';
 const SCREENSHOT_LOOKUP_TIMEOUT_MS = 2000;
 const TRAILING_SLASHES = /\/+$/;
 const MAX_SCREENSHOTS_PER_EVENT = 5;
+// Representative (context-free) lookups feed the event selector and its
+// version-filterable preview modal, so they keep more samples spread across
+// app versions instead of only the five newest captures overall.
+const REPRESENTATIVE_LOOKUP_VARIANTS_PER_EVENT = 12;
+const REPRESENTATIVE_SCREENSHOTS_PER_EVENT = 12;
+const REPRESENTATIVE_SCREENSHOTS_PER_VERSION = 3;
 const MAX_EVENT_NAMES_PER_LOOKUP = 100;
 const MAX_CONTEXT_REQUESTS = 20;
 const MAX_TOTAL_CONTEXT_REQUESTS = 100;
@@ -266,7 +272,21 @@ export function selectEventScreenshotSamples(
       (left.capturedAtMs ?? Number.NEGATIVE_INFINITY)
   );
   if (!context) {
-    return sorted.slice(0, MAX_SCREENSHOTS_PER_EVENT);
+    const perVersion = new Map<string, number>();
+    const representative: EventScreenshot[] = [];
+    for (const sample of sorted) {
+      if (representative.length >= REPRESENTATIVE_SCREENSHOTS_PER_EVENT) {
+        break;
+      }
+      const version = sample.appVersion ?? '';
+      const count = perVersion.get(version) ?? 0;
+      if (count >= REPRESENTATIVE_SCREENSHOTS_PER_VERSION) {
+        continue;
+      }
+      perVersion.set(version, count + 1);
+      representative.push(sample);
+    }
+    return representative;
   }
 
   const filters = context.breakdown
@@ -423,6 +443,7 @@ export async function fetchEventScreenshots(
         offset,
         offset + MAX_EVENT_NAMES_PER_LOOKUP
       ),
+      variants_per_event: REPRESENTATIVE_LOOKUP_VARIANTS_PER_EVENT,
     });
   }
   let contextRequestCount = 0;

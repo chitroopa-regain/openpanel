@@ -94,6 +94,32 @@ describe('event screenshot metadata', () => {
     ]);
   });
 
+  it('keeps representative samples version-diverse without a context', () => {
+    const samples = [
+      ...Array.from({ length: 6 }, (_, index) =>
+        sample({
+          captureId: `new-${index}`,
+          capturedAtMs: 1_000 - index,
+          appVersion: '61.2.1753',
+        })
+      ),
+      sample({
+        captureId: 'previous-release',
+        capturedAtMs: 10,
+        appVersion: '60.1.1741',
+      }),
+    ];
+
+    const selected = selectEventScreenshotSamples(samples);
+    expect(
+      selected.filter((item) => item.appVersion === '61.2.1753')
+    ).toHaveLength(3);
+    expect(selected.map((item) => item.captureId)).toContain(
+      'previous-release'
+    );
+    expect(selected[0]?.captureId).toBe('new-0');
+  });
+
   it('matches event and user properties exactly and never falls back to a mismatch', () => {
     const samples = [
       sample({ captureId: 'latest-mismatch', capturedAtMs: 300 }),
@@ -186,7 +212,7 @@ describe('event screenshot metadata', () => {
           'Content-Type': 'application/json',
           'X-Event-Screenshot-Token': 'read-token',
         },
-        body: '{"event_names":["Paywall: Shown"]}',
+        body: '{"event_names":["Paywall: Shown"],"variants_per_event":12}',
       })
     );
     expect(screenshots.get('Paywall: Shown')).toHaveLength(1);

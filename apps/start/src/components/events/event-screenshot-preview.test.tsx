@@ -100,7 +100,46 @@ describe('EventScreenshotPreview', () => {
         .getByRole('img', { name: 'Paywall: Shown event screenshot' })
         .getAttribute('src')
     ).toBe(second.url);
-    expect(screen.getByText(APP_VERSION_250)).toBeTruthy();
+    expect(screen.getByText(/ai\.regain\.app · 2\.5\.0/)).toBeTruthy();
+  });
+
+  it('filters the gallery by app version and restores all versions', () => {
+    const second = {
+      ...screenshot,
+      captureId: 'capture-2',
+      url: 'https://api.regainapp.ai/event_screenshots/capture-2/image?token=secret',
+      appVersion: '2.5.0',
+    };
+    render(
+      <EventScreenshotPreview
+        eventName="Paywall: Shown"
+        screenshots={[screenshot, second]}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Preview screenshots for Paywall: Shown',
+      })
+    );
+    expect(
+      screen.getByRole('group', { name: 'Filter screenshots by app version' })
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '2.4.0' }));
+    expect(
+      screen
+        .getByRole('img', { name: 'Paywall: Shown event screenshot' })
+        .getAttribute('src')
+    ).toBe(screenshot.url);
+    expect(
+      screen.queryByRole('group', { name: 'Screenshot gallery' })
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'All versions' }));
+    expect(
+      screen.getByRole('group', { name: 'Screenshot gallery' })
+    ).toBeTruthy();
   });
 
   it('renders nothing for disallowed URLs', () => {

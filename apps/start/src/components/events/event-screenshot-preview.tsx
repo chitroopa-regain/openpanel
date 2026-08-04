@@ -92,12 +92,35 @@ export function EventScreenshotPreview({
   );
   const [open, setOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [versionFilter, setVersionFilter] = useState<string | null>(null);
   const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
   const notifiedFailedUrls = useRef<Set<string>>(new Set());
-  const safeScreenshots = useMemo(
+  const allScreenshots = useMemo(
     () => validatedScreenshots.filter((item) => !failedUrls.has(item.url)),
     [failedUrls, validatedScreenshots]
   );
+  const appVersions = useMemo(
+    () =>
+      [
+        ...new Set(
+          allScreenshots
+            .map((item) => item.screenshot.appVersion)
+            .filter((version): version is string => !!version)
+        ),
+      ].sort((left, right) =>
+        right.localeCompare(left, undefined, { numeric: true })
+      ),
+    [allScreenshots]
+  );
+  const safeScreenshots = useMemo(() => {
+    if (!versionFilter) {
+      return allScreenshots;
+    }
+    const matching = allScreenshots.filter(
+      (item) => item.screenshot.appVersion === versionFilter
+    );
+    return matching.length > 0 ? matching : allScreenshots;
+  }, [allScreenshots, versionFilter]);
   useEffect(() => {
     if (selectedIndex >= safeScreenshots.length) {
       setSelectedIndex(0);
@@ -255,6 +278,41 @@ export function EventScreenshotPreview({
                   )}
                 </div>
                 <aside className="max-h-[32dvh] overflow-y-auto border-border border-t bg-def-100 p-4 lg:max-h-none lg:border-t-0 lg:border-l">
+                  {appVersions.length > 1 && (
+                    <div
+                      aria-label="Filter screenshots by app version"
+                      className="mb-4 flex flex-wrap gap-1.5"
+                      role="group"
+                    >
+                      <Button
+                        onClick={() => {
+                          setVersionFilter(null);
+                          setSelectedIndex(0);
+                        }}
+                        size="sm"
+                        type="button"
+                        variant={versionFilter === null ? 'default' : 'outline'}
+                      >
+                        All versions
+                      </Button>
+                      {appVersions.map((version) => (
+                        <Button
+                          key={version}
+                          onClick={() => {
+                            setVersionFilter(version);
+                            setSelectedIndex(0);
+                          }}
+                          size="sm"
+                          type="button"
+                          variant={
+                            versionFilter === version ? 'default' : 'outline'
+                          }
+                        >
+                          {version}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                   {safeScreenshots.length > 1 && (
                     <div
                       aria-label="Screenshot gallery"
