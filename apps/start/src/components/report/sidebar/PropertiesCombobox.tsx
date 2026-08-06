@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeftIcon, DatabaseIcon, UserIcon } from 'lucide-react';
 import VirtualList from 'rc-virtual-list';
 import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
+import { resolvePropertiesQueryMode } from './properties-combobox.utils';
 
 interface PropertiesComboboxProps {
   event?: IChartEvent;
@@ -65,14 +66,21 @@ export function PropertiesCombobox({
 }: PropertiesComboboxProps) {
   const { projectId } = useAppParams();
   const [open, setOpen] = useState(false);
-  const properties = useEventProperties({
-    event: event?.name,
-    projectId,
-    customEventId,
-  });
   const [state, setState] = useState<'index' | 'event' | 'profile'>('index');
   const [search, setSearch] = useState('');
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
+  const queryMode = resolvePropertiesQueryMode(mode, state);
+  const properties = useEventProperties(
+    {
+      event: event?.name,
+      projectId,
+      customEventId,
+      mode: queryMode,
+    },
+    {
+      enabled: open && state !== 'index',
+    }
+  );
 
   useEffect(() => {
     if (!open) {

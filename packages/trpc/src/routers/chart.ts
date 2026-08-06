@@ -86,6 +86,7 @@ import {
   isRetentionPropertyMeasure,
   type RawRetentionCohortRow,
 } from './chart-retention.utils';
+import { getChartPropertiesQueryScopes } from './chart-properties.utils';
 
 function utc(date: string | Date) {
   if (typeof date === 'string') {
@@ -485,43 +486,36 @@ export const chartRouter = createTRPCRouter({
         event: z.string().optional(),
         projectId: z.string(),
         customEventId: z.string().optional(),
+        mode: z.enum(['events', 'profile']).optional(),
       })
     )
-    .query(async ({ input: { projectId, event, customEventId } }) => {
-      const profiles = await clix(ch, 'UTC')
-        .select<Pick<IServiceProfile, 'properties'>>(['properties'])
-        .from(TABLE_NAMES.profiles)
-        .where('project_id', '=', projectId)
-        .where('is_external', '=', true)
-        .limit(10_000)
-        .execute();
+    .query(async ({ input: { projectId, event, customEventId, mode } }) => {
+      const scopes = getChartPropertiesQueryScopes(mode);
+      const profileProperties: string[] = [];
 
-      const profileProperties = [
-        ...new Set(
-          profiles.flatMap((p) =>
-            Object.keys(p.properties).map((k) => `profile.properties.${k}`)
+      if (scopes.profileProperties) {
+        const profiles = await clix(ch, 'UTC')
+          .select<Pick<IServiceProfile, 'properties'>>(['properties'])
+          .from(TABLE_NAMES.profiles)
+          .where('project_id', '=', projectId)
+          .where('is_external', '=', true)
+          .limit(10_000)
+          .execute();
+
+        profileProperties.push(
+          ...new Set(
+            profiles.flatMap((p) =>
+              Object.keys(p.properties).map((k) => `profile.properties.${k}`)
+            )
           )
-        ),
-      ];
+        );
 
-      // Also fetch trait keys from profile_traits table (cached)
-      const traitKeys = await getProfileTraitsKeysCached(projectId);
-      const traitProperties = traitKeys.map(
-        (key) => `profile.properties.${key}`
-      );
-      profileProperties.push(...traitProperties);
-
-      const query = clix(ch)
-        .select<{ property_key: string; created_at: string }>([
-          'distinct property_key',
-          'max(created_at) as created_at',
-        ])
-        .from(TABLE_NAMES.event_property_values_mv)
-        .where('project_id', '=', projectId)
-        .groupBy(['property_key'])
-        .orderBy('length(property_key)', 'ASC')
-        .orderBy('created_at', 'DESC')
-        .limit(10_000);
+        // Also fetch trait keys from profile_traits table (cached)
+        const traitKeys = await getProfileTraitsKeysCached(projectId);
+        profileProperties.push(
+          ...traitKeys.map((key) => `profile.properties.${key}`)
+        );
+      }
 
       // Resolve custom event to component event names for property filtering
       let propEventNames: string[] = [];
@@ -539,20 +533,36 @@ export const chartRouter = createTRPCRouter({
         propEventNames = [event];
       }
 
-      if (propEventNames.length === 1) {
-        query.where('name', '=', propEventNames[0]!);
-      } else if (propEventNames.length > 1) {
-        query.where('name', 'IN', propEventNames);
+      const eventProperties: string[] = [];
+      if (scopes.eventProperties) {
+        const query = clix(ch)
+          .select<{ property_key: string; created_at: string }>([
+            'distinct property_key',
+            'max(created_at) as created_at',
+          ])
+          .from(TABLE_NAMES.event_property_values_mv)
+          .where('project_id', '=', projectId)
+          .groupBy(['property_key'])
+          .orderBy('length(property_key)', 'ASC')
+          .orderBy('created_at', 'DESC')
+          .limit(10_000);
+
+        if (propEventNames.length === 1) {
+          query.where('name', '=', propEventNames[0]!);
+        } else if (propEventNames.length > 1) {
+          query.where('name', 'IN', propEventNames);
+        }
+
+        const res = await query.execute();
+        eventProperties.push(
+          ...res.map((item) => {
+            const key = item.property_key
+              .replace(/\.([0-9]+)\./g, '.*.')
+              .replace(/\.([0-9]+)/g, '[*]');
+            return `properties.${key}`;
+          })
+        );
       }
-
-      const res = await query.execute();
-
-      const eventProperties = res.map((item) => {
-        const key = item.property_key
-          .replace(/\.([0-9]+)\./g, '.*.')
-          .replace(/\.([0-9]+)/g, '[*]');
-        return `properties.${key}`;
-      });
 
       const fixedProperties = [
         'duration',
