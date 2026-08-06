@@ -26,6 +26,10 @@ import {
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import { ReportSeriesItem } from './ReportSeriesItem';
+import {
+  buildChangedReportEvent,
+  findSelectedCustomEvent,
+} from './report-series-events';
 
 export function ReportFixedEvents({
   numberOfEvents,
@@ -142,17 +146,12 @@ export function ReportFixedEvents({
                     multiple={isSelectManyEvents as false}
                     value={''}
                     onChange={(value) => {
-                      const selectedItem = eventNames.find(
-                        (e) => e.name === value
+                      const selectedItem = findSelectedCustomEvent(
+                        value,
+                        eventNames
                       );
 
-                      if (
-                        selectedItem &&
-                        'isCustomEvent' in selectedItem &&
-                        selectedItem.isCustomEvent &&
-                        'customEventId' in selectedItem &&
-                        selectedItem.customEventId
-                      ) {
+                      if (selectedItem) {
                         dispatch(
                           addSerie({
                             type: 'custom_event',
@@ -238,46 +237,13 @@ export function ReportFixedEvents({
                       ).name) as any
                 }
                 onChange={(value) => {
-                  const selectedItem =
-                    !Array.isArray(value)
-                      ? eventNames.find((e) => e.name === value)
-                      : null;
-
                   dispatch(
                     changeEvent(
-                      selectedItem &&
-                        'isCustomEvent' in selectedItem &&
-                        selectedItem.isCustomEvent &&
-                        'customEventId' in selectedItem &&
-                        selectedItem.customEventId
-                        ? {
-                            id: event.id,
-                            type: 'custom_event',
-                            customEventId: selectedItem.customEventId,
-                            segment: 'event',
-                            displayName: selectedItem.name,
-                            filters: [],
-                          }
-                        : Array.isArray(value)
-                        ? {
-                            id: event.id,
-                            type: 'event',
-                            segment: 'user',
-                            filters: [
-                              {
-                                name: 'name',
-                                operator: 'is',
-                                value: value,
-                              },
-                            ],
-                            name: '*',
-                          }
-                        : {
-                            ...event,
-                            type: 'event',
-                            name: value,
-                            filters: [],
-                          }
+                      buildChangedReportEvent({
+                        currentEvent: event,
+                        value,
+                        eventNames,
+                      })
                     )
                   );
                 }}

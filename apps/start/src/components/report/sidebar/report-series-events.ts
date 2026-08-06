@@ -6,6 +6,30 @@ type EventNameItem = {
   customEventId?: string;
 };
 
+export function findSelectedCustomEvent(
+  value: string | string[],
+  eventNames: EventNameItem[]
+): (EventNameItem & { isCustomEvent: true; customEventId: string }) | null {
+  const selectedValue = Array.isArray(value)
+    ? value.length === 1
+      ? value[0]
+      : null
+    : value;
+  const selectedItem = selectedValue
+    ? eventNames.find((eventName) => eventName.name === selectedValue)
+    : null;
+
+  if (selectedItem?.isCustomEvent && selectedItem.customEventId) {
+    return {
+      ...selectedItem,
+      isCustomEvent: true,
+      customEventId: selectedItem.customEventId,
+    };
+  }
+
+  return null;
+}
+
 export function buildChangedReportEvent({
   currentEvent,
   value,
@@ -15,22 +39,21 @@ export function buildChangedReportEvent({
   value: string | string[];
   eventNames: EventNameItem[];
 }): IChartEventItem {
-  const selectedItem = Array.isArray(value)
-    ? null
-    : eventNames.find((eventName) => eventName.name === value);
+  const selectedItem = findSelectedCustomEvent(value, eventNames);
 
-  if (
-    selectedItem?.isCustomEvent &&
-    'customEventId' in selectedItem &&
-    selectedItem.customEventId
-  ) {
+  if (selectedItem) {
     return {
       id: currentEvent.id,
       type: 'custom_event',
       customEventId: selectedItem.customEventId,
       segment: 'event',
       displayName: selectedItem.name,
-      filters: 'filters' in currentEvent ? (currentEvent.filters ?? []) : [],
+      filters:
+        'filters' in currentEvent
+          ? (currentEvent.filters ?? []).filter(
+              (filter) => !Array.isArray(value) || filter.name !== 'name'
+            )
+          : [],
     } as IChartEventItem;
   }
 
