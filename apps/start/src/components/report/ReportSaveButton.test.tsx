@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ReportSaveButton } from './ReportSaveButton';
 
@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   dispatch: vi.fn(),
   navigate: vi.fn(() => Promise.resolve()),
   setQueryData: vi.fn(),
+  fetchQuery: vi.fn(() => Promise.resolve(sixMonthReport)),
   invalidateQueries: vi.fn(),
   clearReportDraft: vi.fn(),
   getQueryKey: ['report', 'get', { reportId: 'report-1' }],
@@ -53,16 +54,17 @@ vi.mock('@tanstack/react-query', () => ({
   useIsFetching: () => 0,
   useQueryClient: () => ({
     setQueryData: mocks.setQueryData,
+    fetchQuery: mocks.fetchQuery,
     invalidateQueries: mocks.invalidateQueries,
   }),
   useMutation: (options: {
     kind: 'create' | 'update';
-    onSuccess?: (result: unknown) => void;
+    onSuccess?: (result: unknown) => void | Promise<void>;
   }) => ({
     isPending: false,
-    mutate: vi.fn(() => {
+    mutate: vi.fn(async () => {
       if (options.kind === 'update') {
-        options.onSuccess?.({
+        await options.onSuccess?.({
           id: 'report-1',
           dashboardId: 'regain-pro',
           projectId: 'regain-app',
@@ -90,6 +92,10 @@ vi.mock('@/integrations/trpc/react', () => ({
       list: { queryFilter: () => ({ queryKey: ['report-list'] }) },
       get: {
         queryKey: () => mocks.getQueryKey,
+        queryOptions: () => ({
+          queryKey: mocks.getQueryKey,
+          queryFn: vi.fn(),
+        }),
         queryFilter: () => ({ queryKey: mocks.getQueryKey }),
       },
     },
@@ -120,19 +126,27 @@ vi.mock('@/modals', () => ({ pushModal: vi.fn() }));
 vi.mock('sonner', () => ({ toast: vi.fn() }));
 
 describe('ReportSaveButton update', () => {
-  it('hydrates the report cache with the saved six-month range before removing the draft route', () => {
+  it('refreshes the exact report query before removing the draft route', async () => {
     render(<ReportSaveButton />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Update' }));
 
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalled());
     expect(mocks.setQueryData).toHaveBeenCalledWith(mocks.getQueryKey, {
       ...sixMonthReport,
       id: 'report-1',
       dashboardId: 'regain-pro',
       projectId: 'regain-app',
     });
-    expect(mocks.navigate).toHaveBeenCalled();
+    expect(mocks.fetchQuery).toHaveBeenCalledWith({
+      queryKey: mocks.getQueryKey,
+      queryFn: expect.any(Function),
+      staleTime: 0,
+    });
     expect(mocks.setQueryData.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.fetchQuery.mock.invocationCallOrder[0]!
+    );
+    expect(mocks.fetchQuery.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.navigate.mock.invocationCallOrder[0]!
     );
   });

@@ -70,14 +70,21 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
   );
   const update = useMutation(
     trpc.report.update.mutationOptions({
-      onSuccess(res) {
+      async onSuccess(res) {
         if (reportId) {
-          queryClient.setQueryData(trpc.report.get.queryKey({ reportId }), {
+          const reportQuery = trpc.report.get.queryOptions({ reportId });
+          queryClient.setQueryData(reportQuery.queryKey, {
             ...report,
             id: reportId,
             dashboardId: res.dashboardId,
             projectId: res.projectId,
           });
+          try {
+            await queryClient.fetchQuery({ ...reportQuery, staleTime: 0 });
+          } catch {
+            // The mutation succeeded and the cache already contains the saved
+            // editor state. A later invalidation can retry the server refresh.
+          }
         }
         if (search?.draft && reportId && organizationId && projectId) {
           clearReportDraft(search.draft);
