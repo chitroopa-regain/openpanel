@@ -319,6 +319,8 @@ function ReportInspector() {
   );
 }
 
+let reportEditorMountGeneration = 0;
+
 interface ReportEditorProps {
   report: IServiceReport | null;
 }
@@ -512,16 +514,22 @@ export default function ReportEditor({
     }
   }, [dispatch, initialReport, organizationId, projectId, router]);
 
-  // Reset the editor only when it actually unmounts. Keeping this cleanup in
-  // the hydration effect resets Redux to the 30-day initial state every time
-  // report.get refetches (including immediately after Update), which briefly
-  // reruns the chart with 30d and can leave the editor showing the default.
-  useEffect(
-    () => () => {
-      dispatch(reset());
-    },
-    [dispatch]
-  );
+  // Updating a saved draft replaces this route to remove the draft search
+  // parameter. Defer cleanup so a replacement ReportEditor can mount first and
+  // supersede this generation; otherwise the old editor overwrites the saved
+  // range with the 30-day default during Update. A real navigation away still
+  // resets the shared editor state after the microtask.
+  useEffect(() => {
+    const mountGeneration = ++reportEditorMountGeneration;
+
+    return () => {
+      queueMicrotask(() => {
+        if (reportEditorMountGeneration === mountGeneration) {
+          dispatch(reset());
+        }
+      });
+    };
+  }, [dispatch]);
 
   useEffect(() => {
     draftTokenRef.current = search?.draft ?? null;
