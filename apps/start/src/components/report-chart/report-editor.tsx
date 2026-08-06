@@ -29,7 +29,6 @@ import {
   changeStartDate,
   hydrateDraftReport,
   ready,
-  reset,
   resetDirty,
   setReport,
 } from '@/components/report/reportSlice';
@@ -320,8 +319,6 @@ function ReportInspector() {
   );
 }
 
-let reportEditorMountGeneration = 0;
-
 interface ReportEditorProps {
   report: IServiceReport | null;
 }
@@ -515,22 +512,12 @@ export default function ReportEditor({
     }
   }, [dispatch, initialReport, organizationId, projectId, router]);
 
-  // Updating a saved draft replaces this route to remove the draft search
-  // parameter. Defer cleanup so a replacement ReportEditor can mount first and
-  // supersede this generation; otherwise the old editor overwrites the saved
-  // range with the 30-day default during Update. A real navigation away still
-  // resets the shared editor state after the microtask.
-  useEffect(() => {
-    const mountGeneration = ++reportEditorMountGeneration;
-
-    return () => {
-      queueMicrotask(() => {
-        if (reportEditorMountGeneration === mountGeneration) {
-          dispatch(reset());
-        }
-      });
-    };
-  }, [dispatch]);
+  // Do not reset shared report state on unmount. Updating a saved draft can
+  // unmount this editor while TanStack Router removes the temporary draft
+  // search parameter, and any cleanup reset would overwrite the saved range
+  // with the 30-day default. Each editor mount initializes itself above with
+  // setReport(), hydrateDraftReport(), or ready(), so stale state cannot persist
+  // into the newly mounted editor.
 
   useEffect(() => {
     draftTokenRef.current = search?.draft ?? null;

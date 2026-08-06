@@ -2,7 +2,7 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ReportEditor from './report-editor';
-import { setReport } from '@/components/report/reportSlice';
+import { ready, setReport } from '@/components/report/reportSlice';
 
 const dispatch = vi.fn();
 const navigate = vi.fn(() => Promise.resolve());
@@ -128,15 +128,14 @@ const sixMonthReport = {
   limit: 500,
 };
 
-afterEach(async () => {
+afterEach(() => {
   cleanup();
-  await Promise.resolve();
   dispatch.mockClear();
   navigate.mockClear();
 });
 
 describe('ReportEditor lifecycle', () => {
-  it('does not reset a saved six-month range while Update replaces the same route', async () => {
+  it('never resets a saved six-month range while Update replaces the route', async () => {
     const currentEditor = render(
       <ReportEditor report={sixMonthReport as never} />
     );
@@ -145,31 +144,18 @@ describe('ReportEditor lifecycle', () => {
     dispatch.mockClear();
 
     currentEditor.unmount();
-    expect(dispatch).not.toHaveBeenCalled();
-
-    const replacementEditor = render(
-      <ReportEditor report={sixMonthReport as never} />
-    );
-    dispatch.mockClear();
+    await Promise.resolve();
     await Promise.resolve();
 
     expect(dispatch).not.toHaveBeenCalled();
-    replacementEditor.unmount();
+
+    render(<ReportEditor report={sixMonthReport as never} />);
+    expect(dispatch).toHaveBeenCalledWith(setReport(sixMonthReport as never));
   });
 
-  it('still resets shared report state after a real navigation away', async () => {
-    const { unmount } = render(
-      <ReportEditor report={sixMonthReport as never} />
-    );
-    dispatch.mockClear();
+  it('initializes a new report from defaults instead of relying on unmount cleanup', () => {
+    render(<ReportEditor report={null} />);
 
-    unmount();
-    expect(dispatch).not.toHaveBeenCalled();
-    await Promise.resolve();
-
-    expect(dispatch).toHaveBeenCalledWith({
-      payload: undefined,
-      type: 'report/reset',
-    });
+    expect(dispatch).toHaveBeenCalledWith(ready());
   });
 });
