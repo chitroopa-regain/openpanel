@@ -2,6 +2,7 @@ import {
   alphabetIds,
   deprecated_timeRanges,
   lineTypes,
+  timeWindows,
 } from '@openpanel/constants';
 import type {
   IChartBreakdown,
@@ -103,7 +104,7 @@ export function transformReport(
       (report.events as IChartEventItem[]).map(transformReportEventItem) ?? [],
     breakdowns: report.breakdowns as IChartBreakdown[],
     range:
-      report.range in deprecated_timeRanges
+      report.range in deprecated_timeRanges && !(report.range in timeWindows)
         ? '30d'
         : (report.range as IChartRange),
     previous: report.previous ?? false,
