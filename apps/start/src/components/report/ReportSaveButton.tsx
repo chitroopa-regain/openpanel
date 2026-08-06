@@ -71,6 +71,14 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
   const update = useMutation(
     trpc.report.update.mutationOptions({
       onSuccess(res) {
+        if (reportId) {
+          queryClient.setQueryData(trpc.report.get.queryKey({ reportId }), {
+            ...report,
+            id: reportId,
+            dashboardId: res.dashboardId,
+            projectId: res.projectId,
+          });
+        }
         if (search?.draft && reportId && organizationId && projectId) {
           clearReportDraft(search.draft);
           void router.navigate({
