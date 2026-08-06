@@ -606,6 +606,7 @@ export function ReportItem({
       >
         <ReportChart
           options={{
+            displayLayout: 'dashboard',
             showFunnelPreviewLabels: report.chartType === 'funnel',
             funnelLayout:
               report.chartType === 'funnel' ? 'dashboard' : undefined,
@@ -737,6 +738,7 @@ export function ReportItemReadOnly({
       >
         <ReportChart
           options={{
+            displayLayout: 'dashboard',
             showFunnelPreviewLabels: report.chartType === 'funnel',
             funnelLayout:
               report.chartType === 'funnel' ? 'dashboard' : undefined,

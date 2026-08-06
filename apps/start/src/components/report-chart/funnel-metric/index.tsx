@@ -6,6 +6,7 @@ import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { PreviousDiffIndicatorPure } from '../common/previous-diff-indicator';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import { useTRPC } from '@/integrations/trpc/react';
@@ -21,9 +22,11 @@ import {
 type FunnelData = RouterOutputs['chart']['funnel'];
 type FunnelSeries = FunnelData['current'][number];
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Query state and the two saved display surfaces are coordinated here.
 export function ReportFunnelMetricChart() {
   const { isLazyLoading, isEditMode, report, shareId } =
     useReportChartContext();
+  const { showChart, showTable } = useReportDisplayVisibility();
   const trpc = useTRPC();
   const number = useNumber();
 
@@ -131,7 +134,8 @@ export function ReportFunnelMetricChart() {
       className={`col gap-4 ${isEditMode ? '' : 'h-full items-center justify-center'}`}
     >
       {/* KPI Cards */}
-      <div className={funnelMetricGridClassName}>
+      {showChart && (
+        <div className={funnelMetricGridClassName}>
         {metrics.map((metric) => (
           <div
             className={funnelMetricCardClassName}
@@ -175,10 +179,11 @@ export function ReportFunnelMetricChart() {
             </div>
           </div>
         ))}
-      </div>
+        </div>
+      )}
 
-      {/* Simple table — only in edit mode (full report) */}
-      {isEditMode && (
+      {/* Tabular display */}
+      {showTable && (
         <div className="card overflow-auto">
           <table className="w-full text-sm">
             <thead>

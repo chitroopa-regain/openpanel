@@ -16,6 +16,7 @@ import { ReportPieChart } from './pie';
 import { ReportRetentionChart } from './retention';
 import { ReportSankeyChart } from './sankey';
 import { ReportTableChart } from './table';
+import { cn } from '@/utils/cn';
 
 export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
   const ref = useRef<HTMLDivElement>(null);
@@ -35,6 +36,9 @@ export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
   }, [inViewport]);
 
   const loaded = lazy ? once.current || inViewport : true;
+  const isDashboardBoth =
+    props.options?.displayLayout === 'dashboard' &&
+    props.report.options?.displayMode === 'both';
 
   const renderReportChart = () => {
     switch (props.report.chartType) {
@@ -70,7 +74,13 @@ export const ReportChart = ({ lazy = true, ...props }: ReportChartProps) => {
   };
 
   return (
-    <div className="h-full w-full" ref={ref}>
+    <div
+      className={cn(
+        'h-full w-full',
+        isDashboardBoth && 'overflow-y-auto overscroll-contain'
+      )}
+      ref={ref}
+    >
       <ReportChartProvider
         {...mergeDeepRight({ options: {}, isEditMode: false }, props)}
         isLazyLoading={!loaded}

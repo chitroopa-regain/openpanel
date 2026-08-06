@@ -26,6 +26,7 @@ import { ReportTable } from '../common/report-table';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useDashedStroke } from '@/hooks/use-dashed-stroke';
 import { useRechartDataModel } from '@/hooks/use-rechart-data-model';
 import {
@@ -43,6 +44,7 @@ interface Props {
 }
 
 export function Chart({ data }: Props) {
+  const { showChart, showTable } = useReportDisplayVisibility();
   const {
     report: {
       previous,
@@ -212,6 +214,7 @@ export function Chart({ data }: Props) {
   return (
     <ReportChartTooltip.TooltipProvider references={references.data}>
       <ChartClickMenu getMenuItems={getMenuItems}>
+        {showChart && (
         <div className={cn('h-full w-full', isEditMode && 'card p-4')}>
           <ResponsiveContainer>
             <ComposedChart data={rechartData}>
@@ -310,8 +313,9 @@ export function Chart({ data }: Props) {
                 })}
             </ComposedChart>
           </ResponsiveContainer>
-        </div>
-        {isEditMode && (
+          </div>
+        )}
+        {showTable && (
           <ReportTable
             data={data}
             setVisibleSeries={setVisibleSeries}

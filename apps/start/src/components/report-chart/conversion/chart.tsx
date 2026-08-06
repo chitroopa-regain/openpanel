@@ -32,6 +32,7 @@ import { PreviousDiffIndicator } from '../common/previous-diff-indicator';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { ConversionTable } from './conversion-table';
 
 interface Props {
@@ -39,6 +40,7 @@ interface Props {
 }
 
 export function Chart({ data }: Props) {
+  const { showChart, showTable } = useReportDisplayVisibility();
   const {
     report: { interval, projectId, startDate, endDate, range, lineType },
     isEditMode,
@@ -135,7 +137,8 @@ export function Chart({ data }: Props) {
       interval={interval}
       visibleSeries={series}
     >
-      <div className={cn('h-full w-full', isEditMode && 'card p-4')}>
+      {showChart && (
+        <div className={cn('h-full w-full', isEditMode && 'card p-4')}>
         <ResponsiveContainer>
           <LineChart data={rechartData} onClick={handleChartClick}>
             <CartesianGrid
@@ -213,12 +216,15 @@ export function Chart({ data }: Props) {
               )}
           </LineChart>
         </ResponsiveContainer>
-      </div>
-      <ConversionTable
-        data={data}
-        visibleSeries={series}
-        setVisibleSeries={setVisibleSeries}
-      />
+        </div>
+      )}
+      {showTable && (
+        <ConversionTable
+          data={data}
+          visibleSeries={series}
+          setVisibleSeries={setVisibleSeries}
+        />
+      )}
     </TooltipProvider>
   );
 }

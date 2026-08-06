@@ -4,11 +4,16 @@ import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import {
+  getReportDisplayMode,
+  getReportDisplayVisibility,
+} from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
 import CohortTable from './table';
 import { useTRPC } from '@/integrations/trpc/react';
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Retention query state and its chart/table layouts are coordinated here.
 export function ReportRetentionChart() {
   const { isLazyLoading, report, shareId, options } = useReportChartContext();
   const firstItem = report.series[0];
@@ -116,18 +121,34 @@ export function ReportRetentionChart() {
   }
 
   const isDashboardLayout = options.retentionLayout === 'dashboard';
+  const displayMode = getReportDisplayMode(
+    report,
+    options.displayLayout ?? (isDashboardLayout ? 'dashboard' : 'default')
+  );
+  const { showChart, showTable } = getReportDisplayVisibility(displayMode);
 
   return (
-    <div className={isDashboardLayout ? 'h-full min-h-0 w-full' : 'col gap-4'}>
-      {isDashboardLayout ? (
-        <Chart data={res.data.data} />
-      ) : (
-        <>
+    <div
+      className={
+        isDashboardLayout
+          ? `grid h-full min-h-0 w-full gap-2 ${showChart && showTable ? 'grid-rows-2' : 'grid-rows-1'}`
+          : 'col gap-4'
+      }
+    >
+      {showChart &&
+        (isDashboardLayout ? (
+          <div className="min-h-0 overflow-hidden">
+            <Chart data={res.data.data} />
+          </div>
+        ) : (
           <AspectContainer>
             <Chart data={res.data.data} />
           </AspectContainer>
+        ))}
+      {showTable && (
+        <div className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}>
           <CohortTable data={res.data.data} />
-        </>
+        </div>
       )}
     </div>
   );

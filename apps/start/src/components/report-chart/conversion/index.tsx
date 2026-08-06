@@ -4,6 +4,7 @@ import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
 import { Summary } from './summary';
@@ -11,6 +12,7 @@ import { useTRPC } from '@/integrations/trpc/react';
 
 export function ReportConversionChart() {
   const { isLazyLoading, report, shareId } = useReportChartContext();
+  const { showChart } = useReportDisplayVisibility();
   const trpc = useTRPC();
   const queryOptions = trpc.chart.conversion.queryOptions(
     {
@@ -50,7 +52,7 @@ export function ReportConversionChart() {
 
   return (
     <div>
-      <Summary data={res.data} />
+      {showChart && <Summary data={res.data} />}
       <AspectContainer>
         <Chart data={res.data} />
       </AspectContainer>

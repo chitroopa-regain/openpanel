@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
 import WorldMap from 'react-svg-worldmap';
 import AutoSizer from 'react-virtualized-auto-sizer';
+import { ReportTable } from '../common/report-table';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useEventQueryFilters } from '@/hooks/use-event-query-filters';
 import {
   getHiddenSeriesKeys,
@@ -14,6 +16,7 @@ interface Props {
 }
 
 export function Chart({ data }: Props) {
+  const { showChart, showTable } = useReportDisplayVisibility();
   const {
     report: { metric, unit, series: reportSeries },
   } = useReportChartContext();
@@ -21,7 +24,11 @@ export function Chart({ data }: Props) {
     () => getHiddenSeriesKeys(reportSeries),
     [reportSeries]
   );
-  const { series } = useVisibleSeries(data, 99_999, hiddenSeriesIds);
+  const { series, setVisibleSeries } = useVisibleSeries(
+    data,
+    99_999,
+    hiddenSeriesIds
+  );
   const [_, setFilter] = useEventQueryFilters();
   const mapData = useMemo(
     () =>
@@ -33,7 +40,8 @@ export function Chart({ data }: Props) {
   );
 
   return (
-    <AutoSizer disableHeight>
+    <>
+      {showChart && <AutoSizer disableHeight>
       {({ width }) => (
         <WorldMap
           borderColor={'var(--foreground)'}
@@ -48,6 +56,14 @@ export function Chart({ data }: Props) {
           value-suffix={unit}
         />
       )}
-    </AutoSizer>
+      </AutoSizer>}
+      {showTable && (
+        <ReportTable
+          data={data}
+          setVisibleSeries={setVisibleSeries}
+          visibleSeries={series}
+        />
+      )}
+    </>
   );
 }

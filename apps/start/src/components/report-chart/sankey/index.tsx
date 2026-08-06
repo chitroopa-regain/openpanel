@@ -5,6 +5,7 @@ import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
 import { useTRPC } from '@/integrations/trpc/react';
@@ -22,6 +23,7 @@ export function ReportSankeyChart() {
     },
     isLazyLoading,
   } = useReportChartContext();
+  const { showChart, showTable } = useReportDisplayVisibility();
 
   if (!options) {
     return <Empty />;
@@ -64,7 +66,40 @@ export function ReportSankeyChart() {
 
   return (
     <div className="col gap-4">
-      <Chart data={res.data} />
+      {showChart && <Chart data={res.data} />}
+      {showTable && (
+        <div className="card max-h-full overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-border border-b bg-def-100">
+                <th className="px-4 py-2 text-left font-medium text-muted-foreground">
+                  From
+                </th>
+                <th className="px-4 py-2 text-left font-medium text-muted-foreground">
+                  To
+                </th>
+                <th className="px-4 py-2 text-right font-medium text-muted-foreground">
+                  Users
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {res.data.links.map((link, index) => (
+                <tr
+                  className="border-border border-b last:border-0"
+                  key={`${link.source}-${link.target}-${index}`}
+                >
+                  <td className="px-4 py-2">{link.source}</td>
+                  <td className="px-4 py-2">{link.target}</td>
+                  <td className="px-4 py-2 text-right font-mono font-semibold">
+                    {link.value.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

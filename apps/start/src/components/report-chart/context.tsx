@@ -20,6 +20,7 @@ export type ReportChartContextType = {
     showFunnelPreviewLabels: boolean;
     funnelLayout: 'default' | 'dashboard';
     retentionLayout: 'default' | 'dashboard';
+    displayLayout: 'default' | 'dashboard';
     metricLayout: 'compact' | 'hero';
     metricSurface: 'card' | 'plain';
     aspectRatio: number;

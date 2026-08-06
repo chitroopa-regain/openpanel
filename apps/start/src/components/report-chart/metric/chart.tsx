@@ -2,15 +2,11 @@ import { useMemo } from 'react';
 import { useReportChartContext } from '../context';
 import { compactMetricGridClassName } from './metric-card-layout';
 import { MetricCard } from './metric-card';
-import {
-  getHiddenSeriesKeys,
-  useVisibleSeries,
-} from '@/hooks/use-visible-series';
-import type { IChartData } from '@/trpc/client';
+import type { IVisibleSeries } from '@/hooks/use-visible-series';
 import { cn } from '@/utils/cn';
 
 interface Props {
-  data: IChartData;
+  series: IVisibleSeries;
 }
 
 export function shouldForceCompactMetricLayout(
@@ -20,23 +16,14 @@ export function shouldForceCompactMetricLayout(
   return metricLayout === 'hero' && seriesCount > 1;
 }
 
-export function Chart({ data }: Props) {
+export function Chart({ series }: Props) {
   const {
-    isEditMode,
     options,
-    report: { unit, series: reportSeries },
+    report: { unit },
   } = useReportChartContext();
   const metricLayout = options.metricLayout ?? 'compact';
   const isHero = metricLayout === 'hero';
-  const hiddenSeriesIds = useMemo(
-    () => getHiddenSeriesKeys(reportSeries),
-    [reportSeries]
-  );
-  const { series } = useVisibleSeries(
-    data,
-    isEditMode ? 20 : 4,
-    hiddenSeriesIds
-  );
+
 
   // When formulas exist, only show formula series (like Mixpanel does)
   const displaySeries = useMemo(() => {

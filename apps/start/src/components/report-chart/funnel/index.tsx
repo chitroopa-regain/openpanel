@@ -9,6 +9,7 @@ import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { BreakdownList } from './breakdown-list';
 import { Chart, Summary } from './chart';
@@ -20,6 +21,7 @@ import { useDispatch } from '@/redux';
 export function ReportFunnelChart() {
   const { isLazyLoading, isEditMode, report, shareId } =
     useReportChartContext();
+  const { showChart, showTable } = useReportDisplayVisibility();
   const trpc = useTRPC();
   const queryOptions = trpc.chart.funnel.queryOptions(
     {
@@ -122,9 +124,11 @@ export function ReportFunnelChart() {
 
   return (
     <div className="col h-full gap-4">
-      {isEditMode && hasBreakdowns && <Summary data={res.data} />}
-      <Chart data={res.data} visibleBreakdowns={visibleBreakdowns} />
-      {isEditMode && (
+      {showChart && isEditMode && hasBreakdowns && <Summary data={res.data} />}
+      {showChart && (
+        <Chart data={res.data} visibleBreakdowns={visibleBreakdowns} />
+      )}
+      {showTable && (
         <BreakdownList
           data={res.data}
           onInspectStep={handleInspectStep}

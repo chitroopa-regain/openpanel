@@ -6,6 +6,7 @@ import { ReportTable } from '../common/report-table';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import {
   ChartTooltipContainer,
   ChartTooltipHeader,
@@ -65,6 +66,7 @@ const PieTooltip = (props: { payload?: any[] }) => {
 };
 
 export function Chart({ data }: Props) {
+  const { showChart, showTable } = useReportDisplayVisibility();
   const { isEditMode, report } = useReportChartContext();
   const hiddenSeriesIds = useMemo(
     () => getHiddenSeriesKeys(report.series),
@@ -108,9 +110,10 @@ export function Chart({ data }: Props) {
 
   return (
     <>
-      <div
-        className={cn('h-full w-full max-sm:-mx-3', isEditMode && 'card p-4')}
-      >
+      {showChart && (
+        <div
+          className={cn('h-full w-full max-sm:-mx-3', isEditMode && 'card p-4')}
+        >
         <ResponsiveContainer>
           <PieChart>
             <Tooltip content={<PieTooltip />} />
@@ -152,8 +155,9 @@ export function Chart({ data }: Props) {
             }
           </PieChart>
         </ResponsiveContainer>
-      </div>
-      {isEditMode && (
+        </div>
+      )}
+      {showTable && (
         <ReportTable
           chartType="pie"
           data={data}

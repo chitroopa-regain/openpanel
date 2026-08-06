@@ -16,6 +16,7 @@ import {
   PageBreadcrumbs,
 } from '@/components/page-breadcrumbs';
 import { ReportChartType } from '@/components/report/ReportChartType';
+import { ReportDisplayMode } from '@/components/report/report-display-mode';
 import { ReportInterval } from '@/components/report/ReportInterval';
 import { ReportLineType } from '@/components/report/ReportLineType';
 import { ReportSaveButton } from '@/components/report/ReportSaveButton';
@@ -714,17 +715,25 @@ export default function ReportEditor({
         <div className="flex flex-col gap-4 p-4 lg:flex-row" id="report-editor">
           <div className="min-w-0 flex-1">
             {report.ready && (
-              <ReportChart
-                isEditMode
-                options={{
-                  metricLayout:
-                    report.chartType === 'metric' &&
-                    report.breakdowns.length === 0
-                      ? 'hero'
-                      : 'compact',
-                }}
-                report={{ ...report, projectId }}
-              />
+              <div className="flex flex-col gap-4">
+                {report.chartType !== 'table' && (
+                  <div className="flex justify-center">
+                    <ReportDisplayMode />
+                  </div>
+                )}
+                <ReportChart
+                  isEditMode
+                  options={{
+                    displayLayout: 'default',
+                    metricLayout:
+                      report.chartType === 'metric' &&
+                      report.breakdowns.length === 0
+                        ? 'hero'
+                        : 'compact',
+                  }}
+                  report={{ ...report, projectId }}
+                />
+              </div>
             )}
           </div>
           {report.ready && <ReportInspector />}

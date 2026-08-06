@@ -18,6 +18,7 @@ import type {
   UnionOmit,
   zCriteria,
   zFunnelMeasure,
+  zReportDisplayMode,
   zRetentionTimeUnit,
 } from '@openpanel/validation';
 import type { PayloadAction } from '@reduxjs/toolkit';
@@ -51,7 +52,7 @@ const initialState: InitialState = {
   unit: undefined,
   metric: 'sum',
   limit: 500,
-  options: undefined,
+  options: { type: 'generic', displayMode: 'both' },
   dateConfig: undefined,
 };
 
@@ -82,6 +83,12 @@ export const reportSlice = createSlice({
       return {
         ...state,
         ...action.payload,
+        options: action.payload.options
+          ? {
+              ...action.payload.options,
+              displayMode: action.payload.options.displayMode ?? 'both',
+            }
+          : { type: 'generic', displayMode: 'both' },
         breakdowns: hasFreqDist ? [] : action.payload.breakdowns,
         startDate: null,
         endDate: null,
@@ -96,6 +103,12 @@ export const reportSlice = createSlice({
       return {
         ...state,
         ...action.payload,
+        options: action.payload.options
+          ? {
+              ...action.payload.options,
+              displayMode: action.payload.options.displayMode ?? 'both',
+            }
+          : { type: 'generic', displayMode: 'both' },
         breakdowns: hasFreqDist ? [] : action.payload.breakdowns,
         startDate: action.payload.startDate ?? null,
         endDate: action.payload.endDate ?? null,
@@ -171,6 +184,20 @@ export const reportSlice = createSlice({
       state.dirty = true;
       state.previous = action.payload;
     },
+    changeDisplayMode: (
+      state,
+      action: PayloadAction<z.infer<typeof zReportDisplayMode>>
+    ) => {
+      state.dirty = true;
+      if (state.options) {
+        state.options.displayMode = action.payload;
+      } else {
+        state.options = {
+          type: 'generic',
+          displayMode: action.payload,
+        };
+      }
+    },
 
     // Breakdowns
     addBreakdown: (
@@ -224,8 +251,9 @@ export const reportSlice = createSlice({
       state.chartType = action.payload;
 
       // Initialize sankey options if switching to sankey
-      if (action.payload === 'sankey' && !state.options) {
+      if (action.payload === 'sankey' && state.options?.type !== 'sankey') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'sankey',
           mode: 'after',
           steps: 5,
@@ -303,6 +331,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'retention') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'retention',
           criteria: action.payload,
         };
@@ -328,6 +357,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'retention') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'retention',
           metric: action.payload,
         };
@@ -349,6 +379,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'retention') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'retention',
           metric: action.payload ? 'property_average' : undefined,
           property: action.payload,
@@ -371,6 +402,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'retention') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'retention',
           retentionUnit: action.payload,
         };
@@ -386,6 +418,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'retention') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'retention',
           metric: 'property_average',
           propertyAverageDenominatorStep: action.payload,
@@ -399,6 +432,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelGroup: action.payload,
           funnelWindow: undefined,
@@ -412,6 +446,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelGroup: undefined,
           funnelWindow: action.payload,
@@ -425,6 +460,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelGroup: undefined,
           funnelWindow: undefined,
@@ -439,6 +475,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelGroup: undefined,
           funnelWindow: undefined,
@@ -453,6 +490,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelProperty: action.payload,
         };
@@ -469,6 +507,7 @@ export const reportSlice = createSlice({
       const measure = action.payload || undefined;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelMeasure: measure,
         };
@@ -482,6 +521,7 @@ export const reportSlice = createSlice({
       const next = action.payload.length > 0 ? action.payload : undefined;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           hiddenBreakdowns: next,
         };
@@ -507,6 +547,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'funnel',
           funnelGroup: undefined,
           funnelWindow: undefined,
@@ -580,6 +621,7 @@ export const reportSlice = createSlice({
       state.dirty = true;
       if (!state.options || state.options.type !== 'histogram') {
         state.options = {
+          displayMode: state.options?.displayMode,
           type: 'histogram',
           stacked: action.payload,
         };
@@ -624,6 +666,7 @@ export const {
   resetDirty,
   changeFormula,
   changePrevious,
+  changeDisplayMode,
   changeCriteria,
   changeUnit,
   changeRetentionMetric,

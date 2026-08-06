@@ -266,9 +266,20 @@ function sortKeysDeep(value: unknown): unknown {
 function canonicalKey(input: Record<string, unknown>): string {
   const filtered: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
-    if (!NON_QUERY_KEY_FIELDS.has(k)) {
-      filtered[k] = v;
+    if (NON_QUERY_KEY_FIELDS.has(k)) {
+      continue;
     }
+    if (k === 'options' && v && typeof v === 'object' && !Array.isArray(v)) {
+      const { displayMode: _displayMode, ...queryOptions } = v as Record<
+        string,
+        unknown
+      >;
+      if (queryOptions.type !== 'generic') {
+        filtered[k] = queryOptions;
+      }
+      continue;
+    }
+    filtered[k] = v;
   }
   return JSON.stringify(sortKeysDeep(filtered));
 }

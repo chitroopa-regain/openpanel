@@ -1,17 +1,26 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
+import { ReportTable } from '../common/report-table';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
 import { useTRPC } from '@/integrations/trpc/react';
+import {
+  getHiddenSeriesKeys,
+  useVisibleSeries,
+} from '@/hooks/use-visible-series';
+import type { IChartData } from '@/trpc/client';
 
 export function ReportMetricChart() {
   const { isLazyLoading, report, shareId, options } = useReportChartContext();
   const trpc = useTRPC();
   const isHero = options.metricLayout === 'hero';
   const isPlainHero = isHero && options.metricSurface === 'plain';
+  const { showChart, showTable } = useReportDisplayVisibility();
 
   const queryOptions = trpc.chart.aggregate.queryOptions(
     {
@@ -45,15 +54,52 @@ export function ReportMetricChart() {
     return <Empty />;
   }
 
-  if (isHero && !isPlainHero) {
+  return (
+    <MetricContent data={res.data} isHero={isHero} isPlainHero={isPlainHero} />
+  );
+}
+
+function MetricContent({
+  data,
+  isHero,
+  isPlainHero,
+}: {
+  data: IChartData;
+  isHero: boolean;
+  isPlainHero: boolean;
+}) {
+  const { isEditMode, report } = useReportChartContext();
+  const { showChart, showTable } = useReportDisplayVisibility();
+  const hiddenSeriesIds = useMemo(
+    () => getHiddenSeriesKeys(report.series),
+    [report.series]
+  );
+  const { series, setVisibleSeries } = useVisibleSeries(
+    data,
+    isEditMode ? 20 : 4,
+    hiddenSeriesIds
+  );
+
+  if (showChart && !showTable && isHero && !isPlainHero) {
     return (
       <AspectContainer className="max-h-[620px] min-h-[420px]">
-        <Chart data={res.data} />
+        <Chart series={series} />
       </AspectContainer>
     );
   }
 
-  return <Chart data={res.data} />;
+  return (
+    <div className="col h-full gap-4">
+      {showChart && <Chart series={series} />}
+      {showTable && (
+        <ReportTable
+          data={data}
+          setVisibleSeries={setVisibleSeries}
+          visibleSeries={series}
+        />
+      )}
+    </div>
+  );
 }
 
 export function Loading() {

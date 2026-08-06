@@ -19,6 +19,7 @@ import {
 import { ReportChartTooltip } from '../common/report-chart-tooltip';
 import { ReportTable } from '../common/report-table';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { useRechartDataModel } from '@/hooks/use-rechart-data-model';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -52,6 +53,7 @@ function BarHover({ x, y, width, height, top, left, right, bottom }: any) {
 }
 
 export function Chart({ data }: Props) {
+  const { showChart, showTable } = useReportDisplayVisibility();
   const {
     isEditMode,
     report: {
@@ -167,6 +169,7 @@ export function Chart({ data }: Props) {
   return (
     <ReportChartTooltip.TooltipProvider references={references.data}>
       <ChartClickMenu getMenuItems={getMenuItems}>
+        {showChart && (
         <div className={cn('h-full w-full', isEditMode && 'card p-4')}>
           <ResponsiveContainer>
             <BarChart data={rechartData}>
@@ -226,8 +229,9 @@ export function Chart({ data }: Props) {
               ))}
             </BarChart>
           </ResponsiveContainer>
-        </div>
-        {isEditMode && (
+          </div>
+        )}
+        {showTable && (
           <ReportTable
             data={data}
             setVisibleSeries={setVisibleSeries}

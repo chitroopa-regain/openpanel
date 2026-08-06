@@ -176,6 +176,7 @@ export const zRetentionMeasure = z.enum([
   'property_sum',
   'property_average',
 ]);
+export const zReportDisplayMode = z.enum(['both', 'chart', 'table']);
 
 // Report Options - Discriminated union based on chart type
 export const zFunnelWindowUnit = z.enum([
@@ -195,6 +196,7 @@ export const zFunnelMeasure = z.enum([
 
 export const zFunnelOptions = z.object({
   type: z.literal('funnel'),
+  displayMode: zReportDisplayMode.optional(),
   funnelGroup: z.string().optional(),
   funnelWindow: z.number().optional(),
   funnelWindowUnit: zFunnelWindowUnit.optional(),
@@ -212,6 +214,7 @@ export const zFunnelOptions = z.object({
 
 export const zRetentionOptions = z.object({
   type: z.literal('retention'),
+  displayMode: zReportDisplayMode.optional(),
   criteria: zCriteria.optional(),
   funnelGroup: z.string().optional(),
   day: z.number().optional(),
@@ -225,6 +228,7 @@ export const zRetentionOptions = z.object({
 
 export const zSankeyOptions = z.object({
   type: z.literal('sankey'),
+  displayMode: zReportDisplayMode.optional(),
   mode: z.enum(['between', 'after', 'before']),
   steps: z.number().min(2).max(10).default(5),
   exclude: z.array(z.string()).default([]),
@@ -233,7 +237,13 @@ export const zSankeyOptions = z.object({
 
 export const zHistogramOptions = z.object({
   type: z.literal('histogram'),
+  displayMode: zReportDisplayMode.optional(),
   stacked: z.boolean().default(false),
+});
+
+export const zGenericReportOptions = z.object({
+  type: z.literal('generic'),
+  displayMode: zReportDisplayMode.optional(),
 });
 
 export const zReportOptions = z.discriminatedUnion('type', [
@@ -241,6 +251,7 @@ export const zReportOptions = z.discriminatedUnion('type', [
   zRetentionOptions,
   zSankeyOptions,
   zHistogramOptions,
+  zGenericReportOptions,
 ]);
 
 export type IReportOptions = z.infer<typeof zReportOptions>;

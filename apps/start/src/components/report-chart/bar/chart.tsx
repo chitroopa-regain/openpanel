@@ -5,7 +5,9 @@ import { SearchIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
+import { ReportTable } from '../common/report-table';
 import { useReportChartContext } from '../context';
+import { useReportDisplayVisibility } from '../display-mode';
 import { DeltaChip } from '@/components/delta-chip';
 import {
   DropdownMenu,
@@ -43,6 +45,7 @@ interface Props {
 }
 
 export function Chart({ data }: Props) {
+  const { showChart, showTable } = useReportDisplayVisibility();
   const [isOpen, setOpen] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('count-desc');
@@ -60,7 +63,7 @@ export function Chart({ data }: Props) {
   );
 
   // Use useVisibleSeries to add index property for colors
-  const { series: allSeriesWithIndex } = useVisibleSeries(
+  const { series: allSeriesWithIndex, setVisibleSeries } = useVisibleSeries(
     data,
     500,
     hiddenSeriesIds
@@ -127,7 +130,9 @@ export function Chart({ data }: Props) {
   ]);
 
   return (
-    <div className={cn('w-full', isEditMode && 'card')}>
+    <>
+      {showChart && (
+        <div className={cn('w-full', isEditMode && 'card')}>
       {isEditMode && (
         <div className="flex items-center gap-3 border-def-200 border-b p-4 dark:border-def-800">
           <div className="relative flex-1">
@@ -343,7 +348,16 @@ export function Chart({ data }: Props) {
             );
           })}
         </div>
-      </div>
-    </div>
+          </div>
+        </div>
+      )}
+      {showTable && (
+        <ReportTable
+          data={data}
+          setVisibleSeries={setVisibleSeries}
+          visibleSeries={allSeriesWithIndex}
+        />
+      )}
+    </>
   );
 }

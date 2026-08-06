@@ -21,11 +21,18 @@ interface Props {
   data: RouterOutputs['chart']['cohort']['data'];
 }
 
-function toChartValue(value: number | null | undefined, isPercentage: boolean) {
+export function toChartValue(
+  value: number | string | null | undefined,
+  isPercentage: boolean
+) {
   if (value === null || value === undefined) {
     return null;
   }
-  return isPercentage ? value * 100 : value;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return isPercentage ? numericValue * 100 : numericValue;
 }
 
 function getNiceTicks(max: number, isPercentage: boolean): number[] {
@@ -78,7 +85,7 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
       }))
     : dataSource?.map((item, index) => ({
         days: index,
-        percentage: toChartValue(item, isPercentage),
+        percentage: toChartValue(item as number | string | null, isPercentage),
         value: averageRow?.values?.[index],
         sum: averageRow?.sum,
       }));
@@ -96,7 +103,9 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
     : Math.max(
         ...(dataSource
           ?.filter((value): value is number => value !== null)
-          .map((value) => (isPercentage ? value * 100 : value)) ?? [0])
+          .map((value) =>
+            toChartValue(value as number | string | null, isPercentage) ?? 0
+          ) ?? [0])
       );
 
   return { averageRow, averageRows, dataMax, hasBreakdowns, rechartData };
@@ -122,18 +131,14 @@ export function Chart({ data }: Props) {
   });
   const { averageRow, averageRows, dataMax, hasBreakdowns, rechartData } =
     getBreakdownChartState(data, isPercentage);
-  const averageRetentionRate = isPercentage
-    ? average(
-        averageRow?.percentages.filter(
-          (value): value is number => value !== null
-        ) || [],
-        true
-      ) * 100
-    : average(
-        averageRow?.values.filter((value): value is number => value !== null) ||
-          [],
-        true
-      );
+  const normalizedAverageValues = (
+    isPercentage ? averageRow?.percentages : averageRow?.values
+  )
+    ?.map((value) =>
+      toChartValue(value as number | string | null, isPercentage)
+    )
+    .filter((value): value is number => value !== null);
+  const averageRetentionRate = average(normalizedAverageValues || [], true);
   const breakdownTooltipFormatter = (value: number | string) => {
     const roundedValue = round(Number(value), 2);
     return isPercentage ? `${roundedValue}%` : roundedValue;
