@@ -1335,14 +1335,30 @@ export const chartRouter = createTRPCRouter({
         return `LEFT ANY JOIN (SELECT id, ${columns} FROM ${TABLE_NAMES.profiles} FINAL WHERE project_id = ${sqlstring.escape(projectId)}) AS profile ON profile.id = ${profileId}`;
       };
 
-      const buildFilterWhere = (filters: IChartEventFilter[]) => {
+      const buildFilterWhere = (
+        filters: IChartEventFilter[],
+        qualifyAlias?: string
+      ) => {
         if (filters.length === 0) {
           return '';
         }
         const where = getEventFiltersWhereClause(filters, projectId);
-        const clauses = Object.values(where);
+        let clauses = Object.values(where);
         if (clauses.length === 0) {
           return '';
+        }
+        // When trait CTEs are joined in the same scope, a bare profile_id is
+        // AMBIGUOUS_IDENTIFIER — qualify the outer reference only (not the
+        // profile_id inside the trait IN-subquery).
+        if (qualifyAlias) {
+          clauses = clauses.map((clause) =>
+            clause
+              .replace(
+                /^profile_id (IN|NOT IN) /i,
+                `${qualifyAlias}.profile_id $1 `
+              )
+              .replace(/^profile_id (!= |= )/i, `${qualifyAlias}.profile_id $1`)
+          );
         }
         return `AND ${clauses.join(' AND ')}`;
       };
@@ -1398,7 +1414,10 @@ export const chartRouter = createTRPCRouter({
       ]
         .filter(Boolean)
         .join('\n');
-      const firstEventWhere = buildFilterWhere(firstEventFilters);
+      const firstEventWhere = buildFilterWhere(
+        firstEventFilters,
+        traitBreakdownDescriptors.length > 0 ? 'e' : undefined
+      );
       const secondEventJoin = buildProfileJoin([
         ...secondEventFilters,
         ...secondComponentFilters,
@@ -1469,7 +1488,7 @@ export const chartRouter = createTRPCRouter({
           FROM cohort_users
           GROUP BY ${breakdownAliases.join(', ')}
           ORDER BY breakdown_users DESC
-          LIMIT 10
+          LIMIT 50
         ),
         limited_cohort_users AS (
           SELECT cu.*
