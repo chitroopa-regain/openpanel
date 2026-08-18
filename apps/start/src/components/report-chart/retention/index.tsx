@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
@@ -11,6 +12,8 @@ import {
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
 import CohortTable from './table';
+import { Combobox } from '@/components/ui/combobox';
+import { Label } from '@/components/ui/label';
 import { useTRPC } from '@/integrations/trpc/react';
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Retention query state and its chart/table layouts are coordinated here.
@@ -62,8 +65,14 @@ export function ReportRetentionChart() {
   const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
   const propertyAverageDenominatorStep =
     retentionOptions?.propertyAverageDenominatorStep;
-  const topN = retentionOptions?.topN ?? 20;
-  const breakdownSort = retentionOptions?.breakdownSort ?? 'profile_count_desc';
+  const savedTopN = retentionOptions?.topN ?? 20;
+  const savedBreakdownSort =
+    retentionOptions?.breakdownSort ?? 'profile_count_desc';
+  const [topN, setTopN] = useState(savedTopN);
+  const [breakdownSort, setBreakdownSort] = useState(savedBreakdownSort);
+
+  useEffect(() => setTopN(savedTopN), [savedTopN]);
+  useEffect(() => setBreakdownSort(savedBreakdownSort), [savedBreakdownSort]);
   const isEnabled =
     (firstEvent.length > 0 || !!firstCustomEventId) &&
     (secondEvent.length > 0 || !!secondCustomEventId) &&
@@ -130,33 +139,73 @@ export function ReportRetentionChart() {
     options.displayLayout ?? (isDashboardLayout ? 'dashboard' : 'default')
   );
   const { showChart, showTable } = getReportDisplayVisibility(displayMode);
+  const showBreakdownControls =
+    report.breakdowns.length > 0 && !isDashboardLayout;
 
   return (
-    <div
-      className={
-        isDashboardLayout
-          ? `grid h-full min-h-0 w-full gap-2 ${showChart && showTable ? 'grid-rows-2' : 'grid-rows-1'}`
-          : 'col gap-4'
-      }
-    >
-      {showChart &&
-        (isDashboardLayout ? (
-          <div className="min-h-0 overflow-hidden">
-            <Chart data={res.data.data} />
+    <>
+      {showBreakdownControls && (
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-4">
+          <div className="flex items-center gap-2">
+            <Label className="mb-0 whitespace-nowrap">Sort by Profiles</Label>
+            <Combobox
+              align="end"
+              items={[
+                { label: 'High to Low', value: 'profile_count_desc' },
+                { label: 'Low to High', value: 'profile_count_asc' },
+              ]}
+              onChange={(value) =>
+                setBreakdownSort(
+                  value === 'profile_count_asc'
+                    ? 'profile_count_asc'
+                    : 'profile_count_desc'
+                )
+              }
+              placeholder="High to Low"
+              value={breakdownSort}
+            />
           </div>
-        ) : (
-          <AspectContainer>
-            <Chart data={res.data.data} />
-          </AspectContainer>
-        ))}
-      {showTable && (
-        <div
-          className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}
-        >
-          <CohortTable data={res.data.data} />
+          <div className="flex items-center gap-2">
+            <Label className="mb-0 whitespace-nowrap">Show</Label>
+            <Combobox
+              align="end"
+              items={[1, 3, 5, 10, 20].map((value) => ({
+                label: `Top ${value}`,
+                value: String(value),
+              }))}
+              onChange={(value) => setTopN(Number(value))}
+              placeholder="Top 20"
+              value={String(topN)}
+            />
+          </div>
         </div>
       )}
-    </div>
+      <div
+        className={
+          isDashboardLayout
+            ? `grid h-full min-h-0 w-full gap-2 ${showChart && showTable ? 'grid-rows-2' : 'grid-rows-1'}`
+            : 'col gap-4'
+        }
+      >
+        {showChart &&
+          (isDashboardLayout ? (
+            <div className="min-h-0 overflow-hidden">
+              <Chart data={res.data.data} />
+            </div>
+          ) : (
+            <AspectContainer>
+              <Chart data={res.data.data} />
+            </AspectContainer>
+          ))}
+        {showTable && (
+          <div
+            className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}
+          >
+            <CohortTable data={res.data.data} />
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
