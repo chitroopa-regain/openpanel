@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { reportSlice, setReport } from './reportSlice';
+import {
+  changeRetentionBreakdownSort,
+  changeRetentionTopN,
+  reportSlice,
+  setReport,
+} from './reportSlice';
 
 const baseReport = {
   projectId: 'project',
@@ -37,5 +42,31 @@ describe('report display mode persistence', () => {
       displayMode: 'both',
     });
     expect(state.dirty).toBe(false);
+  });
+});
+
+describe('retention breakdown controls', () => {
+  it('persists top count and profile-count sort in retention options', () => {
+    let state = reportSlice.reducer(
+      undefined,
+      setReport({
+        ...baseReport,
+        chartType: 'retention',
+        options: { type: 'retention' },
+      } as never)
+    );
+
+    state = reportSlice.reducer(state, changeRetentionTopN(5));
+    state = reportSlice.reducer(
+      state,
+      changeRetentionBreakdownSort('profile_count_asc')
+    );
+
+    expect(state.options).toMatchObject({
+      type: 'retention',
+      topN: 5,
+      breakdownSort: 'profile_count_asc',
+    });
+    expect(state.dirty).toBe(true);
   });
 });

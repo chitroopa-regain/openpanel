@@ -62,6 +62,8 @@ export function ReportRetentionChart() {
   const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
   const propertyAverageDenominatorStep =
     retentionOptions?.propertyAverageDenominatorStep;
+  const topN = retentionOptions?.topN ?? 20;
+  const breakdownSort = retentionOptions?.breakdownSort ?? 'profile_count_desc';
   const isEnabled =
     (firstEvent.length > 0 || !!firstCustomEventId) &&
     (secondEvent.length > 0 || !!secondCustomEventId) &&
@@ -89,6 +91,8 @@ export function ReportRetentionChart() {
     property,
     propertyAverageDenominatorStep,
     retentionUnit,
+    topN,
+    breakdownSort,
     breakdowns: report.breakdowns,
     interval: report.interval,
     shareId,
@@ -146,7 +150,9 @@ export function ReportRetentionChart() {
           </AspectContainer>
         ))}
       {showTable && (
-        <div className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}>
+        <div
+          className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}
+        >
           <CohortTable data={res.data.data} />
         </div>
       )}

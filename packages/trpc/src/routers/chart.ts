@@ -43,6 +43,7 @@ import {
   zDateConfig,
   zRange,
   zReportInput,
+  zRetentionBreakdownSort,
   zRetentionMeasure,
   zRetentionTimeUnit,
   zTimeInterval,
@@ -71,6 +72,7 @@ import {
   getMissingScreenshotContextEventNames,
   screenshotMatchContextSchema,
 } from './chart-events.utils';
+import { getChartPropertiesQueryScopes } from './chart-properties.utils';
 import {
   aggregateRetentionRowsByDisplayInterval,
   buildRetentionBreakdownSelects,
@@ -86,7 +88,6 @@ import {
   isRetentionPropertyMeasure,
   type RawRetentionCohortRow,
 } from './chart-retention.utils';
-import { getChartPropertiesQueryScopes } from './chart-properties.utils';
 
 function utc(date: string | Date) {
   if (typeof date === 'string') {
@@ -1043,6 +1044,8 @@ export const chartRouter = createTRPCRouter({
           .nonnegative()
           .optional(),
         retentionUnit: zRetentionTimeUnit.default('day'),
+        topN: z.number().int().positive().max(20).default(20),
+        breakdownSort: zRetentionBreakdownSort.default('profile_count_desc'),
         breakdowns: zChartBreakdowns.default([]),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
@@ -1068,6 +1071,8 @@ export const chartRouter = createTRPCRouter({
       let propertyAverageDenominatorStep =
         input.propertyAverageDenominatorStep ?? 0;
       let retentionUnit = input.retentionUnit;
+      let topN = input.topN;
+      let breakdownSort = input.breakdownSort;
       let breakdowns: IChartBreakdown[] = input.breakdowns;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
@@ -1106,6 +1111,8 @@ export const chartRouter = createTRPCRouter({
           retentionOptions?.propertyAverageDenominatorStep ??
           propertyAverageDenominatorStep;
         retentionUnit = retentionOptions?.retentionUnit ?? retentionUnit;
+        topN = retentionOptions?.topN ?? topN;
+        breakdownSort = retentionOptions?.breakdownSort ?? breakdownSort;
         breakdowns = ctx.report.breakdowns;
 
         const firstItem = ctx.report.series[0];
@@ -1488,7 +1495,7 @@ export const chartRouter = createTRPCRouter({
           FROM cohort_users
           GROUP BY ${breakdownAliases.join(', ')}
           ORDER BY breakdown_users DESC
-          LIMIT 50
+          LIMIT ${topN}
         ),
         limited_cohort_users AS (
           SELECT cu.*
@@ -1613,7 +1620,8 @@ export const chartRouter = createTRPCRouter({
           dates.endDate,
           interval,
           retentionUnit,
-          retentionMetric
+          retentionMetric,
+          breakdownSort
         ),
         queries: [cohortQuery],
         timezone,
@@ -2007,9 +2015,28 @@ export function processCohortData(
   endDate?: string,
   interval?: string,
   retentionUnit?: string,
-  retentionMetric?: string
+  retentionMetric?: string,
+  breakdownSort:
+    | 'profile_count_desc'
+    | 'profile_count_asc' = 'profile_count_desc'
 ) {
-  return groupRetentionRowsByBreakdowns(data).flatMap((group) =>
+  const direction = breakdownSort === 'profile_count_asc' ? 1 : -1;
+  const groups = groupRetentionRowsByBreakdowns(data).sort((a, b) => {
+    const aProfiles = a.rows.reduce(
+      (sum, row) => sum + Number(row.total_first_event_count),
+      0
+    );
+    const bProfiles = b.rows.reduce(
+      (sum, row) => sum + Number(row.total_first_event_count),
+      0
+    );
+    return (
+      (aProfiles - bProfiles) * direction ||
+      JSON.stringify(a.breakdowns).localeCompare(JSON.stringify(b.breakdowns))
+    );
+  });
+
+  return groups.flatMap((group) =>
     processCohortGroupData(
       group.rows,
       diffInterval,

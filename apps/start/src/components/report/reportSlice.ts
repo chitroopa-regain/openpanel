@@ -19,6 +19,7 @@ import type {
   zCriteria,
   zFunnelMeasure,
   zReportDisplayMode,
+  zRetentionBreakdownSort,
   zRetentionTimeUnit,
 } from '@openpanel/validation';
 import type { PayloadAction } from '@reduxjs/toolkit';
@@ -428,6 +429,35 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeRetentionTopN(state, action: PayloadAction<number | undefined>) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          displayMode: state.options?.displayMode,
+          type: 'retention',
+          topN: action.payload,
+        };
+      } else {
+        state.options.topN = action.payload;
+      }
+    },
+
+    changeRetentionBreakdownSort(
+      state,
+      action: PayloadAction<z.infer<typeof zRetentionBreakdownSort> | undefined>
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          displayMode: state.options?.displayMode,
+          type: 'retention',
+          breakdownSort: action.payload,
+        };
+      } else {
+        state.options.breakdownSort = action.payload;
+      }
+    },
+
     changeFunnelGroup(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
@@ -673,6 +703,8 @@ export const {
   changeRetentionProperty,
   changeRetentionUnit,
   changeRetentionPropertyAverageDenominatorStep,
+  changeRetentionTopN,
+  changeRetentionBreakdownSort,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,

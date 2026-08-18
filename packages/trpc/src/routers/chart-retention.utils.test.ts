@@ -98,6 +98,42 @@ describe('chart retention utils', () => {
     expect(result[0]?.percentages).toEqual([0.3333]);
   });
 
+  it('sorts retention breakdowns by total profile count', () => {
+    const rows = [
+      {
+        cohort_interval: '2026-07-20',
+        total_first_event_count: 10,
+        b_0: 'small',
+        interval_0_user_count: 5,
+      },
+      {
+        cohort_interval: '2026-07-20',
+        total_first_event_count: 30,
+        b_0: 'large',
+        interval_0_user_count: 15,
+      },
+    ];
+
+    expect(processCohortData(rows, 0).map((row) => row.breakdowns[0])).toEqual([
+      'large',
+      'large',
+      'small',
+      'small',
+    ]);
+    expect(
+      processCohortData(
+        rows,
+        0,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'profile_count_asc'
+      ).map((row) => row.breakdowns[0])
+    ).toEqual(['small', 'small', 'large', 'large']);
+  });
+
   it('wraps interval aggregates with a maturity guard', () => {
     expect(
       buildRetentionMeasureIntervalSelect({

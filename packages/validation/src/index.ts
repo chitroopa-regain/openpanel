@@ -170,6 +170,10 @@ export const zRange = z.enum(objectToZodEnums(timeWindows));
 
 export const zCriteria = z.enum(['on_or_after', 'on', 'on_or_before']);
 export const zRetentionTimeUnit = z.enum(['day', 'week', 'month']);
+export const zRetentionBreakdownSort = z.enum([
+  'profile_count_desc',
+  'profile_count_asc',
+]);
 export const zRetentionMeasure = z.enum([
   'retention_rate',
   'unique_users',
@@ -224,6 +228,10 @@ export const zRetentionOptions = z.object({
   retentionUnit: zRetentionTimeUnit.optional(),
   /** 0-based retention step used as the denominator for Property Average. undefined/0 = step 1 cohort users. */
   propertyAverageDenominatorStep: z.number().int().nonnegative().optional(),
+  /** Number of highest-profile-count breakdowns shown. undefined = 20. */
+  topN: z.number().int().positive().max(20).optional(),
+  /** Display order for the selected top breakdowns. */
+  breakdownSort: zRetentionBreakdownSort.optional(),
 });
 
 export const zSankeyOptions = z.object({

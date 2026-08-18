@@ -8,9 +8,11 @@ import {
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changePrevious,
+  changeRetentionBreakdownSort,
   changeRetentionMetric,
-  changeRetentionPropertyAverageDenominatorStep,
   changeRetentionProperty,
+  changeRetentionPropertyAverageDenominatorStep,
+  changeRetentionTopN,
   changeRetentionUnit,
   changeSankeyExclude,
   changeSankeyInclude,
@@ -44,6 +46,10 @@ export function ReportSettings() {
   const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
   const retentionPropertyAverageDenominatorStep =
     retentionOptions?.propertyAverageDenominatorStep ?? 0;
+  const retentionTopN = retentionOptions?.topN ?? 20;
+  const retentionBreakdownSort =
+    retentionOptions?.breakdownSort ?? 'profile_count_desc';
+  const breakdownCount = useSelector((state) => state.report.breakdowns.length);
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
   const funnelGroup = funnelOptions?.funnelGroup;
@@ -120,6 +126,10 @@ export function ReportSettings() {
       fields.push('retentionProperty');
       fields.push('retentionPropertyAverageDenominatorStep');
       fields.push('unit');
+      if (breakdownCount > 0) {
+        fields.push('retentionBreakdownSort');
+        fields.push('retentionTopN');
+      }
     }
 
     if (
@@ -160,7 +170,7 @@ export function ReportSettings() {
     }
 
     return fields;
-  }, [chartType, funnelMeasure]);
+  }, [breakdownCount, chartType, funnelMeasure]);
 
   if (fields.length === 0) {
     return null;
@@ -292,10 +302,13 @@ export function ReportSettings() {
               </Label>
               <Combobox
                 align="end"
-                items={Array.from({ length: Math.max(2, seriesCount) }, (_, i) => ({
-                  label: `Step ${i + 1}`,
-                  value: String(i),
-                }))}
+                items={Array.from(
+                  { length: Math.max(2, seriesCount) },
+                  (_, i) => ({
+                    label: `Step ${i + 1}`,
+                    value: String(i),
+                  })
+                )}
                 onChange={(val) => {
                   const step = Number(val);
                   dispatch(
@@ -329,6 +342,48 @@ export function ReportSettings() {
               }}
               placeholder="Unit"
               value={unit || 'count'}
+            />
+          </div>
+        )}
+        {fields.includes('retentionBreakdownSort') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              Sort by Profiles
+            </Label>
+            <Combobox
+              align="end"
+              items={[
+                { label: 'High to Low', value: 'profile_count_desc' },
+                { label: 'Low to High', value: 'profile_count_asc' },
+              ]}
+              onChange={(val) =>
+                dispatch(
+                  changeRetentionBreakdownSort(
+                    val === 'profile_count_asc'
+                      ? 'profile_count_asc'
+                      : undefined
+                  )
+                )
+              }
+              placeholder="High to Low"
+              value={retentionBreakdownSort}
+            />
+          </div>
+        )}
+        {fields.includes('retentionTopN') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              Show Top
+            </Label>
+            <Combobox
+              align="end"
+              items={[1, 3, 5, 10, 20].map((value) => ({
+                label: `Top ${value}`,
+                value: String(value),
+              }))}
+              onChange={(val) => dispatch(changeRetentionTopN(Number(val)))}
+              placeholder="Top 20"
+              value={String(retentionTopN)}
             />
           </div>
         )}
