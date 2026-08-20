@@ -95,6 +95,12 @@ export function getMissingScreenshotContextEventNames(
   );
 }
 
+export function getScreenshotLookupEventNames(
+  contexts: ScreenshotMatchContext[]
+) {
+  return [...new Set(contexts.map((context) => context.eventName))];
+}
+
 function hasAllowedScreenshotPath(url: URL) {
   return url.pathname.startsWith('/event_screenshots/');
 }

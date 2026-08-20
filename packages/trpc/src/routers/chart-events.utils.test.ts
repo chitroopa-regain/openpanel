@@ -4,6 +4,7 @@ import {
   fetchEventScreenshots,
   getAllowedEventScreenshotUrl,
   getMissingScreenshotContextEventNames,
+  getScreenshotLookupEventNames,
   indexEventScreenshots,
   selectEventScreenshotSamples,
 } from './chart-events.utils';
@@ -35,6 +36,17 @@ afterEach(() => {
 });
 
 describe('event screenshot metadata', () => {
+  it('does not enrich the full catalog when no context was requested', () => {
+    expect(getScreenshotLookupEventNames([])).toEqual([]);
+    expect(
+      getScreenshotLookupEventNames([
+        { eventName: 'FT: Started', filters: [] },
+        { eventName: 'FT: Started', filters: [] },
+        { eventName: 'FT: Completed', filters: [] },
+      ])
+    ).toEqual(['FT: Started', 'FT: Completed']);
+  });
+
   it('retains requested context names missing from the event-name union', () => {
     const contexts = [
       { eventName: 'MV Lagging Event', filters: [] },

@@ -71,6 +71,7 @@ import type { EventScreenshot } from './chart-events.utils';
 import {
   fetchEventScreenshots,
   getMissingScreenshotContextEventNames,
+  getScreenshotLookupEventNames,
   screenshotMatchContextSchema,
 } from './chart-events.utils';
 import { getChartPropertiesQueryScopes } from './chart-properties.utils';
@@ -324,10 +325,12 @@ export const chartRouter = createTRPCRouter({
             return [];
           }),
         ]);
+        // Event selectors only need the catalog. Screenshot-bearing surfaces
+        // issue focused context queries for visible events separately. Looking
+        // up every catalog event here adds a two-second metadata timeout to
+        // every selector search in large projects.
         const screenshotEventNames =
-          screenshotContexts.length > 0
-            ? screenshotContexts.map((context) => context.eventName)
-            : events.map((event) => event.name);
+          getScreenshotLookupEventNames(screenshotContexts);
         const screenshots =
           process.env.EVENT_SCREENSHOT_PROJECT_ID === projectId
             ? await fetchEventScreenshots(
