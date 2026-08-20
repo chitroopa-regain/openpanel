@@ -2,6 +2,10 @@ import { max, min } from '@openpanel/common';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, useEffect, useId, useState } from 'react';
 import { useReportChartContext } from '../context';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import { getPropertyLabel } from '@/translations/properties';
 import type { RouterOutputs } from '@/trpc/client';
@@ -52,7 +56,7 @@ interface CohortTableProps {
 
 const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   const {
-    report: { unit, options, breakdowns },
+    report: { unit, options, breakdowns, series },
   } = useReportChartContext();
   const retentionUnit =
     options?.type === 'retention' ? (options.retentionUnit ?? 'day') : 'day';
@@ -71,6 +75,26 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   );
   const hasBreakdowns = data.some((row) => row.breakdowns.length > 0);
   const breakdownGroups = hasBreakdowns ? getCohortBreakdownGroups(data) : [];
+  const screenshotSeries = breakdownGroups.flatMap((group) => {
+    const event = series[0];
+    if (!event || event.type !== 'event') return [];
+    return [
+      {
+        id: group.key,
+        serieType: 'event' as const,
+        event: {
+          id: event.id,
+          name: event.name,
+          breakdowns: Object.fromEntries(
+            breakdowns.map((breakdown, index) => [
+              breakdown.name,
+              group.summary.breakdowns[index] ?? null,
+            ])
+          ),
+        },
+      },
+    ];
+  });
   const observedValues = data
     .flatMap((row) => row.values)
     .filter((value): value is number => value !== null);
@@ -186,6 +210,7 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   }
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
     <div className="card relative overflow-hidden">
       <div
         className={'absolute top-px right-0 left-0 h-10 border-b bg-def-100'}
@@ -245,6 +270,13 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
                             <span className="truncate" title={group.label}>
                               {group.label}
                             </span>
+                            {series[0]?.type === 'event' && (
+                              <ReportSeriesScreenshot
+                                eventName={`${series[0].name} — ${group.label}`}
+                                serieId={group.key}
+                                showNoMatch={false}
+                              />
+                            )}
                           </button>
                         </td>
                         {renderMetricCells(group.summary, group.key)}
@@ -286,6 +318,7 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
         </div>
       </div>
     </div>
+    </ReportSeriesScreenshotsProvider>
   );
 };
 

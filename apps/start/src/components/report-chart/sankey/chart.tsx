@@ -19,6 +19,7 @@ import { useTheme } from '@/components/theme-provider';
 import { truncate } from '@/utils/truncate';
 import { ArrowRightIcon } from 'lucide-react';
 import { AspectContainer } from '../aspect-container';
+import { ReportSeriesScreenshot } from '../common/report-series-screenshots';
 
 type PortalTooltipPosition = { left: number; top: number; ready: boolean };
 
@@ -203,6 +204,11 @@ export function Chart({ data }: { data: SankeyData }) {
               <SankeyPortalTooltip>
                 <ChartTooltipContainer className="min-w-[250px]">
                   <ChartTooltipHeader>
+                    <ReportSeriesScreenshot
+                      eventName={String(label)}
+                      serieId={String(label)}
+                      showNoMatch={false}
+                    />
                     <div className="min-w-0 flex-1 font-medium break-words">
                       {label}
                     </div>
@@ -258,6 +264,16 @@ export function Chart({ data }: { data: SankeyData }) {
               <SankeyPortalTooltip>
                 <ChartTooltipContainer>
                   <ChartTooltipHeader>
+                    <ReportSeriesScreenshot
+                      eventName={String(sourceLabel)}
+                      serieId={String(sourceLabel)}
+                      showNoMatch={false}
+                    />
+                    <ReportSeriesScreenshot
+                      eventName={String(targetLabel)}
+                      serieId={String(targetLabel)}
+                      showNoMatch={false}
+                    />
                     <div className="min-w-0 flex-1 font-medium break-words">
                       {sourceLabel}
                       <ArrowRightIcon className="size-2 inline-block mx-3" />

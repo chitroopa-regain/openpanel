@@ -20,9 +20,23 @@ vi.mock('../context', () => ({
     report: {
       breakdowns: [{ id: 'variant', name: 'profile.variant' }],
       options: { type: 'retention' },
+      series: [
+        {
+          id: 'retention-start',
+          name: 'Subscription Intro BS: Shown',
+          type: 'event',
+        },
+      ],
       unit: '%',
     },
   }),
+}));
+
+vi.mock('../common/report-series-screenshots', () => ({
+  ReportSeriesScreenshotsProvider: ({ children }: { children: unknown }) =>
+    children,
+  ReportSeriesScreenshot: ({ serieId }: { serieId: string }) =>
+    createElement('span', { 'data-testid': `screenshot-${serieId}` }),
 }));
 
 vi.mock('@/hooks/use-numer-formatter', () => ({
@@ -112,6 +126,7 @@ describe('retention breakdown table groups', () => {
 
     expect(control.getAttribute('aria-expanded')).toBe('false');
     expect(priceHalf.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getAllByTestId(/screenshot-/)).toHaveLength(2);
     expect(
       (control.querySelector('[data-breakdown-color]') as HTMLElement).style
         .backgroundColor

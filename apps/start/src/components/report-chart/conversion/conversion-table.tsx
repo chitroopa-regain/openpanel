@@ -12,6 +12,10 @@ import { PreviousDiffIndicatorPure } from '../common/previous-diff-indicator';
 import { ReportTableToolbar } from '../common/report-table-toolbar';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
+import {
+  ReportSeriesScreenshot,
+} from '../common/report-series-screenshots';
+import { useReportChartContext } from '../context';
 
 interface ConversionTableProps {
   data: RouterOutputs['chart']['conversion'];
@@ -27,6 +31,7 @@ export function ConversionTable({
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const number = useNumber();
+  const { report } = useReportChartContext();
   const interval = useSelector((state) => state.report.interval);
   const formatDate = useFormatDateInterval({
     interval,
@@ -444,6 +449,17 @@ export function ConversionTable({
                         style={{ background: color }}
                       />
                       <SerieIcon name={row.serieName} />
+                      {report.series.map(
+                        (event) =>
+                          event.type === 'event' && (
+                            <ReportSeriesScreenshot
+                              eventName={`${event.name} — ${row.serieName.join(' — ')}`}
+                              key={event.id ?? event.name}
+                              serieId={`${row.serieId}:${event.id ?? event.name}`}
+                              showNoMatch={false}
+                            />
+                          )
+                      )}
                       <SerieName name={row.serieName} className="truncate" />
                     </div>
                   </td>

@@ -1006,9 +1006,9 @@ export function ReportTable({
       });
     });
 
-    if (breakdownPropertyNames.length > 0) {
+    if (screenshotTargets.length > 0) {
       cols.push({
-        id: 'breakdown-screenshot',
+        id: 'event-screenshot',
         header: 'Screenshot',
         size: 96,
         minSize: 80,

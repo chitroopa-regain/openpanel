@@ -5,6 +5,10 @@ import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
 import { PreviousDiffIndicatorPure } from '../common/previous-diff-indicator';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
@@ -109,6 +113,7 @@ export function ReportFunnelMetricChart() {
       : 'Total';
 
     return {
+      breakdownValues: series.breakdowns ?? [],
       id: series.id,
       label,
       value: value ?? 0,
@@ -119,6 +124,24 @@ export function ReportFunnelMetricChart() {
 
   // Sort descending by value
   metrics.sort((a, b) => b.value - a.value);
+  const breakdownEvent = report.series[funnelOptions?.breakdownStep ?? 0];
+  const screenshotSeries =
+    breakdownEvent?.type === 'event'
+      ? metrics.map((metric) => ({
+          id: metric.id,
+          serieType: 'event' as const,
+          event: {
+            id: breakdownEvent.id,
+            name: breakdownEvent.name,
+            breakdowns: Object.fromEntries(
+              report.breakdowns.map((breakdown, index) => [
+                breakdown.name,
+                metric.breakdownValues[index] ?? null,
+              ])
+            ),
+          },
+        }))
+      : [];
 
   // First series display name for the table label
   const firstEvent = report.series[0];
@@ -130,6 +153,7 @@ export function ReportFunnelMetricChart() {
         : 'Funnel Metric';
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
     <div
       className={`col gap-4 ${isEditMode ? '' : 'h-full items-center justify-center'}`}
     >
@@ -147,6 +171,11 @@ export function ReportFunnelMetricChart() {
                 style={{ backgroundColor: metric.color }}
               />
               <span className="min-w-0 truncate">{metric.label}</span>
+              <ReportSeriesScreenshot
+                eventName={`${metricLabel} — ${metric.label}`}
+                serieId={metric.id}
+                showNoMatch={false}
+              />
             </div>
             <div className={funnelMetricValueClassName}>
               {number.short(metric.value)}
@@ -216,6 +245,11 @@ export function ReportFunnelMetricChart() {
                           style={{ backgroundColor: metric.color }}
                         />
                         {metric.label}
+                        <ReportSeriesScreenshot
+                          eventName={`${metricLabel} — ${metric.label}`}
+                          serieId={metric.id}
+                          showNoMatch={false}
+                        />
                       </div>
                     </td>
                   )}
@@ -229,5 +263,6 @@ export function ReportFunnelMetricChart() {
         </div>
       )}
     </div>
+    </ReportSeriesScreenshotsProvider>
   );
 }

@@ -11,6 +11,10 @@ import {
   YAxis,
 } from 'recharts';
 import { useXAxisProps, useYAxisProps } from '../common/axis';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { useReportChartContext } from '../context';
 import { RetentionTooltip } from './tooltip';
 import type { RouterOutputs } from '@/trpc/client';
@@ -113,7 +117,13 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
 
 export function Chart({ data }: Props) {
   const {
-    report: { interval, unit, options: reportOptions },
+    report: {
+      breakdowns,
+      interval,
+      options: reportOptions,
+      series,
+      unit,
+    },
     isEditMode,
     options: { hideXAxis, hideYAxis, retentionLayout },
   } = useReportChartContext();
@@ -145,9 +155,41 @@ export function Chart({ data }: Props) {
   };
   const yTicks = getNiceTicks(dataMax, isPercentage);
   const yMax = yTicks.at(-1) ?? 100;
+  const retentionEvent = series[0];
+  const screenshotSeries =
+    retentionEvent?.type === 'event'
+      ? averageRows.map((row, index) => ({
+          id: `retention:${index}`,
+          serieType: 'event' as const,
+          event: {
+            id: retentionEvent.id,
+            name: retentionEvent.name,
+            breakdowns: Object.fromEntries(
+              breakdowns.map((breakdown, breakdownIndex) => [
+                breakdown.name,
+                row.breakdowns[breakdownIndex] ?? null,
+              ])
+            ),
+          },
+        }))
+      : [];
+  const breakdownLegend = () => (
+    <div className="flex flex-wrap justify-center gap-3 text-xs">
+      {averageRows.map((row, index) => (
+        <div className="flex items-center gap-1" key={`retention:${index}`}>
+          <ReportSeriesScreenshot
+            eventName={`${retentionEvent?.type === 'event' ? retentionEvent.name : 'Retention'} — ${row.breakdowns.join(' / ') || '(not set)'}`}
+            serieId={`retention:${index}`}
+            showNoMatch={false}
+          />
+          <span>{row.breakdowns.join(' / ') || '(not set)'}</span>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
-    <>
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
       <div
         className={cn(
           'h-full min-h-0 w-full',
@@ -184,7 +226,9 @@ export function Chart({ data }: Props) {
               content={hasBreakdowns ? undefined : <RetentionTooltip />}
               formatter={hasBreakdowns ? breakdownTooltipFormatter : undefined}
             />
-            {hasBreakdowns && <Legend verticalAlign="top" />}
+            {hasBreakdowns && (
+              <Legend content={breakdownLegend} verticalAlign="top" />
+            )}
             <defs>
               <linearGradient id={'color'} x1="0" x2="0" y1="0" y2="1">
                 <stop
@@ -244,6 +288,6 @@ export function Chart({ data }: Props) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-    </>
+    </ReportSeriesScreenshotsProvider>
   );
 }

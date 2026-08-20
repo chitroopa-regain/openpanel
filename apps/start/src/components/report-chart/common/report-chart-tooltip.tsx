@@ -20,6 +20,7 @@ import {
 } from 'date-fns';
 import { useReportChartContext } from '../context';
 import { PreviousDiffIndicator } from './previous-diff-indicator';
+import { ReportSeriesScreenshot } from './report-series-screenshots';
 import { SerieIcon } from './serie-icon';
 import { SerieName } from './serie-name';
 
@@ -105,6 +106,11 @@ export const ReportChartTooltip = createChartTooltip<Data, Context>(
             )}
             <ChartTooltipItem color={item.color}>
               <div className="flex items-center gap-1">
+                <ReportSeriesScreenshot
+                  eventName={item.names.join(' — ')}
+                  serieId={item.id}
+                  showNoMatch={false}
+                />
                 <SerieIcon name={item.names} />
                 <SerieName name={item.names} />
               </div>

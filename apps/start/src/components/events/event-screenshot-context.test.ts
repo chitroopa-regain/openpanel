@@ -150,6 +150,36 @@ describe('breakdown table screenshot matching', () => {
     ]);
   });
 
+  it('builds an event context when a chart row has no breakdown', () => {
+    const targets = buildBreakdownScreenshotTargets({
+      chartSeries: [
+        {
+          id: 'event-row',
+          serieType: 'event',
+          event: {
+            id: 'A',
+            name: 'Subscription Intro BS: Shown',
+            breakdowns: {},
+          },
+        },
+      ] as never,
+      reportSeries,
+      startDate: '2026-08-01T00:00:00.000Z',
+      endDate: '2026-08-07T00:00:00.000Z',
+    });
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        serieId: 'event-row',
+        eventName: 'Subscription Intro BS: Shown',
+        context: expect.objectContaining({
+          eventName: 'Subscription Intro BS: Shown',
+          breakdown: undefined,
+        }),
+      }),
+    ]);
+  });
+
   it('does not guess when multiple report series share an event name', () => {
     const targets = buildBreakdownScreenshotTargets({
       chartSeries: [

@@ -8,6 +8,10 @@ import { getChartColor } from '@/utils/theme';
 import { NOT_SET_VALUE } from '@openpanel/constants';
 
 import { useReportChartContext } from '../context';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 
 interface Props {
   data: IChartData;
@@ -45,10 +49,18 @@ export function Chart({ data }: Props) {
   if (!hasBreakdown) {
     const total = rows.reduce((acc, s) => acc + (s.metrics.sum ?? 0), 0);
     return (
+      <ReportSeriesScreenshotsProvider chartSeries={data.series}>
       <div className="flex h-full w-full flex-col">
         <div className="border-b py-3">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <span className="text-muted-foreground">A</span>
+            {rows[0] && (
+              <ReportSeriesScreenshot
+                eventName={metricLabel}
+                serieId={rows[0].id}
+                showNoMatch={false}
+              />
+            )}
             <span>{metricLabel}</span>
           </div>
           {unit && (
@@ -59,6 +71,7 @@ export function Chart({ data }: Props) {
           <div className="font-mono text-sm">{number.format(total)}</div>
         </div>
       </div>
+      </ReportSeriesScreenshotsProvider>
     );
   }
 
@@ -66,6 +79,7 @@ export function Chart({ data }: Props) {
   const barColor = getChartColor(0);
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={data.series}>
     <div className="flex h-full w-full flex-col px-4">
       <div className="grid shrink-0 grid-cols-[1fr_auto] items-end gap-4 border-b py-3">
         <div className="flex flex-col">
@@ -109,8 +123,13 @@ export function Chart({ data }: Props) {
                   opacity: 0.08,
                 }}
               />
-              <div className="relative z-10 truncate text-sm">
-                {breakdownValue}
+              <div className="relative z-10 flex min-w-0 items-center gap-2 text-sm">
+                <ReportSeriesScreenshot
+                  eventName={serie.names.join(' — ')}
+                  serieId={serie.id}
+                  showNoMatch={false}
+                />
+                <span className="truncate">{breakdownValue}</span>
               </div>
               <div className="relative z-10 font-mono text-sm tabular-nums">
                 {formatValue(value)}
@@ -132,5 +151,6 @@ export function Chart({ data }: Props) {
         </div>
       </div>
     </div>
+    </ReportSeriesScreenshotsProvider>
   );
 }

@@ -24,6 +24,10 @@ import {
 } from 'recharts';
 import { useXAxisProps, useYAxisProps } from '../common/axis';
 import { PreviousDiffIndicatorPure } from '../common/previous-diff-indicator';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
@@ -345,6 +349,21 @@ export function Tables({
   const previousSelectedMeasureValue = previousData
     ? getFunnelMeasureValue(previousData.lastStep, measure)
     : undefined;
+  const screenshotSeries = reportSeries.flatMap((event, index) =>
+    event.type === 'event'
+      ? [
+          {
+            id: `funnel-step:${index}`,
+            serieType: 'event' as const,
+            event: {
+              id: event.id,
+              name: event.name,
+              breakdowns: {},
+            },
+          },
+        ]
+      : []
+  );
 
   const handleInspectStep = (
     step: (typeof steps)[0],
@@ -376,6 +395,7 @@ export function Tables({
     });
   };
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
     <div
       className={cn(
         'col @container card divide-y divide-border',
@@ -480,6 +500,11 @@ export function Tables({
                   <ColorSquare color={getChartColor(index)}>
                     {alphabetIds[index]}
                   </ColorSquare>
+                  <ReportSeriesScreenshot
+                    eventName={item.event.displayName}
+                    serieId={`funnel-step:${index}`}
+                    showNoMatch={false}
+                  />
                   <span className="truncate">{item.event.displayName}</span>
                 </div>
               ),
@@ -563,6 +588,7 @@ export function Tables({
         />
       </div>
     </div>
+    </ReportSeriesScreenshotsProvider>
   );
 }
 

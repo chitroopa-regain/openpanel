@@ -256,7 +256,7 @@ export function buildBreakdownScreenshotTargets({
 }): BreakdownScreenshotTarget[] {
   return chartSeries.flatMap((chartSerie) => {
     const breakdownEntries = Object.entries(chartSerie.event.breakdowns ?? {});
-    if (chartSerie.serieType !== 'event' || breakdownEntries.length === 0) {
+    if (chartSerie.serieType !== 'event') {
       return [];
     }
 
@@ -276,18 +276,17 @@ export function buildBreakdownScreenshotTargets({
     }
 
     const [primaryBreakdown, ...additionalBreakdownEntries] = breakdownEntries;
-    if (!primaryBreakdown) {
-      return [];
-    }
     const [context] = buildScreenshotContexts({
       series: [{ ...reportSerie, name: chartSerie.event.name }],
       startDate,
       endDate,
-      breakdownValue: {
-        eventName: chartSerie.event.name,
-        property: primaryBreakdown[0],
-        value: primaryBreakdown[1],
-      },
+      breakdownValue: primaryBreakdown
+        ? {
+            eventName: chartSerie.event.name,
+            property: primaryBreakdown[0],
+            value: primaryBreakdown[1],
+          }
+        : undefined,
     });
     if (!context) {
       return [];

@@ -17,6 +17,7 @@ import {
   type ChartClickMenuItem,
 } from '../common/chart-click-menu';
 import { ReportChartTooltip } from '../common/report-chart-tooltip';
+import { ReportSeriesScreenshotsProvider } from '../common/report-series-screenshots';
 import { ReportTable } from '../common/report-table';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
@@ -167,6 +168,7 @@ export function Chart({ data }: Props) {
   );
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={data.series}>
     <ReportChartTooltip.TooltipProvider references={references.data}>
       <ChartClickMenu getMenuItems={getMenuItems}>
         {showChart && (
@@ -240,5 +242,6 @@ export function Chart({ data }: Props) {
         )}
       </ChartClickMenu>
     </ReportChartTooltip.TooltipProvider>
+    </ReportSeriesScreenshotsProvider>
   );
 }

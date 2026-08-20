@@ -29,6 +29,10 @@ import type { IInterval } from '@openpanel/validation';
 import { useQuery } from '@tanstack/react-query';
 import { useXAxisProps, useYAxisProps } from '../common/axis';
 import { PreviousDiffIndicator } from '../common/previous-diff-indicator';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
@@ -42,11 +46,44 @@ interface Props {
 export function Chart({ data }: Props) {
   const { showChart, showTable } = useReportDisplayVisibility();
   const {
-    report: { interval, projectId, startDate, endDate, range, lineType },
+    report: {
+      breakdowns,
+      endDate,
+      interval,
+      lineType,
+      projectId,
+      range,
+      series: reportSeries,
+      startDate,
+    },
     isEditMode,
     options: { hideXAxis, hideYAxis, maxDomain },
   } = useReportChartContext();
   const { series, setVisibleSeries } = useVisibleConversionSeries(data, 5);
+  const screenshotEvents = useMemo(
+    () => reportSeries.filter((item) => item.type === 'event'),
+    [reportSeries]
+  );
+  const screenshotSeries = useMemo(
+    () =>
+      data.current.flatMap((serie) =>
+        screenshotEvents.map((event) => ({
+          id: `${serie.id}:${event.id ?? event.name}`,
+          serieType: 'event' as const,
+          event: {
+            id: event.id,
+            name: event.name,
+            breakdowns: Object.fromEntries(
+              breakdowns.map((breakdown, index) => [
+                breakdown.name,
+                serie.breakdowns[index] ?? null,
+              ])
+            ),
+          },
+        }))
+      ),
+    [breakdowns, data.current, screenshotEvents]
+  );
   const rechartData = useConversionRechartDataModel(series);
   const trpc = useTRPC();
   const references = useQuery(
@@ -118,6 +155,14 @@ export function Chart({ data }: Props) {
               color: getChartColor(serie.index),
             }}
           >
+            {screenshotEvents.map((event) => (
+              <ReportSeriesScreenshot
+                eventName={`${event.name} — ${serie.breakdowns.join(' — ')}`}
+                key={event.id ?? event.name}
+                serieId={`${serie.id}:${event.id ?? event.name}`}
+                showNoMatch={false}
+              />
+            ))}
             <SerieIcon name={serie.breakdowns} />
             <SerieName
               name={
@@ -129,12 +174,14 @@ export function Chart({ data }: Props) {
         ))}
       </div>
     );
-  }, [series]);
+  }, [screenshotEvents, series]);
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
     <TooltipProvider
       conversion={data}
       interval={interval}
+      screenshotEvents={screenshotEvents}
       visibleSeries={series}
     >
       {showChart && (
@@ -226,6 +273,7 @@ export function Chart({ data }: Props) {
         />
       )}
     </TooltipProvider>
+    </ReportSeriesScreenshotsProvider>
   );
 }
 
@@ -234,6 +282,7 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
   {
     conversion: RouterOutputs['chart']['conversion'];
     interval: IInterval;
+    screenshotEvents: Array<{ id?: string; name: string }>;
     visibleSeries: RouterOutputs['chart']['conversion']['current'];
   }
 >(({ data, context }) => {
@@ -275,6 +324,14 @@ const { Tooltip, TooltipProvider } = createChartTooltip<
             )}
             <ChartTooltipItem color={getChartColor(index)}>
               <div className="flex items-center gap-1">
+                {context.screenshotEvents.map((event) => (
+                  <ReportSeriesScreenshot
+                    eventName={`${event.name} — ${serie.breakdowns.join(' — ')}`}
+                    key={event.id ?? event.name}
+                    serieId={`${serie.id}:${event.id ?? event.name}`}
+                    showNoMatch={false}
+                  />
+                ))}
                 <SerieIcon
                   name={
                     serie.breakdowns.length > 0

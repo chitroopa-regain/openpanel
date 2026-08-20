@@ -22,6 +22,10 @@ import {
 } from '../common/chart-click-menu';
 import { ReportChartTooltip } from '../common/report-chart-tooltip';
 import { ReportTable } from '../common/report-table';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
@@ -134,13 +138,18 @@ export function Chart({ data }: Props) {
               color: getChartColor(serie.index),
             }}
           >
+            <ReportSeriesScreenshot
+              eventName={serie.names.join(' — ')}
+              serieId={serie.id}
+              showNoMatch={false}
+            />
             <SerieIcon name={serie.names} />
             <SerieName className="font-semibold" name={serie.names} />
           </div>
         ))}
       </div>
     );
-  }, [series]);
+  }, [data.series, series]);
 
   const xAxisProps = useXAxisProps({ interval, hide: hideXAxis });
   const yAxisProps = useYAxisProps({
@@ -220,6 +229,7 @@ export function Chart({ data }: Props) {
   );
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={data.series}>
     <ReportChartTooltip.TooltipProvider references={references.data}>
       <ChartClickMenu getMenuItems={getMenuItems}>
         {showChart && (
@@ -343,5 +353,6 @@ export function Chart({ data }: Props) {
         )}
       </ChartClickMenu>
     </ReportChartTooltip.TooltipProvider>
+    </ReportSeriesScreenshotsProvider>
   );
 }

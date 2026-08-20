@@ -3,6 +3,10 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { AXIS_FONT_PROPS } from '../common/axis';
 import { PreviousDiffIndicator } from '../common/previous-diff-indicator';
 import { ReportTable } from '../common/report-table';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { useReportChartContext } from '../context';
@@ -43,6 +47,11 @@ const PieTooltip = (props: { payload?: any[] }) => {
             )}
             <ChartTooltipItem color={item.color}>
               <div className="flex items-center gap-1">
+                <ReportSeriesScreenshot
+                  eventName={item.names.join(' — ')}
+                  serieId={item.id}
+                  showNoMatch={false}
+                />
                 <SerieIcon name={item.name} />
                 <SerieName className="font-medium" name={item.names} />
               </div>
@@ -109,7 +118,7 @@ export function Chart({ data }: Props) {
     : renderLabel;
 
   return (
-    <>
+    <ReportSeriesScreenshotsProvider chartSeries={data.series}>
       {showChart && (
         <div
           className={cn('h-full w-full max-sm:-mx-3', isEditMode && 'card p-4')}
@@ -165,7 +174,7 @@ export function Chart({ data }: Props) {
           visibleSeries={data.series}
         />
       )}
-    </>
+    </ReportSeriesScreenshotsProvider>
   );
 }
 

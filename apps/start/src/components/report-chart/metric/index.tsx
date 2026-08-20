@@ -4,6 +4,7 @@ import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportTable } from '../common/report-table';
+import { ReportSeriesScreenshotsProvider } from '../common/report-series-screenshots';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
@@ -55,7 +56,9 @@ export function ReportMetricChart() {
   }
 
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={res.data.series}>
     <MetricContent data={res.data} isHero={isHero} isPlainHero={isPlainHero} />
+    </ReportSeriesScreenshotsProvider>
   );
 }
 

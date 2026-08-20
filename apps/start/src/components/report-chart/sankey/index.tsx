@@ -3,6 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { ReportChartLoading } from '../common/loading';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
@@ -64,7 +68,26 @@ export function ReportSankeyChart() {
     return <Empty />;
   }
 
+  const event = series[0];
+  const screenshotSeries =
+    event?.type === 'event'
+      ? Array.from(
+          new Set(
+            res.data.links.flatMap((link) => [link.source, link.target])
+          )
+        ).map((eventName) => ({
+          id: eventName,
+          serieType: 'event' as const,
+          event: {
+            id: event.id,
+            name: eventName,
+            breakdowns: {},
+          },
+        }))
+      : [];
+
   return (
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
     <div className="col gap-4">
       {showChart && <Chart data={res.data} />}
       {showTable && (
@@ -89,8 +112,30 @@ export function ReportSankeyChart() {
                   className="border-border border-b last:border-0"
                   key={`${link.source}-${link.target}-${index}`}
                 >
-                  <td className="px-4 py-2">{link.source}</td>
-                  <td className="px-4 py-2">{link.target}</td>
+                  <td className="px-4 py-2">
+                    <span className="flex items-center gap-2">
+                      {series[0]?.type === 'event' && (
+                        <ReportSeriesScreenshot
+                          eventName={link.source}
+                          serieId={link.source}
+                          showNoMatch={false}
+                        />
+                      )}
+                      {link.source}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2">
+                    <span className="flex items-center gap-2">
+                      {series[0]?.type === 'event' && (
+                        <ReportSeriesScreenshot
+                          eventName={link.target}
+                          serieId={link.target}
+                          showNoMatch={false}
+                        />
+                      )}
+                      {link.target}
+                    </span>
+                  </td>
                   <td className="px-4 py-2 text-right font-mono font-semibold">
                     {link.value.toLocaleString()}
                   </td>
@@ -101,6 +146,7 @@ export function ReportSankeyChart() {
         </div>
       )}
     </div>
+    </ReportSeriesScreenshotsProvider>
   );
 }
 

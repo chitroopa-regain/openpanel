@@ -22,6 +22,7 @@ import {
   getDiffIndicator,
 } from '../common/previous-diff-indicator';
 import { SerieName } from '../common/serie-name';
+import { ReportSeriesScreenshot } from '../common/report-series-screenshots';
 import { useReportChartContext } from '../context';
 import {
   compactMetricCardClassName,
@@ -141,7 +142,16 @@ export function MetricCard({
     '#93c5fd', // blue
   );
 
-  const label = <SerieName name={serie.names} />;
+  const label = (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <ReportSeriesScreenshot
+        eventName={serie.names.join(' — ')}
+        serieId={serie.id}
+        showNoMatch={false}
+      />
+      <SerieName name={serie.names} />
+    </span>
+  );
   const labelText = Array.isArray(serie.names)
     ? serie.names.join(' > ')
     : serie.names;

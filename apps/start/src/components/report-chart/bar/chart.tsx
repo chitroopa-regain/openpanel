@@ -6,6 +6,10 @@ import { useMemo, useState } from 'react';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
 import { ReportTable } from '../common/report-table';
+import {
+  ReportSeriesScreenshot,
+  ReportSeriesScreenshotsProvider,
+} from '../common/report-series-screenshots';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
 import { DeltaChip } from '@/components/delta-chip';
@@ -130,7 +134,7 @@ export function Chart({ data }: Props) {
   ]);
 
   return (
-    <>
+    <ReportSeriesScreenshotsProvider chartSeries={data.series}>
       {showChart && (
         <div className={cn('w-full', isEditMode && 'card')}>
       {isEditMode && (
@@ -218,6 +222,11 @@ export function Chart({ data }: Props) {
                 <div className="relative z-10 flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex min-w-0 items-center gap-3">
+                      <ReportSeriesScreenshot
+                        eventName={serie.names.join(' — ')}
+                        serieId={serie.id}
+                        showNoMatch={false}
+                      />
                       <div
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border bg-def-50 dark:border-def-800 dark:bg-def-900"
                         style={{ borderColor: `${color}22` }}
@@ -358,6 +367,6 @@ export function Chart({ data }: Props) {
           visibleSeries={allSeriesWithIndex}
         />
       )}
-    </>
+    </ReportSeriesScreenshotsProvider>
   );
 }
