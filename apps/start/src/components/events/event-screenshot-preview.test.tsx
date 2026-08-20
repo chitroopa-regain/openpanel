@@ -65,6 +65,9 @@ describe('EventScreenshotPreview', () => {
     expect(image.parentElement?.parentElement?.className).toContain(
       'grid-rows-[minmax(0,1fr)_auto]'
     );
+    expect(image.parentElement?.parentElement?.className).toContain(
+      'lg:grid-cols-2'
+    );
     const sourceValue = screen.getByText('overlay_deep_focus_settings');
     expect(sourceValue.tagName).toBe('DD');
     expect(sourceValue.className).toContain('whitespace-pre-wrap');

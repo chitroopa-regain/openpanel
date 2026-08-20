@@ -243,7 +243,7 @@ export function EventScreenshotPreview({
                     .join(' · ') || 'Captured event screenshot'}
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_20rem] lg:grid-rows-1">
+              <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-2 lg:grid-rows-1">
                 <div className="relative flex min-h-0 items-center justify-center overflow-hidden bg-black p-3 sm:p-5">
                   {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions lint/performance/noImgElement: image load failure updates the surrounding preview dialog */}
                   <img
