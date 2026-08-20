@@ -106,12 +106,48 @@ describe('event screenshot metadata', () => {
     ]);
   });
 
+  it('keeps one screenshot set for every requested breakdown context', () => {
+    const variants = Array.from({ length: 6 }, (_, index) => ({
+      ...validVariant,
+      capture_id: `source-${index}`,
+      captured_at_ms: 1000 - index,
+      event_properties: { source: `source-${index}` },
+    }));
+    const contexts = variants.map((_, index) => ({
+      eventName: 'Paywall: Shown',
+      filters: [],
+      breakdown: {
+        property: 'properties.source',
+        scope: 'event' as const,
+        values: [`source-${index}`],
+      },
+    }));
+
+    const screenshots = indexEventScreenshots(
+      {
+        events: [{ event_name: 'Paywall: Shown', variants }],
+      },
+      contexts
+    );
+
+    expect(
+      screenshots.get('Paywall: Shown')?.map((item) => item.captureId)
+    ).toEqual([
+      'source-0',
+      'source-1',
+      'source-2',
+      'source-3',
+      'source-4',
+      'source-5',
+    ]);
+  });
+
   it('keeps representative samples version-diverse without a context', () => {
     const samples = [
       ...Array.from({ length: 6 }, (_, index) =>
         sample({
           captureId: `new-${index}`,
-          capturedAtMs: 1_000 - index,
+          capturedAtMs: 1000 - index,
           appVersion: '61.2.1753',
         })
       ),
@@ -166,6 +202,25 @@ describe('event screenshot metadata', () => {
         ],
       })
     ).toEqual([]);
+  });
+
+  it('matches null breakdowns only to missing properties', () => {
+    const selected = selectEventScreenshotSamples(
+      [
+        sample({ captureId: 'has-source' }),
+        sample({ captureId: 'missing-source', eventProperties: {} }),
+      ],
+      {
+        filters: [],
+        breakdown: {
+          property: 'properties.source',
+          scope: 'event',
+          values: [null],
+        },
+      }
+    );
+
+    expect(selected.map((item) => item.captureId)).toEqual(['missing-source']);
   });
 
   it('matches breakdown values and inclusive capture dates', () => {

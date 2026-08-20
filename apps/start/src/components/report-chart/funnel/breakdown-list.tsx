@@ -1,9 +1,20 @@
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  buildBreakdownScreenshotContextBatches,
+  buildFunnelBreakdownScreenshotTargets,
+  EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+  eventScreenshotsForContext,
+  MAX_SCREENSHOT_CONTEXTS_PER_QUERY,
+  mergeEventScreenshotCatalogs,
+} from '@/components/events/event-screenshot-context';
+import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { useNumber } from '@/hooks/use-numer-formatter';
+import { useTRPC } from '@/integrations/trpc/react';
 import type { RouterOutputs } from '@/trpc/client';
 import { getChartColor } from '@/utils/theme';
+import { useQueries } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, ChevronDown } from 'lucide-react';
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   formatDuration,
@@ -160,6 +171,68 @@ export function BreakdownList({
   const number = useNumber();
   const { report } = useReportChartContext();
   const measure = getFunnelMeasureFromOptions(report.options);
+  const trpc = useTRPC();
+  const breakdownStep =
+    report.options?.type === 'funnel'
+      ? report.options.breakdownStep
+      : undefined;
+  const screenshotTargets = useMemo(
+    () =>
+      buildFunnelBreakdownScreenshotTargets({
+        rows: allBreakdowns,
+        reportSeries: report.series,
+        breakdownProperties: report.breakdowns.map((item) => item.name),
+        breakdownStep,
+        startDate: report.startDate,
+        endDate: report.endDate,
+      }),
+    [
+      allBreakdowns,
+      breakdownStep,
+      report.breakdowns,
+      report.endDate,
+      report.series,
+      report.startDate,
+    ]
+  );
+  const screenshotContextBatches = useMemo(
+    () => buildBreakdownScreenshotContextBatches(screenshotTargets),
+    [screenshotTargets]
+  );
+  const screenshotCatalogQueries = useQueries({
+    queries: screenshotContextBatches.map((screenshotContexts) =>
+      trpc.chart.events.queryOptions(
+        {
+          includeDropped: true,
+          projectId: report.projectId,
+          screenshotContexts,
+        },
+        {
+          enabled: screenshotContexts.length > 0,
+          refetchInterval: EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+        }
+      )
+    ),
+  });
+  const screenshotCatalog = mergeEventScreenshotCatalogs(
+    screenshotCatalogQueries.map((query) => query.data)
+  );
+  const screenshotTargetByRowId = new Map(
+    screenshotTargets.map((target, index) => [
+      target.serieId,
+      {
+        batchIndex: Math.floor(index / MAX_SCREENSHOT_CONTEXTS_PER_QUERY),
+        target,
+      },
+    ])
+  );
+  const screenshotsByRowId = new Map(
+    screenshotTargets.map((target) => [
+      target.serieId,
+      eventScreenshotsForContext(screenshotCatalog, target.context),
+    ])
+  );
+  const screenshotBatchRefreshedAt = useRef(new Map<number, number>());
   const [sortKey, setSortKey] = useState<SortKey>('totalConv');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const displayedTopN = savedTopN ?? 10;
@@ -478,6 +551,11 @@ export function BreakdownList({
               item.breakdowns && item.breakdowns.length > 0
                 ? item.breakdowns.join(' > ')
                 : 'Not set';
+            const targetEntry = screenshotTargetByRowId.get(item.id);
+            const screenshotQuery = targetEntry
+              ? screenshotCatalogQueries[targetEntry.batchIndex]
+              : undefined;
+            const screenshots = screenshotsByRowId.get(item.id);
 
             return (
               <tr
@@ -500,11 +578,40 @@ export function BreakdownList({
                   />
                 </td>
                 <td
-                  className={`px-3 py-2 font-medium truncate max-w-[200px] ${stickyLeft1}`}
+                  className={`px-3 py-2 font-medium max-w-[200px] ${stickyLeft1}`}
                   style={stickyBreakdownStyle}
                   title={label}
                 >
-                  {label}
+                  <div className="flex min-w-0 items-center gap-2">
+                    {targetEntry && !screenshotQuery?.isPending && (
+                      <EventScreenshotPreview
+                        compact
+                        eventName={`${targetEntry.target.eventName} — ${label}`}
+                        onImageError={() => {
+                          const now = Date.now();
+                          const lastRefreshedAt =
+                            screenshotBatchRefreshedAt.current.get(
+                              targetEntry.batchIndex
+                            ) ?? 0;
+                          if (
+                            !screenshotQuery ||
+                            screenshotQuery.isFetching ||
+                            now - lastRefreshedAt < 30_000
+                          ) {
+                            return;
+                          }
+                          screenshotBatchRefreshedAt.current.set(
+                            targetEntry.batchIndex,
+                            now
+                          );
+                          screenshotQuery.refetch();
+                        }}
+                        screenshots={screenshots}
+                        showNoMatch
+                      />
+                    )}
+                    <span className="truncate">{label}</span>
+                  </div>
                 </td>
                 <td
                   className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${stickyLeft2}`}

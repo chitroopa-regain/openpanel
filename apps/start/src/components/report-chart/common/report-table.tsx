@@ -1,11 +1,22 @@
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  buildBreakdownScreenshotContextBatches,
+  buildBreakdownScreenshotTargets,
+  EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+  eventScreenshotsForContext,
+  MAX_SCREENSHOT_CONTEXTS_PER_QUERY,
+  mergeEventScreenshotCatalogs,
+} from '@/components/events/event-screenshot-context';
+import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
 import { useFormatDateInterval } from '@/hooks/use-format-date-interval';
+import { useTRPC } from '@/integrations/trpc/react';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import { useSelector } from '@/redux';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
 import type { ColumnDef, Header, Row } from '@tanstack/react-table';
+import { useQueries } from '@tanstack/react-query';
 import {
   type ExpandedState,
   type SortingState,
@@ -26,6 +37,7 @@ import type * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ReportTableToolbar } from './report-table-toolbar';
+import { useReportChartContext } from '../context';
 import {
   type ExpandableTableRow,
   type GroupedTableRow,
@@ -232,6 +244,61 @@ export function ReportTable({
   const number = useNumber();
   const interval = useSelector((state) => state.report.interval);
   const breakdowns = useSelector((state) => state.report.breakdowns);
+  const { report } = useReportChartContext();
+  const trpc = useTRPC();
+  const screenshotTargets = useMemo(
+    () =>
+      buildBreakdownScreenshotTargets({
+        chartSeries: data.series,
+        reportSeries: report.series,
+        startDate: report.startDate,
+        endDate: report.endDate,
+      }),
+    [data.series, report.endDate, report.series, report.startDate]
+  );
+  const screenshotContextBatches = useMemo(
+    () => buildBreakdownScreenshotContextBatches(screenshotTargets),
+    [screenshotTargets]
+  );
+  const screenshotCatalogQueries = useQueries({
+    queries: screenshotContextBatches.map((screenshotContexts) =>
+      trpc.chart.events.queryOptions(
+        {
+          includeDropped: true,
+          projectId: report.projectId,
+          screenshotContexts,
+        },
+        {
+          enabled: screenshotContexts.length > 0,
+          refetchInterval: EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
+        }
+      )
+    ),
+  });
+  const screenshotCatalog = mergeEventScreenshotCatalogs(
+    screenshotCatalogQueries.map((query) => query.data)
+  );
+  const screenshotCatalogRevision = screenshotCatalogQueries
+    .map(
+      (query) => `${query.dataUpdatedAt}:${query.status}:${query.fetchStatus}`
+    )
+    .join(',');
+  const screenshotTargetBySerieId = new Map(
+    screenshotTargets.map((target, index) => [
+      target.serieId,
+      {
+        batchIndex: Math.floor(index / MAX_SCREENSHOT_CONTEXTS_PER_QUERY),
+        target,
+      },
+    ])
+  );
+  const screenshotsBySerieId = new Map(
+    screenshotTargets.map((target) => [
+      target.serieId,
+      eventScreenshotsForContext(screenshotCatalog, target.context),
+    ])
+  );
+  const screenshotBatchRefreshedAt = useRef(new Map<number, number>());
 
   const formatDate = useFormatDateInterval({
     interval,
@@ -937,6 +1004,72 @@ export function ReportTable({
       });
     });
 
+    if (breakdownPropertyNames.length > 0) {
+      cols.push({
+        id: 'breakdown-screenshot',
+        header: 'Screenshot',
+        size: 96,
+        minSize: 80,
+        maxSize: 120,
+        meta: {
+          pinned: 'left',
+        },
+        cell: ({ row }) => {
+          const original = row.original as ExpandableTableRow | TableRow;
+          const isSummary =
+            ('isSummaryRow' in original && original.isSummaryRow === true) ||
+            ('isGroupHeader' in original && original.isGroupHeader === true);
+          const targetEntry = screenshotTargetBySerieId.get(original.serieId);
+          if (isSummary || !targetEntry) {
+            return <div className="h-12" />;
+          }
+          const screenshotQuery =
+            screenshotCatalogQueries[targetEntry.batchIndex];
+          if (screenshotQuery?.isPending) {
+            return <div className="h-12" />;
+          }
+          const screenshots = screenshotsBySerieId.get(original.serieId);
+          const breakdownLabel = original.breakdownValues
+            .filter(Boolean)
+            .join(' / ');
+
+          return (
+            <div className="flex h-12 items-center justify-center px-3">
+              <EventScreenshotPreview
+                compact
+                eventName={
+                  breakdownLabel
+                    ? `${targetEntry.target.eventName} — ${breakdownLabel}`
+                    : targetEntry.target.eventName
+                }
+                onImageError={() => {
+                  const now = Date.now();
+                  const lastRefreshedAt =
+                    screenshotBatchRefreshedAt.current.get(
+                      targetEntry.batchIndex
+                    ) ?? 0;
+                  if (
+                    !screenshotQuery ||
+                    screenshotQuery.isFetching ||
+                    now - lastRefreshedAt < 30_000
+                  ) {
+                    return;
+                  }
+                  screenshotBatchRefreshedAt.current.set(
+                    targetEntry.batchIndex,
+                    now
+                  );
+                  screenshotQuery.refetch();
+                }}
+                screenshots={screenshots}
+                showNoMatch
+              />
+            </div>
+          );
+        },
+      });
+    }
+
     // Metric columns — pie/metric charts show only "Value", others show all
     const allMetrics = [
       { key: 'count', label: 'Unique' },
@@ -1094,6 +1227,8 @@ export function ReportTable({
     columnSizing,
     expanded,
     data,
+    chartType,
+    screenshotCatalogRevision,
   ]);
 
   // Create a hash of column IDs to track when columns change

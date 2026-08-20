@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildBreakdownScreenshotContextBatches,
+  buildBreakdownScreenshotTargets,
   buildEventDetailScreenshotContext,
   buildEventTableScreenshotContextBatches,
+  buildFunnelBreakdownScreenshotTargets,
   buildScreenshotContexts,
+  eventScreenshotsForContext,
   eventScreenshotsForUtcDay,
   mergeEventScreenshotCatalogs,
   utcDayScreenshotRange,
@@ -77,6 +81,234 @@ describe('buildScreenshotContexts', () => {
         matchable: false,
       })
     );
+  });
+});
+
+describe('breakdown table screenshot matching', () => {
+  const reportSeries = [
+    {
+      id: 'A',
+      type: 'event',
+      name: 'Subscription Intro BS: Shown',
+      filters: [
+        {
+          id: 'filter-1',
+          name: 'properties.variant',
+          operator: 'is',
+          value: ['control'],
+        },
+      ],
+    },
+  ] as never;
+
+  it('builds an exact context for every chart breakdown row', () => {
+    const targets = buildBreakdownScreenshotTargets({
+      chartSeries: [
+        {
+          id: 'source-row',
+          serieType: 'event',
+          event: {
+            id: 'A',
+            name: 'Subscription Intro BS: Shown',
+            breakdowns: {
+              'properties.source': 'FT_POMODORO_SELECTION',
+              'profile.properties.plan': 'pro',
+            },
+          },
+        },
+      ] as never,
+      reportSeries,
+      startDate: '2026-08-01T00:00:00.000Z',
+      endDate: '2026-08-07T00:00:00.000Z',
+    });
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        serieId: 'source-row',
+        eventName: 'Subscription Intro BS: Shown',
+        context: expect.objectContaining({
+          eventName: 'Subscription Intro BS: Shown',
+          breakdown: {
+            property: 'properties.source',
+            scope: 'event',
+            values: ['FT_POMODORO_SELECTION'],
+          },
+          filters: expect.arrayContaining([
+            {
+              property: 'properties.variant',
+              scope: 'event',
+              values: ['control'],
+            },
+            {
+              property: 'profile.properties.plan',
+              scope: 'user',
+              values: ['pro'],
+            },
+          ]),
+        }),
+      }),
+    ]);
+  });
+
+  it('does not guess when multiple report series share an event name', () => {
+    const targets = buildBreakdownScreenshotTargets({
+      chartSeries: [
+        {
+          id: 'ambiguous-row',
+          serieType: 'event',
+          event: {
+            name: 'Subscription Intro BS: Shown',
+            breakdowns: { 'properties.source': 'SOURCE_A' },
+          },
+        },
+      ] as never,
+      reportSeries: [
+        {
+          id: 'A',
+          type: 'event',
+          name: 'Subscription Intro BS: Shown',
+          filters: [],
+        },
+        {
+          id: 'B',
+          type: 'event',
+          name: 'Subscription Intro BS: Shown',
+          filters: [],
+        },
+      ] as never,
+    });
+
+    expect(targets).toEqual([]);
+  });
+
+  it('builds funnel row contexts from the configured breakdown step', () => {
+    const targets = buildFunnelBreakdownScreenshotTargets({
+      rows: [
+        { id: 'source-a', breakdowns: ['SOURCE_A'] },
+        { id: 'unset', breakdowns: null },
+      ],
+      reportSeries: [
+        { id: 'A', type: 'event', name: 'Step One', filters: [] },
+        { id: 'B', type: 'event', name: 'Step Two', filters: [] },
+      ] as never,
+      breakdownProperties: ['properties.source'],
+      breakdownStep: 1,
+    });
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        serieId: 'source-a',
+        eventName: 'Step Two',
+        context: expect.objectContaining({
+          eventName: 'Step Two',
+          breakdown: {
+            property: 'properties.source',
+            scope: 'event',
+            values: ['SOURCE_A'],
+          },
+        }),
+      }),
+      expect.objectContaining({
+        serieId: 'unset',
+        eventName: 'Step Two',
+        context: expect.objectContaining({
+          breakdown: {
+            property: 'properties.source',
+            scope: 'event',
+            values: [null],
+          },
+        }),
+      }),
+    ]);
+
+    const unsetTarget = targets.find((target) => target.serieId === 'unset');
+    const unsetCatalog = [
+      {
+        name: 'Step Two',
+        screenshots: [
+          {
+            ...screenshot(200),
+            captureId: 'has-source',
+            eventProperties: { source: 'SOURCE_A' },
+          },
+          {
+            ...screenshot(100),
+            captureId: 'missing-source',
+            eventProperties: {},
+          },
+        ],
+      },
+    ] as never;
+    if (!unsetTarget) {
+      throw new Error('Expected a target for the Not set breakdown row');
+    }
+    expect(
+      eventScreenshotsForContext(unsetCatalog, unsetTarget.context)?.map(
+        (item) => item.captureId
+      )
+    ).toEqual(['missing-source']);
+  });
+
+  it('filters a merged screenshot catalog back to the exact source row', () => {
+    const [target] = buildBreakdownScreenshotTargets({
+      chartSeries: [
+        {
+          id: 'source-row',
+          serieType: 'event',
+          event: {
+            id: 'A',
+            name: 'Subscription Intro BS: Shown',
+            breakdowns: { 'properties.source': 'SOURCE_A' },
+          },
+        },
+      ] as never,
+      reportSeries,
+    });
+    const catalog = [
+      {
+        name: 'Subscription Intro BS: Shown',
+        screenshots: [
+          {
+            ...screenshot(200),
+            captureId: 'source-a',
+            eventProperties: { source: 'SOURCE_A', variant: 'control' },
+          },
+          {
+            ...screenshot(300),
+            captureId: 'source-b',
+            eventProperties: { source: 'SOURCE_B', variant: 'control' },
+          },
+        ],
+      },
+    ] as never;
+
+    expect(
+      eventScreenshotsForContext(catalog, target!.context)?.map(
+        (item) => item.captureId
+      )
+    ).toEqual(['source-a']);
+  });
+
+  it('batches more than fifty source contexts without dropping rows', () => {
+    const targets = Array.from({ length: 51 }, (_, index) => ({
+      serieId: `row-${index}`,
+      eventName: 'Event',
+      context: {
+        eventName: 'Event',
+        filters: [],
+        breakdown: {
+          property: 'properties.source',
+          scope: 'event' as const,
+          values: [`source-${index}`],
+        },
+      },
+    }));
+
+    expect(
+      buildBreakdownScreenshotContextBatches(targets).map(
+        (batch) => batch.length
+      )
+    ).toEqual([50, 1]);
   });
 });
 

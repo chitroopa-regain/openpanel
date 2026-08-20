@@ -3,6 +3,7 @@ import { z } from 'zod';
 const SCREENSHOT_LOOKUP_TIMEOUT_MS = 2000;
 const TRAILING_SLASHES = /\/+$/;
 const MAX_SCREENSHOTS_PER_EVENT = 5;
+const MAX_SCREENSHOTS_PER_CONTEXT_BATCH = 250;
 // Representative (context-free) lookups feed the event selector and its
 // version-filterable preview modal, so they keep more samples spread across
 // app versions instead of only the five newest captures overall.
@@ -265,7 +266,7 @@ function scalarEquals(
   actual: unknown,
   expected: z.infer<typeof jsonScalarSchema>
 ) {
-  return actual === expected;
+  return actual === expected || (expected === null && actual === undefined);
 }
 
 export function selectEventScreenshotSamples(
@@ -333,20 +334,27 @@ function selectEventScreenshotSamplesForContexts(
   if (contexts.length === 0) {
     return selectEventScreenshotSamples(samples);
   }
-  return [...samples]
+  const selected: EventScreenshot[] = [];
+  const selectedKeys = new Set<string>();
+  for (const context of contexts) {
+    if (context.matchable === false) {
+      continue;
+    }
+    for (const sample of selectEventScreenshotSamples(samples, context)) {
+      const key = sample.captureId ?? sample.url;
+      if (!selectedKeys.has(key)) {
+        selectedKeys.add(key);
+        selected.push(sample);
+      }
+    }
+  }
+  return selected
     .sort(
       (left, right) =>
         (right.capturedAtMs ?? Number.NEGATIVE_INFINITY) -
         (left.capturedAtMs ?? Number.NEGATIVE_INFINITY)
     )
-    .filter((sample) =>
-      contexts.some(
-        (context) =>
-          context.matchable !== false &&
-          selectEventScreenshotSamples([sample], context).length > 0
-      )
-    )
-    .slice(0, MAX_SCREENSHOTS_PER_EVENT);
+    .slice(0, MAX_SCREENSHOTS_PER_CONTEXT_BATCH);
 }
 
 export function indexEventScreenshots(
