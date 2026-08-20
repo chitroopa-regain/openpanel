@@ -66,6 +66,7 @@ import {
   protectedProcedure,
   publicProcedure,
 } from '../trpc';
+import { buildEventNamesQuery } from './chart-event-names.utils';
 import type { EventScreenshot } from './chart-events.utils';
 import {
   fetchEventScreenshots,
@@ -312,7 +313,7 @@ export const chartRouter = createTRPCRouter({
 
         const [events, meta, customEvents] = await Promise.all([
           chQuery<{ name: string; count: number }>(
-            `SELECT name, count(name) as count FROM ${TABLE_NAMES.event_names_mv} WHERE project_id = ${sqlstring.escape(projectId)} GROUP BY name ORDER BY count DESC, name ASC`
+            buildEventNamesQuery(projectId, TABLE_NAMES.event_names_mv)
           ),
           getEventMetasCached(projectId),
           db.customEvent.findMany({ where: { projectId } }).catch((error) => {

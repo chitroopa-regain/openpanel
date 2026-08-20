@@ -251,7 +251,11 @@ export async function up() {
     ...createMaterializedView({
       name: 'distinct_event_names_mv',
       tableName: 'events',
-      orderBy: ['project_id', 'name', 'created_at'],
+      // Keep every event name on one merge key. Including created_at here
+      // creates one row per ingest batch and makes event selectors scan the
+      // entire history instead of the small event-name dictionary.
+      engine: 'SummingMergeTree(event_count)',
+      orderBy: ['project_id', 'name'],
       query: `SELECT
         project_id,
         name,
@@ -259,7 +263,7 @@ export async function up() {
         count() AS event_count
       FROM {events}
       GROUP BY project_id, name`,
-      distributionHash: 'cityHash64(name, created_at)',
+      distributionHash: 'cityHash64(project_id, name)',
       replicatedVersion,
       isClustered,
     }),
