@@ -31,15 +31,18 @@ interface EventScreenshotPreviewProps {
   onImageError?: () => void;
 }
 
+function formatPropertyValue(propertyValue: unknown) {
+  if (typeof propertyValue === 'string') {
+    return propertyValue;
+  }
+
+  const serializedValue = JSON.stringify(propertyValue, null, 2);
+  return serializedValue ?? String(propertyValue);
+}
+
 function propertyEntries(properties: Record<string, unknown>) {
   return Object.entries(properties).map(
-    ([key, propertyValue]) =>
-      [
-        key,
-        typeof propertyValue === 'string'
-          ? propertyValue
-          : JSON.stringify(propertyValue),
-      ] as const
+    ([key, propertyValue]) => [key, formatPropertyValue(propertyValue)] as const
   );
 }
 
@@ -55,13 +58,20 @@ function PropertySection({
     return null;
   }
   return (
-    <section className="rounded bg-zinc-900 p-3 text-sm">
+    <section className="min-w-0 rounded bg-zinc-900 p-3 text-sm">
       <h3 className="mb-2 font-medium">{title}</h3>
-      <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-3 gap-y-1">
+      <dl className="grid min-w-0 gap-3">
         {entries.map(([key, value]) => (
-          <div className="contents" key={key}>
-            <dt className="truncate text-zinc-400">{key}</dt>
-            <dd className="break-all font-mono">{value}</dd>
+          <div
+            className="min-w-0 border-zinc-800 border-b pb-3 last:border-b-0 last:pb-0"
+            key={key}
+          >
+            <dt className="break-words text-xs text-zinc-400 leading-relaxed">
+              {key}
+            </dt>
+            <dd className="mt-1 min-w-0 whitespace-pre-wrap break-words rounded bg-black/20 p-2 font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">
+              {value}
+            </dd>
           </div>
         ))}
       </dl>

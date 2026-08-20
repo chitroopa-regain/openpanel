@@ -5,7 +5,7 @@ import { EventScreenshotPreview } from './event-screenshot-preview';
 
 const APP_METADATA = /ai\.regain\.app · 2\.4\.0/;
 const PREVIEW_SCREENSHOTS = /Preview screenshots/;
-const APP_VERSION_250 = /2\.5\.0/;
+const APP_METADATA_250 = /ai\.regain\.app · 2\.5\.0/;
 
 const screenshot = {
   url: 'https://api.regainapp.ai/event_screenshots/capture-1/image?token=secret',
@@ -13,7 +13,11 @@ const screenshot = {
   capturedAtMs: 1_784_822_400_123,
   appPackage: 'ai.regain.app',
   appVersion: '2.4.0',
-  eventProperties: { source: 'home', attempt: 2 },
+  eventProperties: {
+    source: 'overlay_deep_focus_settings',
+    attempt: 2,
+    ftSession: '{"mode":"TIMER","source":"ft_overlay","isActive":true}',
+  },
   userProperties: { plan: 'pro' },
 };
 
@@ -47,7 +51,7 @@ describe('EventScreenshotPreview', () => {
     expect(screen.getByText('Event properties')).toBeTruthy();
     expect(screen.getByText('User properties')).toBeTruthy();
     expect(screen.getByText('source')).toBeTruthy();
-    expect(screen.getByText('home')).toBeTruthy();
+    expect(screen.getByText('overlay_deep_focus_settings')).toBeTruthy();
     expect(screen.getByText('plan')).toBeTruthy();
     expect(screen.getByText('pro')).toBeTruthy();
     const dialog = screen.getByRole('dialog');
@@ -60,6 +64,17 @@ describe('EventScreenshotPreview', () => {
     expect(dialog.className).toContain('bg-def-100');
     expect(image.parentElement?.parentElement?.className).toContain(
       'grid-rows-[minmax(0,1fr)_auto]'
+    );
+    const sourceValue = screen.getByText('overlay_deep_focus_settings');
+    expect(sourceValue.tagName).toBe('DD');
+    expect(sourceValue.className).toContain('whitespace-pre-wrap');
+    expect(sourceValue.className).toContain('[overflow-wrap:anywhere]');
+    expect(sourceValue.parentElement?.className).toContain('min-w-0');
+    const sessionValue = screen
+      .getByText('ftSession')
+      .parentElement?.querySelector('dd');
+    expect(sessionValue?.textContent).toBe(
+      '{"mode":"TIMER","source":"ft_overlay","isActive":true}'
     );
     expect(
       document.body.querySelector('[data-slot="dialog-overlay"]')
@@ -100,7 +115,7 @@ describe('EventScreenshotPreview', () => {
         .getByRole('img', { name: 'Paywall: Shown event screenshot' })
         .getAttribute('src')
     ).toBe(second.url);
-    expect(screen.getByText(/ai\.regain\.app · 2\.5\.0/)).toBeTruthy();
+    expect(screen.getByText(APP_METADATA_250)).toBeTruthy();
   });
 
   it('filters the gallery by app version and restores all versions', () => {
