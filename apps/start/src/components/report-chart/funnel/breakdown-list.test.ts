@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clampFunnelBreakdownColumnWidth,
+  DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS,
   getFunnelBreakdownMetricColumnWidths,
   getFunnelBreakdownStickyColumnStyle,
   getFunnelBreakdownStickyLayout,
@@ -89,5 +91,31 @@ describe('getFunnelBreakdownStickyLayout', () => {
       minWidth: 120,
       maxWidth: 120,
     });
+  });
+
+  it('moves pinned columns and grows the table when a user expands Breakdown', () => {
+    const expanded = {
+      ...DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS,
+      breakdown: 420,
+    };
+    const defaultWidth = getFunnelBreakdownTableMinWidth(3);
+    const expandedLayout = getFunnelBreakdownStickyLayout(expanded);
+
+    expect(expandedLayout.totalConversion.left).toBe(460);
+    expect(getFunnelBreakdownStickyColumnStyle('breakdown', expanded)).toEqual({
+      left: 40,
+      width: 420,
+      minWidth: 420,
+      maxWidth: 420,
+    });
+    expect(getFunnelBreakdownTableMinWidth(3, expanded)).toBe(
+      defaultWidth + 220
+    );
+  });
+
+  it('clamps dragged columns to usable minimum and maximum widths', () => {
+    expect(clampFunnelBreakdownColumnWidth('breakdown', 20)).toBe(160);
+    expect(clampFunnelBreakdownColumnWidth('breakdown', 900)).toBe(600);
+    expect(clampFunnelBreakdownColumnWidth('count', 120)).toBe(120);
   });
 });

@@ -14,8 +14,19 @@ import type { RouterOutputs } from '@/trpc/client';
 import { getChartColor } from '@/utils/theme';
 import { useQueries } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, ChevronDown } from 'lucide-react';
-import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   formatDuration,
   formatFunnelMeasureValue,
@@ -67,10 +78,53 @@ function getSortValue(
   return 0;
 }
 
-export function getFunnelBreakdownStickyLayout() {
+export interface FunnelBreakdownColumnWidths {
+  breakdown: number;
+  totalConversion: number;
+  firstStepCount: number;
+  time: number;
+  conversion: number;
+  count: number;
+}
+
+type ResizableColumn = keyof FunnelBreakdownColumnWidths;
+
+export const DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS: FunnelBreakdownColumnWidths =
+  {
+    breakdown: 200,
+    totalConversion: 120,
+    firstStepCount: 240,
+    time: 96,
+    conversion: 112,
+    count: 80,
+  };
+
+const FUNNEL_BREAKDOWN_COLUMN_LIMITS: Record<
+  ResizableColumn,
+  { min: number; max: number }
+> = {
+  breakdown: { min: 160, max: 600 },
+  totalConversion: { min: 100, max: 320 },
+  firstStepCount: { min: 120, max: 500 },
+  time: { min: 72, max: 240 },
+  conversion: { min: 88, max: 240 },
+  count: { min: 64, max: 200 },
+};
+
+export function clampFunnelBreakdownColumnWidth(
+  column: ResizableColumn,
+  width: number
+) {
+  const limits = FUNNEL_BREAKDOWN_COLUMN_LIMITS[column];
+  return Math.min(Math.max(width, limits.min), limits.max);
+}
+
+export function getFunnelBreakdownStickyLayout(
+  widths: FunnelBreakdownColumnWidths = DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS
+) {
   const selectionWidth = 40;
-  const breakdownWidth = 200;
-  const totalConversionWidth = 120;
+  const breakdownWidth = widths.breakdown;
+  const totalConversionWidth = widths.totalConversion;
 
   return {
     selection: {
@@ -88,16 +142,18 @@ export function getFunnelBreakdownStickyLayout() {
   };
 }
 
-export function getFunnelBreakdownMetricColumnWidths() {
+export function getFunnelBreakdownMetricColumnWidths(
+  widths: FunnelBreakdownColumnWidths = DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS
+) {
   return {
     // The first step has only one metric sub-column, so its step-name header
     // does not span the wider Time/Conv/# group used by later steps. Reserve
     // enough room for real event names such as "Application Installed" instead
     // of letting the fixed table clip them to "Application I".
-    firstStepCount: 240,
-    time: 96,
-    conversion: 112,
-    count: 80,
+    firstStepCount: widths.firstStepCount,
+    time: widths.time,
+    conversion: widths.conversion,
+    count: widths.count,
   };
 }
 
@@ -105,9 +161,12 @@ export function getFunnelBreakdownTableScrollGutterWidth() {
   return 96;
 }
 
-export function getFunnelBreakdownTableMinWidth(stepCount: number) {
-  const layout = getFunnelBreakdownStickyLayout();
-  const metrics = getFunnelBreakdownMetricColumnWidths();
+export function getFunnelBreakdownTableMinWidth(
+  stepCount: number,
+  widths: FunnelBreakdownColumnWidths = DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS
+) {
+  const layout = getFunnelBreakdownStickyLayout(widths);
+  const metrics = getFunnelBreakdownMetricColumnWidths(widths);
   const pinnedWidth =
     layout.selection.width +
     layout.breakdown.width +
@@ -124,9 +183,10 @@ export function getFunnelBreakdownTableMinWidth(stepCount: number) {
 }
 
 export function getFunnelBreakdownStickyColumnStyle(
-  column: keyof ReturnType<typeof getFunnelBreakdownStickyLayout>
+  column: keyof ReturnType<typeof getFunnelBreakdownStickyLayout>,
+  widths: FunnelBreakdownColumnWidths = DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS
 ) {
-  const layout = getFunnelBreakdownStickyLayout()[column];
+  const layout = getFunnelBreakdownStickyLayout(widths)[column];
 
   return {
     left: layout.left,
@@ -136,28 +196,132 @@ export function getFunnelBreakdownStickyColumnStyle(
   };
 }
 
-// Sticky cell styles. Widths include horizontal padding; the left offsets must
-// match the rendered widths or the pinned Total Conv. column can overlap/crop
-// percentage values on narrow mobile viewports. Keep these literal Tailwind
-// classes in sync with getFunnelBreakdownStickyLayout() so the generated CSS
-// includes them.
-const stickyLeft0 = 'sticky left-0 z-10 bg-card w-[40px] min-w-[40px]';
-const stickyLeft1 =
-  'sticky left-[40px] z-10 bg-card w-[200px] min-w-[200px] max-w-[200px]';
-const stickyLeft2 =
-  'sticky left-[240px] z-10 bg-card border-r border-border w-[120px] min-w-[120px]';
+// Sticky cell dimensions are inline because users can resize them at runtime.
+// Their left offsets must track the rendered widths or the pinned Total Conv.
+// column can overlap/crop percentage values.
+const stickyLeft0 = 'sticky z-10 bg-card';
+const stickyLeft1 = 'sticky z-10 bg-card';
+const stickyLeft2 = 'sticky z-10 bg-card border-r border-border';
 const stickyHeader = 'sticky top-0 z-20 bg-card';
-const stickyHeaderLeft0 =
-  'sticky top-0 left-0 z-30 bg-card w-[40px] min-w-[40px]';
-const stickyHeaderLeft1 =
-  'sticky top-0 left-[40px] z-30 bg-card w-[200px] min-w-[200px] max-w-[200px]';
-const stickyHeaderLeft2 =
-  'sticky top-0 left-[240px] z-30 bg-card border-r border-border w-[120px] min-w-[120px]';
+const stickyHeaderLeft0 = 'sticky top-0 z-30 bg-card';
+const stickyHeaderLeft1 = 'sticky top-0 z-30 bg-card';
+const stickyHeaderLeft2 = 'sticky top-0 z-30 bg-card border-r border-border';
 const scrollGutterWidth = getFunnelBreakdownTableScrollGutterWidth();
 const scrollGutterStyle = {
   width: scrollGutterWidth,
   minWidth: scrollGutterWidth,
 };
+
+interface ColumnResizeHandleProps {
+  boundaryWidthMultiplier?: number;
+  column: ResizableColumn;
+  label: string;
+  onReset: (column: ResizableColumn) => void;
+  onResize: (column: ResizableColumn, width: number) => void;
+  width: number;
+}
+
+export function ColumnResizeHandle({
+  boundaryWidthMultiplier = 1,
+  column,
+  label,
+  onReset,
+  onResize,
+  width,
+}: ColumnResizeHandleProps) {
+  const cleanupDragRef = useRef<(() => void) | null>(null);
+
+  useEffect(
+    () => () => {
+      cleanupDragRef.current?.();
+    },
+    []
+  );
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    cleanupDragRef.current?.();
+
+    const startX = event.clientX;
+    const startWidth = width;
+    const resizeHandle = event.currentTarget;
+    const pointerId = event.pointerId;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    if (resizeHandle.setPointerCapture && pointerId != null) {
+      resizeHandle.setPointerCapture(pointerId);
+    }
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      onResize(
+        column,
+        startWidth + (moveEvent.clientX - startX) / boundaryWidthMultiplier
+      );
+    };
+    const cleanupDrag = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', cleanupDrag);
+      window.removeEventListener('pointercancel', cleanupDrag);
+      window.removeEventListener('blur', cleanupDrag);
+      if (
+        resizeHandle.releasePointerCapture &&
+        pointerId != null &&
+        resizeHandle.hasPointerCapture?.(pointerId)
+      ) {
+        resizeHandle.releasePointerCapture(pointerId);
+      }
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      cleanupDragRef.current = null;
+    };
+
+    cleanupDragRef.current = cleanupDrag;
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', cleanupDrag, { once: true });
+    window.addEventListener('pointercancel', cleanupDrag, { once: true });
+    window.addEventListener('blur', cleanupDrag, { once: true });
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    onResize(column, width + (event.key === 'ArrowRight' ? 16 : -16));
+  };
+
+  return (
+    <button
+      aria-label={`Resize ${label} column`}
+      aria-orientation="vertical"
+      aria-valuemax={FUNNEL_BREAKDOWN_COLUMN_LIMITS[column].max}
+      aria-valuemin={FUNNEL_BREAKDOWN_COLUMN_LIMITS[column].min}
+      aria-valuenow={width}
+      className="group absolute top-0 -right-1 z-40 h-full w-3 cursor-col-resize touch-none"
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onReset(column);
+      }}
+      onKeyDown={handleKeyDown}
+      onPointerDown={handlePointerDown}
+      role="separator"
+      style={{ cursor: 'col-resize' }}
+      type="button"
+    >
+      <span className="absolute top-0 right-1 h-full w-px bg-border transition-colors group-hover:bg-primary group-focus-visible:bg-primary" />
+    </button>
+  );
+}
 
 export function BreakdownList({
   data,
@@ -240,6 +404,26 @@ export function BreakdownList({
   const displayedTopN = savedTopN ?? 10;
   const [topNDraft, setTopNDraft] = useState(displayedTopN);
   const [showTopNMenu, setShowTopNMenu] = useState(false);
+  const [columnWidths, setColumnWidths] = useState(
+    DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS
+  );
+
+  const resizeColumn = useCallback(
+    (column: ResizableColumn, nextWidth: number) => {
+      setColumnWidths((current) => ({
+        ...current,
+        [column]: clampFunnelBreakdownColumnWidth(column, nextWidth),
+      }));
+    },
+    []
+  );
+
+  const resetColumn = useCallback((column: ResizableColumn) => {
+    setColumnWidths((current) => ({
+      ...current,
+      [column]: DEFAULT_FUNNEL_BREAKDOWN_COLUMN_WIDTHS[column],
+    }));
+  }, []);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -286,13 +470,24 @@ export function BreakdownList({
   }
 
   const steps = allBreakdowns[0]!.steps;
-  const stickyLayout = getFunnelBreakdownStickyLayout();
-  const stickySelectionStyle = getFunnelBreakdownStickyColumnStyle('selection');
-  const stickyBreakdownStyle = getFunnelBreakdownStickyColumnStyle('breakdown');
-  const stickyTotalConversionStyle =
-    getFunnelBreakdownStickyColumnStyle('totalConversion');
-  const metricWidths = getFunnelBreakdownMetricColumnWidths();
-  const tableMinWidth = getFunnelBreakdownTableMinWidth(steps.length);
+  const stickyLayout = getFunnelBreakdownStickyLayout(columnWidths);
+  const stickySelectionStyle = getFunnelBreakdownStickyColumnStyle(
+    'selection',
+    columnWidths
+  );
+  const stickyBreakdownStyle = getFunnelBreakdownStickyColumnStyle(
+    'breakdown',
+    columnWidths
+  );
+  const stickyTotalConversionStyle = getFunnelBreakdownStickyColumnStyle(
+    'totalConversion',
+    columnWidths
+  );
+  const metricWidths = getFunnelBreakdownMetricColumnWidths(columnWidths);
+  const tableMinWidth = getFunnelBreakdownTableMinWidth(
+    steps.length,
+    columnWidths
+  );
 
   const SortIcon = ({ col }: { col: SortKey }) => {
     if (sortKey !== col) return null;
@@ -308,16 +503,26 @@ export function BreakdownList({
   const sortableHeader = (
     key: SortKey,
     label: string,
+    resizeColumnKey: ResizableColumn,
+    boundaryWidthMultiplier = 1,
     className?: string,
     style?: CSSProperties
   ) => (
     <th
-      className={`h-12 px-3 py-0 align-middle text-right font-normal cursor-pointer hover:text-foreground select-none whitespace-nowrap ${className ?? ''}`}
+      className={`relative h-12 px-3 py-0 align-middle text-right font-normal cursor-pointer hover:text-foreground select-none whitespace-nowrap ${className ?? ''}`}
       style={style}
       onClick={() => handleSort(key)}
     >
       {label}
       <SortIcon col={key} />
+      <ColumnResizeHandle
+        boundaryWidthMultiplier={boundaryWidthMultiplier}
+        column={resizeColumnKey}
+        label={label}
+        onReset={resetColumn}
+        onResize={resizeColumn}
+        width={columnWidths[resizeColumnKey]}
+      />
     </th>
   );
 
@@ -445,20 +650,34 @@ export function BreakdownList({
               style={stickySelectionStyle}
             />
             <th
-              className={`h-12 px-3 py-0 align-middle text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft1}`}
+              className={`relative h-12 px-3 py-0 align-middle text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft1}`}
               onClick={() => handleSort('label')}
               style={stickyBreakdownStyle}
             >
               Breakdown
               <SortIcon col="label" />
+              <ColumnResizeHandle
+                column="breakdown"
+                label="Breakdown"
+                onReset={resetColumn}
+                onResize={resizeColumn}
+                width={columnWidths.breakdown}
+              />
             </th>
             <th
-              className={`h-12 px-3 py-0 align-middle text-right font-medium text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft2}`}
+              className={`relative h-12 px-3 py-0 align-middle text-right font-medium text-muted-foreground whitespace-nowrap cursor-pointer hover:text-foreground select-none ${stickyHeaderLeft2}`}
               onClick={() => handleSort('totalConv')}
               style={stickyTotalConversionStyle}
             >
               {getFunnelMeasureLabel(measure)}
               <SortIcon col="totalConv" />
+              <ColumnResizeHandle
+                column="totalConversion"
+                label={getFunnelMeasureLabel(measure)}
+                onReset={resetColumn}
+                onResize={resizeColumn}
+                width={columnWidths.totalConversion}
+              />
             </th>
             {steps.map((step, i) => {
               const colSpan = i === 0 ? 1 : 3;
@@ -466,7 +685,7 @@ export function BreakdownList({
                 <th
                   key={step.event.id ?? i}
                   colSpan={colSpan}
-                  className={`h-12 px-3 py-0 align-middle text-center border-l border-border whitespace-nowrap ${stickyHeader}`}
+                  className={`relative h-12 px-3 py-0 align-middle text-center border-l border-border whitespace-nowrap ${stickyHeader}`}
                 >
                   <span className="text-muted-foreground font-normal">
                     {i + 1}
@@ -474,6 +693,15 @@ export function BreakdownList({
                   <span className="font-semibold">
                     {step.event.displayName}
                   </span>
+                  {i === 0 && (
+                    <ColumnResizeHandle
+                      column="firstStepCount"
+                      label={step.event.displayName}
+                      onReset={resetColumn}
+                      onResize={resizeColumn}
+                      width={columnWidths.firstStepCount}
+                    />
+                  )}
                 </th>
               );
             })}
@@ -507,6 +735,8 @@ export function BreakdownList({
                     {sortableHeader(
                       `step:${i}:count`,
                       '#',
+                      'firstStepCount',
+                      1,
                       `border-l border-border ${stickyHeader}`,
                       stickySubHeaderStyle
                     )}
@@ -518,18 +748,24 @@ export function BreakdownList({
                   {sortableHeader(
                     `step:${i}:time`,
                     'Time',
+                    'time',
+                    i,
                     `border-l border-border ${stickyHeader}`,
                     stickySubHeaderStyle
                   )}
                   {sortableHeader(
                     `step:${i}:conv`,
                     'Conv %',
+                    'conversion',
+                    i,
                     stickyHeader,
                     stickySubHeaderStyle
                   )}
                   {sortableHeader(
                     `step:${i}:count`,
                     '#',
+                    'count',
+                    i,
                     stickyHeader,
                     stickySubHeaderStyle
                   )}
