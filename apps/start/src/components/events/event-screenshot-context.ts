@@ -8,6 +8,11 @@ type ScreenshotFilter = NonNullable<ScreenshotContext['filters']>[number];
 type ChartEvent = RouterOutputs['chart']['events'][number];
 export type EventScreenshots = ChartEvent['screenshots'];
 export const MAX_SCREENSHOT_CONTEXTS_PER_QUERY = 50;
+// Breakdown contexts include event identity, filters, raw values, and dates in
+// a GET query string. Keep these batches smaller than the API's 50-context
+// validation limit so wide breakdowns do not exceed the edge proxy request-line
+// buffer before they reach chart.events.
+export const MAX_BREAKDOWN_SCREENSHOT_CONTEXTS_PER_QUERY = 10;
 export const EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS = 8 * 60 * 1000;
 const USER_PROPERTY_PREFIX = /^(?:profile|user)(?:\.|$)/;
 const PROFILE_PROPERTIES_PREFIX = /^(?:profile|user)\.properties\./;
@@ -393,11 +398,11 @@ export function buildBreakdownScreenshotContextBatches(
   for (
     let offset = 0;
     offset < targets.length;
-    offset += MAX_SCREENSHOT_CONTEXTS_PER_QUERY
+    offset += MAX_BREAKDOWN_SCREENSHOT_CONTEXTS_PER_QUERY
   ) {
     batches.push(
       targets
-        .slice(offset, offset + MAX_SCREENSHOT_CONTEXTS_PER_QUERY)
+        .slice(offset, offset + MAX_BREAKDOWN_SCREENSHOT_CONTEXTS_PER_QUERY)
         .map((target) => target.context)
     );
   }

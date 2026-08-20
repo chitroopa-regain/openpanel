@@ -4,7 +4,7 @@ import {
   buildFunnelBreakdownScreenshotTargets,
   EVENT_SCREENSHOT_SIGNED_URL_REFRESH_MS,
   eventScreenshotsForContext,
-  MAX_SCREENSHOT_CONTEXTS_PER_QUERY,
+  MAX_BREAKDOWN_SCREENSHOT_CONTEXTS_PER_QUERY,
   mergeEventScreenshotCatalogs,
 } from '@/components/events/event-screenshot-context';
 import { EventScreenshotPreview } from '@/components/events/event-screenshot-preview';
@@ -221,7 +221,9 @@ export function BreakdownList({
     screenshotTargets.map((target, index) => [
       target.serieId,
       {
-        batchIndex: Math.floor(index / MAX_SCREENSHOT_CONTEXTS_PER_QUERY),
+        batchIndex: Math.floor(
+          index / MAX_BREAKDOWN_SCREENSHOT_CONTEXTS_PER_QUERY
+        ),
         target,
       },
     ])

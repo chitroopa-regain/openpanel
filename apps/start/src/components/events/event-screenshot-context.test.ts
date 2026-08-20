@@ -289,7 +289,7 @@ describe('breakdown table screenshot matching', () => {
     ).toEqual(['source-a']);
   });
 
-  it('batches more than fifty source contexts without dropping rows', () => {
+  it('keeps wide breakdown query strings below the edge proxy limit', () => {
     const targets = Array.from({ length: 51 }, (_, index) => ({
       serieId: `row-${index}`,
       eventName: 'Event',
@@ -308,7 +308,7 @@ describe('breakdown table screenshot matching', () => {
       buildBreakdownScreenshotContextBatches(targets).map(
         (batch) => batch.length
       )
-    ).toEqual([50, 1]);
+    ).toEqual([10, 10, 10, 10, 10, 1]);
   });
 });
 
