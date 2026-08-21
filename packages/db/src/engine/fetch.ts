@@ -9,6 +9,7 @@ import type {
 import { chQuery } from '../clickhouse/client';
 import { db } from '../prisma-client';
 import { getChartSql } from '../services/chart.service';
+import { resolveAudience } from '../services/custom-cohort.service';
 import type { ConcreteSeries, Plan } from './types';
 
 /**
@@ -23,6 +24,16 @@ export type FetchResult = {
 export async function fetch(plan: Plan): Promise<FetchResult> {
   const results: ConcreteSeries[] = [];
   const queries: string[] = [];
+
+  // Resolve the report-level audience ONCE, not per series. Compiled
+  // server-side from cohort ids; `endDate` is the canonical asOf so every
+  // series in the report sees the same membership.
+  const audience = await resolveAudience(
+    plan.input.audience?.cohortIds,
+    plan.input.projectId,
+    plan.input.endDate,
+  );
+  const audiencePredicate = audience.render(null);
 
   // Process each event definition
   for (let i = 0; i < plan.definitions.length; i++) {
@@ -114,6 +125,7 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
       ...queryInput,
       timezone: plan.timezone,
       customEventComponents,
+      audiencePredicate,
     });
     queries.push(sql);
     let queryResult = await chQuery<ISerieDataItem>(sql, {

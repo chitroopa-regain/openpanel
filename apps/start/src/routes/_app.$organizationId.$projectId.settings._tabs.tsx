@@ -42,6 +42,7 @@ function ProjectDashboard() {
     { id: 'details', label: 'Details' },
     { id: 'events', label: 'Events' },
     { id: 'custom-events', label: 'Custom Events' },
+    { id: 'custom-cohorts', label: 'Custom Cohorts' },
     { id: 'clients', label: 'Clients' },
     { id: 'tracking', label: 'Tracking script' },
     { id: 'widgets', label: 'Widgets' },

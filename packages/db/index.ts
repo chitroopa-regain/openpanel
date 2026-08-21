@@ -2,6 +2,7 @@ export * from './src/prisma-client';
 export * from './src/clickhouse/client';
 export * from './src/sql-builder';
 export * from './src/services/chart.service';
+export * from './src/services/custom-cohort.service';
 export * from './src/engine';
 export * from './src/services/clients.service';
 export * from './src/services/dashboard.service';
@@ -32,3 +33,6 @@ export * from './src/services/overview.service';
 export * from './src/services/pages.service';
 export * from './src/services/insights';
 export * from './src/session-context';
+// Re-exported so callers can use Prisma.DbNull (clearing a nullable Json
+// column) without deep-importing the generated client.
+export { Prisma } from './src/generated/prisma/client';

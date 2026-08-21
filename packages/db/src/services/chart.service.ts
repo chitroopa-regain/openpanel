@@ -237,7 +237,16 @@ export function getSelectPropertyKey(property: string) {
   const match = propertyPatterns.find((pattern) =>
     property.startsWith(`${pattern}.`)
   );
-  if (!match) return property;
+  if (!match) {
+    // Anything not matching a known map prefix is emitted as a bare SQL
+    // expression (a column name like `name` or `country`). Breakdown and metric
+    // property names are client-controlled, so restrict this passthrough to a
+    // plain identifier instead of letting arbitrary text become SQL.
+    if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(property)) {
+      throw new Error(`Unsupported property name: ${property}`);
+    }
+    return property;
+  }
 
   if (property.includes('*')) {
     return `arrayMap(x -> trim(x), mapValues(mapExtractKeyLike(${match}, ${sqlstring.escape(
@@ -245,7 +254,11 @@ export function getSelectPropertyKey(property: string) {
     )})))`;
   }
 
-  return `${match}['${property.replace(new RegExp(`^${match}.`), '')}']`;
+  // The map key is client-controlled (filter and breakdown names come from
+  // report input and from cohort criteria) so it MUST be escaped. Interpolating
+  // it raw made `properties.a'] ) OR 1=1 --` a SQL-injection vector.
+  const key = property.replace(new RegExp(`^${match}\\.`), '');
+  return `${match}[${sqlstring.escape(key)}]`;
 }
 
 export function getCustomEventWhereClause(
@@ -300,9 +313,15 @@ export function getChartSql({
   timezone,
   chartType,
   customEventComponents,
+  audiencePredicate,
 }: IGetChartDataInput & {
   timezone: string;
   customEventComponents?: ICustomEventComponent[];
+  /**
+   * Server-compiled cohort membership predicate. Always produced by
+   * custom-cohort.service from a cohort id — never accepted from client input.
+   */
+  audiencePredicate?: string | null;
 }) {
   const {
     sb,
@@ -320,6 +339,9 @@ export function getChartSql({
 
   sb.where = getEventFiltersWhereClause(event.filters, projectId);
   sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
+  if (audiencePredicate) {
+    sb.where.audience = audiencePredicate;
+  }
 
   if (customEventComponents && customEventComponents.length > 0) {
     const displayName = event.displayName ?? event.name;
@@ -640,13 +662,18 @@ export function getAggregateChartSql({
   projectId,
   limit,
   customEventComponents,
+  audiencePredicate,
 }: Omit<IGetChartDataInput, 'interval' | 'chartType'> & {
   timezone: string;
   customEventComponents?: ICustomEventComponent[];
+  audiencePredicate?: string | null;
 }) {
   const { sb, join, getJoins, with: addCte, getSql } = createSqlBuilder();
 
   sb.where = getEventFiltersWhereClause(event.filters, projectId);
+  if (audiencePredicate) {
+    sb.where.audience = audiencePredicate;
+  }
   sb.where.projectId = `project_id = ${sqlstring.escape(projectId)}`;
 
   if (customEventComponents && customEventComponents.length > 0) {

@@ -1,11 +1,60 @@
 import { z } from 'zod';
 
-import { db, getReportById, getReportsByDashboardId } from '@openpanel/db';
+import {
+  db,
+  getReportById,
+  getReportsByDashboardId,
+  Prisma,
+} from '@openpanel/db';
 import { zReport } from '@openpanel/validation';
 
 import { getProjectAccess } from '../access';
 import { TRPCAccessError } from '../errors';
 import { createTRPCRouter, protectedProcedure } from '../trpc';
+
+/**
+ * Mirror `report.audience.cohortIds` into custom_cohort_references.
+ *
+ * The reference table is what powers "used by N reports" and the DB-level
+ * delete protection (onDelete: Restrict), so it must track every save — a JSON
+ * scan of report bodies would be both slow and race-prone.
+ */
+/**
+ * A cohort id from ANOTHER project satisfies the foreign key (it points at
+ * custom_cohorts, not at the project), so the write would commit and only fail
+ * later in resolveAudience — leaving a saved report with an unusable audience.
+ * Ownership is therefore checked as part of the same transaction as the write.
+ */
+// `db` is an extended Prisma client, so Prisma.TransactionClient does not
+// describe the interactive-transaction client it hands out. Derive it instead.
+type CohortTx = Omit<
+  typeof db,
+  '$transaction' | '$connect' | '$disconnect' | '$on' | '$use' | '$extends'
+>;
+
+async function assertCohortsBelongToProject(
+  tx: CohortTx,
+  projectId: string,
+  cohortIds: string[],
+) {
+  if (!cohortIds.length) return;
+  const rows = await tx.customCohort.findMany({
+    where: { id: { in: cohortIds } },
+    select: { id: true, projectId: true, name: true },
+  });
+  const missing = cohortIds.filter((id) => !rows.some((r) => r.id === id));
+  if (missing.length) {
+    throw new Error(`Custom cohort not found: ${missing.join(', ')}`);
+  }
+  const foreign = rows.filter((r) => r.projectId !== projectId);
+  if (foreign.length) {
+    throw new Error(
+      `Custom cohort does not belong to this project: ${foreign
+        .map((f) => f.name)
+        .join(', ')}`,
+    );
+  }
+}
 
 export const reportRouter = createTRPCRouter({
   list: protectedProcedure
@@ -41,7 +90,16 @@ export const reportRouter = createTRPCRouter({
         throw TRPCAccessError('You do not have access to this project');
       }
 
-      return db.report.create({
+      // Report write + reference sync must be atomic: a half-applied save would
+      // leave "used by N reports" and the delete protection inconsistent.
+      const created = await db.$transaction(async (tx) => {
+        await assertCohortsBelongToProject(
+          tx,
+          dashboard.projectId,
+          [...new Set(report.audience?.cohortIds ?? [])],
+        );
+
+        const row = await tx.report.create({
         data: {
           projectId: dashboard.projectId,
           dashboardId,
@@ -62,8 +120,20 @@ export const reportRouter = createTRPCRouter({
           metric: report.metric === 'count' ? 'sum' : report.metric,
           options: report.options,
           dateConfig: (report as any).dateConfig ?? null,
+          audience: report.audience ?? Prisma.DbNull,
         },
+        });
+
+        const ids = [...new Set(report.audience?.cohortIds ?? [])];
+        if (ids.length) {
+          await tx.customCohortReference.createMany({
+            data: ids.map((cohortId) => ({ cohortId, reportId: row.id })),
+          });
+        }
+        return row;
       });
+
+      return created;
     }),
   update: protectedProcedure
     .input(
@@ -88,7 +158,11 @@ export const reportRouter = createTRPCRouter({
         throw TRPCAccessError('You do not have access to this project');
       }
 
-      return db.report.update({
+      const updated = await db.$transaction(async (tx) => {
+        const ids = [...new Set(report.audience?.cohortIds ?? [])];
+        await assertCohortsBelongToProject(tx, dbReport.projectId, ids);
+
+        const row = await tx.report.update({
         where: {
           id: reportId,
         },
@@ -110,8 +184,27 @@ export const reportRouter = createTRPCRouter({
           metric: report.metric === 'count' ? 'sum' : report.metric,
           options: report.options,
           dateConfig: (report as any).dateConfig ?? null,
+          audience: report.audience ?? Prisma.DbNull,
         },
+        });
+
+        await tx.customCohortReference.deleteMany({
+          where: {
+            reportId,
+            ...(ids.length ? { cohortId: { notIn: ids } } : {}),
+          },
+        });
+        for (const cohortId of ids) {
+          await tx.customCohortReference.upsert({
+            where: { cohortId_reportId: { cohortId, reportId } },
+            create: { cohortId, reportId },
+            update: {},
+          });
+        }
+        return row;
       });
+
+      return updated;
     }),
   delete: protectedProcedure
     .input(

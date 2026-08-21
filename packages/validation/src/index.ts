@@ -145,6 +145,129 @@ export const zCustomEventInput = z.object({
   icon: z.string().optional(),
 });
 
+// ---------------------------------------------------------------------------
+// Custom Cohorts (audience definitions)
+// ---------------------------------------------------------------------------
+// A cohort resolves to a set of profile_ids. It is referenced by id from a
+// report's `audience` and compiled server-side into a membership predicate.
+// See custom-cohort.service.ts for the compiler.
+
+/**
+ * Date.parse() normalises impossible dates (2026-02-30 becomes March 2nd), so a
+ * round-trip comparison is the only way to reject them.
+ */
+function isRealDate(value: string): boolean {
+  const [y, m, d] = value.split('-').map(Number);
+  if (!y || !m || !d) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === m - 1 &&
+    date.getUTCDate() === d
+  );
+}
+
+export const zCustomCohortWindow = z.union([
+  z.object({
+    type: z.literal('last'),
+    amount: z.number().int().positive().max(730),
+    unit: z.enum(['day', 'week', 'month']),
+  }),
+  z.object({
+      type: z.literal('fixed'),
+      start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
+      end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
+    })
+    .refine((w) => w.start <= w.end, {
+      message: 'Window start must be on or before end',
+    })
+    .refine((w) => isRealDate(w.start) && isRealDate(w.end), {
+      message: 'Window dates must be real calendar dates',
+    }),
+  z.object({ type: z.literal('ever') }),
+]);
+
+export const zCustomCohortAggregate = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('total_events') }),
+  z.object({ kind: z.literal('distinct_days') }),
+  z.object({
+    kind: z.literal('property_sum'),
+    property: z.string().min(1),
+    coercion: z.enum(['float_or_null', 'float_or_zero']).default('float_or_null'),
+  }),
+  z.object({
+    kind: z.literal('property_average'),
+    property: z.string().min(1),
+    coercion: z.enum(['float_or_null', 'float_or_zero']).default('float_or_null'),
+  }),
+]);
+
+export const zCustomCohortCriterion = z.object({
+  id: z.string().optional(),
+  kind: z.enum(['did', 'did_not']).default('did'),
+  /** Event name, or a reference to a CustomEvent definition. */
+  event: z.union([z.string().min(1), z.object({ customEventId: z.string() })]),
+  aggregate: zCustomCohortAggregate.default({ kind: 'total_events' }),
+  operator: z.enum(['gte', 'lte', 'eq', 'between']).default('gte'),
+  value: z.number(),
+  value2: z.number().optional(),
+  window: zCustomCohortWindow,
+  /**
+   * Only meaningful for kind='did_not'. Defines the population the criterion
+   * subtracts from. 'all_identified' means a dormant user with zero events in
+   * the window DOES match "did not do X".
+   */
+  universe: z.enum(['all_identified', 'active_in_window']).default('all_identified'),
+  /**
+   * Property filters. The `name` is restricted here as defence in depth: it
+   * reaches SQL generation, and while the generator now escapes the key, a
+   * cohort definition is stored and replayed server-side so it should not be
+   * able to carry arbitrary text into a query in the first place.
+   */
+  filters: z
+    .array(
+      zChartEventFilter.extend({
+        name: z
+          .string()
+          .regex(
+            /^[a-zA-Z0-9_.\-*\[\]]+$/,
+            'Property name contains unsupported characters',
+          ),
+      }),
+    )
+    .default([]),
+});
+
+export const zCustomCohortGroup = z.object({
+  id: z.string().optional(),
+  op: z.enum(['and', 'or']).default('and'),
+  criteria: z.array(zCustomCohortCriterion).min(1).max(10),
+});
+
+export const zCustomCohortDefinition = z.object({
+  op: z.enum(['and', 'or']).default('and'),
+  groups: z.array(zCustomCohortGroup).min(1).max(10),
+});
+
+export const zCustomCohortInput = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  projectId: z.string(),
+  definition: zCustomCohortDefinition,
+});
+
+/** Report-level audience. Cohort ids are AND-combined. */
+export const zReportAudience = z.object({
+  cohortIds: z.array(z.string()).max(5).default([]),
+});
+
+export type ICustomCohortWindow = z.infer<typeof zCustomCohortWindow>;
+export type ICustomCohortAggregate = z.infer<typeof zCustomCohortAggregate>;
+export type ICustomCohortCriterion = z.infer<typeof zCustomCohortCriterion>;
+export type ICustomCohortGroup = z.infer<typeof zCustomCohortGroup>;
+export type ICustomCohortDefinition = z.infer<typeof zCustomCohortDefinition>;
+export type IReportAudience = z.infer<typeof zReportAudience>;
+
 export const zChartBreakdown = z.object({
   id: z.string().optional(),
   name: z.string(),
@@ -359,6 +482,11 @@ export const zReportInput = z.object({
   options: zReportOptions
     .optional()
     .describe('Chart-specific options (funnel, retention, sankey)'),
+  audience: zReportAudience
+    .optional()
+    .describe(
+      'Report-level audience: custom cohort ids, AND-combined, applied to the base population'
+    ),
   dateConfig: zDateConfig
     .optional()
     .describe('Custom date mode config (fixed, last, since, period_to_date)'),

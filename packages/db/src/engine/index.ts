@@ -15,6 +15,7 @@ import {
   getAggregateChartSql,
   getChartPrevStartEndDate,
 } from '../services/chart.service';
+import { resolveAudience } from '../services/custom-cohort.service';
 import {
   getOrganizationSubscriptionChartEndDate,
   getSettingsForProject,
@@ -106,6 +107,17 @@ export async function executeAggregateChart(
     normalized.endDate = endDate;
   }
 
+  // Aggregate (bar/pie) charts have their own path, so the audience must be
+  // resolved here too or a cohort silently has no effect on those chart types.
+  // Resolved AFTER the subscription clamp so a relative cohort window is
+  // evaluated as of the same instant as the chart data.
+  const aggregateAudience = await resolveAudience(
+    input.audience?.cohortIds,
+    input.projectId,
+    normalized.endDate,
+  );
+  const audiencePredicate = aggregateAudience.render(null);
+
   const { timezone } = await getSettingsForProject(normalized.projectId);
 
   // Stage 2: Fetch aggregate data for current period (event series only)
@@ -183,6 +195,7 @@ export async function executeAggregateChart(
       previous: normalized.previous,
       timezone,
       customEventComponents,
+      audiencePredicate,
     };
 
     // Execute aggregate query
@@ -343,6 +356,7 @@ export async function executeAggregateChart(
         previous: normalized.previous,
         timezone,
         customEventComponents: prevCustomEventComponents,
+        audiencePredicate,
       };
 
       const prevSql = getAggregateChartSql(queryInput);

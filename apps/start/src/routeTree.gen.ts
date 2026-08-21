@@ -75,6 +75,7 @@ import { Route as AppOrganizationIdProjectIdSettingsTabsImportsRouteImport } fro
 import { Route as AppOrganizationIdProjectIdSettingsTabsEventsRouteImport } from './routes/_app.$organizationId.$projectId.settings._tabs.events'
 import { Route as AppOrganizationIdProjectIdSettingsTabsDetailsRouteImport } from './routes/_app.$organizationId.$projectId.settings._tabs.details'
 import { Route as AppOrganizationIdProjectIdSettingsTabsCustomEventsRouteImport } from './routes/_app.$organizationId.$projectId.settings._tabs.custom-events'
+import { Route as AppOrganizationIdProjectIdSettingsTabsCustomCohortsRouteImport } from './routes/_app.$organizationId.$projectId.settings._tabs.custom-cohorts'
 import { Route as AppOrganizationIdProjectIdSettingsTabsClientsRouteImport } from './routes/_app.$organizationId.$projectId.settings._tabs.clients'
 import { Route as AppOrganizationIdProjectIdProfilesTabsPowerUsersRouteImport } from './routes/_app.$organizationId.$projectId.profiles._tabs.power-users'
 import { Route as AppOrganizationIdProjectIdProfilesTabsIdentifiedRouteImport } from './routes/_app.$organizationId.$projectId.profiles._tabs.identified'
@@ -514,6 +515,12 @@ const AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute =
     path: '/custom-events',
     getParentRoute: () => AppOrganizationIdProjectIdSettingsTabsRoute,
   } as any)
+const AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute =
+  AppOrganizationIdProjectIdSettingsTabsCustomCohortsRouteImport.update({
+    id: '/custom-cohorts',
+    path: '/custom-cohorts',
+    getParentRoute: () => AppOrganizationIdProjectIdSettingsTabsRoute,
+  } as any)
 const AppOrganizationIdProjectIdSettingsTabsClientsRoute =
   AppOrganizationIdProjectIdSettingsTabsClientsRouteImport.update({
     id: '/clients',
@@ -653,6 +660,7 @@ export interface FileRoutesByFullPath {
   '/$organizationId/$projectId/profiles/identified': typeof AppOrganizationIdProjectIdProfilesTabsIdentifiedRoute
   '/$organizationId/$projectId/profiles/power-users': typeof AppOrganizationIdProjectIdProfilesTabsPowerUsersRoute
   '/$organizationId/$projectId/settings/clients': typeof AppOrganizationIdProjectIdSettingsTabsClientsRoute
+  '/$organizationId/$projectId/settings/custom-cohorts': typeof AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute
   '/$organizationId/$projectId/settings/custom-events': typeof AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute
   '/$organizationId/$projectId/settings/details': typeof AppOrganizationIdProjectIdSettingsTabsDetailsRoute
   '/$organizationId/$projectId/settings/events': typeof AppOrganizationIdProjectIdSettingsTabsEventsRoute
@@ -723,6 +731,7 @@ export interface FileRoutesByTo {
   '/$organizationId/$projectId/profiles/identified': typeof AppOrganizationIdProjectIdProfilesTabsIdentifiedRoute
   '/$organizationId/$projectId/profiles/power-users': typeof AppOrganizationIdProjectIdProfilesTabsPowerUsersRoute
   '/$organizationId/$projectId/settings/clients': typeof AppOrganizationIdProjectIdSettingsTabsClientsRoute
+  '/$organizationId/$projectId/settings/custom-cohorts': typeof AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute
   '/$organizationId/$projectId/settings/custom-events': typeof AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute
   '/$organizationId/$projectId/settings/details': typeof AppOrganizationIdProjectIdSettingsTabsDetailsRoute
   '/$organizationId/$projectId/settings/events': typeof AppOrganizationIdProjectIdSettingsTabsEventsRoute
@@ -806,6 +815,7 @@ export interface FileRoutesById {
   '/_app/$organizationId/$projectId/profiles/_tabs/identified': typeof AppOrganizationIdProjectIdProfilesTabsIdentifiedRoute
   '/_app/$organizationId/$projectId/profiles/_tabs/power-users': typeof AppOrganizationIdProjectIdProfilesTabsPowerUsersRoute
   '/_app/$organizationId/$projectId/settings/_tabs/clients': typeof AppOrganizationIdProjectIdSettingsTabsClientsRoute
+  '/_app/$organizationId/$projectId/settings/_tabs/custom-cohorts': typeof AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute
   '/_app/$organizationId/$projectId/settings/_tabs/custom-events': typeof AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute
   '/_app/$organizationId/$projectId/settings/_tabs/details': typeof AppOrganizationIdProjectIdSettingsTabsDetailsRoute
   '/_app/$organizationId/$projectId/settings/_tabs/events': typeof AppOrganizationIdProjectIdSettingsTabsEventsRoute
@@ -883,6 +893,7 @@ export interface FileRouteTypes {
     | '/$organizationId/$projectId/profiles/identified'
     | '/$organizationId/$projectId/profiles/power-users'
     | '/$organizationId/$projectId/settings/clients'
+    | '/$organizationId/$projectId/settings/custom-cohorts'
     | '/$organizationId/$projectId/settings/custom-events'
     | '/$organizationId/$projectId/settings/details'
     | '/$organizationId/$projectId/settings/events'
@@ -953,6 +964,7 @@ export interface FileRouteTypes {
     | '/$organizationId/$projectId/profiles/identified'
     | '/$organizationId/$projectId/profiles/power-users'
     | '/$organizationId/$projectId/settings/clients'
+    | '/$organizationId/$projectId/settings/custom-cohorts'
     | '/$organizationId/$projectId/settings/custom-events'
     | '/$organizationId/$projectId/settings/details'
     | '/$organizationId/$projectId/settings/events'
@@ -1035,6 +1047,7 @@ export interface FileRouteTypes {
     | '/_app/$organizationId/$projectId/profiles/_tabs/identified'
     | '/_app/$organizationId/$projectId/profiles/_tabs/power-users'
     | '/_app/$organizationId/$projectId/settings/_tabs/clients'
+    | '/_app/$organizationId/$projectId/settings/_tabs/custom-cohorts'
     | '/_app/$organizationId/$projectId/settings/_tabs/custom-events'
     | '/_app/$organizationId/$projectId/settings/_tabs/details'
     | '/_app/$organizationId/$projectId/settings/_tabs/events'
@@ -1574,6 +1587,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOrganizationIdProjectIdSettingsTabsCustomEventsRouteImport
       parentRoute: typeof AppOrganizationIdProjectIdSettingsTabsRoute
     }
+    '/_app/$organizationId/$projectId/settings/_tabs/custom-cohorts': {
+      id: '/_app/$organizationId/$projectId/settings/_tabs/custom-cohorts'
+      path: '/custom-cohorts'
+      fullPath: '/$organizationId/$projectId/settings/custom-cohorts'
+      preLoaderRoute: typeof AppOrganizationIdProjectIdSettingsTabsCustomCohortsRouteImport
+      parentRoute: typeof AppOrganizationIdProjectIdSettingsTabsRoute
+    }
     '/_app/$organizationId/$projectId/settings/_tabs/clients': {
       id: '/_app/$organizationId/$projectId/settings/_tabs/clients'
       path: '/clients'
@@ -1823,6 +1843,7 @@ const AppOrganizationIdProjectIdProfilesRouteWithChildren =
 
 interface AppOrganizationIdProjectIdSettingsTabsRouteChildren {
   AppOrganizationIdProjectIdSettingsTabsClientsRoute: typeof AppOrganizationIdProjectIdSettingsTabsClientsRoute
+  AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute: typeof AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute
   AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute: typeof AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute
   AppOrganizationIdProjectIdSettingsTabsDetailsRoute: typeof AppOrganizationIdProjectIdSettingsTabsDetailsRoute
   AppOrganizationIdProjectIdSettingsTabsEventsRoute: typeof AppOrganizationIdProjectIdSettingsTabsEventsRoute
@@ -1836,6 +1857,8 @@ const AppOrganizationIdProjectIdSettingsTabsRouteChildren: AppOrganizationIdProj
   {
     AppOrganizationIdProjectIdSettingsTabsClientsRoute:
       AppOrganizationIdProjectIdSettingsTabsClientsRoute,
+    AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute:
+      AppOrganizationIdProjectIdSettingsTabsCustomCohortsRoute,
     AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute:
       AppOrganizationIdProjectIdSettingsTabsCustomEventsRoute,
     AppOrganizationIdProjectIdSettingsTabsDetailsRoute:

@@ -1,6 +1,7 @@
 import { authRouter } from './routers/auth';
 import { chartRouter } from './routers/chart';
 import { chatRouter } from './routers/chat';
+import { customCohortRouter } from './routers/custom-cohort';
 import { customEventRouter } from './routers/custom-event';
 import { clientRouter } from './routers/client';
 import { dashboardRouter } from './routers/dashboard';
@@ -32,6 +33,7 @@ import { createTRPCRouter } from './trpc';
 export const appRouter = createTRPCRouter({
   chart: chartRouter,
   customEvent: customEventRouter,
+  customCohort: customCohortRouter,
   report: reportRouter,
   dashboard: dashboardRouter,
   organization: organizationRouter,

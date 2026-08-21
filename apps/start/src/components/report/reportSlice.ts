@@ -55,6 +55,7 @@ const initialState: InitialState = {
   limit: 500,
   options: { type: 'generic', displayMode: 'both' },
   dateConfig: undefined,
+  audience: undefined,
 };
 
 export const reportSlice = createSlice({
@@ -241,6 +242,12 @@ export const reportSlice = createSlice({
     },
 
     // Interval
+    changeAudience: (state, action: PayloadAction<string[]>) => {
+      state.audience = action.payload.length
+        ? { cohortIds: action.payload }
+        : undefined;
+      state.dirty = true;
+    },
     changeInterval: (state, action: PayloadAction<IInterval>) => {
       state.dirty = true;
       state.interval = action.payload;
@@ -677,6 +684,7 @@ export const reportSlice = createSlice({
 export const {
   reset,
   ready,
+  changeAudience,
   setReport,
   hydrateDraftReport,
   setName,

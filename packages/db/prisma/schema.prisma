@@ -198,6 +198,7 @@ model Project {
   shareWidgets    ShareWidget[]
   meta            EventMeta[]
   customEvents    CustomEvent[]
+  customCohorts   CustomCohort[]
   references      Reference[]
   access          ProjectAccess[]
 
@@ -345,10 +346,14 @@ model Report {
   /// [IDateConfig]
   dateConfig   Json?
 
+  /// Report-level audience: CustomCohort ids, AND-combined. See CustomCohortReference.
+  audience    Json?
+
   dashboardId String
   dashboard   Dashboard     @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
   layout      ReportLayout?
   share       ShareReport?
+  cohortRefs  CustomCohortReference[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -473,6 +478,48 @@ model CustomEvent {
 
   @@unique([name, projectId])
   @@map("custom_events")
+}
+
+model CustomCohort {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String?
+  projectId   String
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// [ICustomCohortDefinition]
+  definition  Json
+  /// Bumped on every definition edit. Part of the snapshot cache key.
+  version     Int     @default(1)
+  /// 'unclassified' | 'live' | 'snapshot' | 'materialized'
+  evaluation  String  @default("unclassified")
+
+  lastCount       Int?
+  lastEvaluatedAt DateTime?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  references CustomCohortReference[]
+
+  @@unique([name, projectId])
+  @@map("custom_cohorts")
+}
+
+/// Explicit reference model so "used by N reports" is a real join, not a JSON scan,
+/// and so deleting a referenced cohort is blocked by the database (onDelete: Restrict).
+model CustomCohortReference {
+  id       String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cohortId String       @db.Uuid
+  cohort   CustomCohort @relation(fields: [cohortId], references: [id], onDelete: Restrict)
+  reportId String       @db.Uuid
+  report   Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([cohortId, reportId])
+  @@index([reportId])
+  @@map("custom_cohort_references")
 }
 
 model Reference {
