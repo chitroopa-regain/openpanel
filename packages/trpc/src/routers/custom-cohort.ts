@@ -5,6 +5,7 @@ import {
   compileDefinition,
   db,
   getSettingsForProject,
+  invalidateAudienceEpoch,
   loadComponentsById,
 } from '@openpanel/db';
 import {
@@ -165,7 +166,7 @@ export const customCohortRouter = createTRPCRouter({
     .input(zCustomCohortInput)
     .mutation(async ({ input, ctx }) => {
       await assertAccess(ctx.session.userId, input.projectId);
-      return db.customCohort.create({
+      const created = await db.customCohort.create({
         data: {
           name: input.name,
           description: input.description,
@@ -174,6 +175,8 @@ export const customCohortRouter = createTRPCRouter({
           createdBy: ctx.session.userId,
         },
       });
+      invalidateAudienceEpoch();
+      return created;
     }),
 
   update: protectedProcedure
@@ -186,7 +189,7 @@ export const customCohortRouter = createTRPCRouter({
 
       // version is part of every cache key — a definition edit MUST bump it or
       // reports keep serving membership computed from the old definition.
-      return db.customCohort.update({
+      const updated = await db.customCohort.update({
         where: { id: input.id },
         data: {
           name: input.name,
@@ -195,6 +198,8 @@ export const customCohortRouter = createTRPCRouter({
           version: { increment: 1 },
         },
       });
+      invalidateAudienceEpoch();
+      return updated;
     }),
 
   delete: protectedProcedure
@@ -215,6 +220,8 @@ export const customCohortRouter = createTRPCRouter({
         );
       }
 
-      return db.customCohort.delete({ where: { id } });
+      const deleted = await db.customCohort.delete({ where: { id } });
+      invalidateAudienceEpoch();
+      return deleted;
     }),
 });

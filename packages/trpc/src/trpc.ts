@@ -1,5 +1,6 @@
 import { COOKIE_OPTIONS, type SessionValidationResult } from '@openpanel/auth';
 import { runWithAlsSession } from '@openpanel/db';
+import { getAudienceEpoch } from '@openpanel/db';
 import { getRedisCache } from '@openpanel/redis';
 import type { ISetCookie } from '@openpanel/validation';
 import { initTRPC, TRPCError } from '@trpc/server';
@@ -304,8 +305,24 @@ export const cacheMiddleware = (
     // caps concurrency, not frequency). They always get the shared cached value.
     const bypass = rawInput?.bypassCache === true && !rawInput?.shareId;
 
+    // Audience epoch: a token that changes whenever any custom cohort or custom
+    // event definition changes. Mixed into EVERY cached report key, not only
+    // keys whose input mentions an audience — a saved-report request carries
+    // just `{id: reportId}` and loads its definition server-side, so an
+    // audience-conditional key would be bypassed exactly where it matters.
+    //
+    // Fail closed: if the token cannot be read we skip the cache entirely
+    // rather than build a key without it, since a key missing the epoch would
+    // collide with entries computed under a different cohort definition.
+    let epoch: string;
+    try {
+      epoch = await getAudienceEpoch();
+    } catch {
+      return next();
+    }
+
     // Canonical key: same logical query → same entry across every view.
-    let key = `trpc:${path}:`;
+    let key = `trpc:${epoch}:${path}:`;
     if (rawInput) {
       key += canonicalKey(rawInput).replace(/"/g, "'");
     }

@@ -26,6 +26,7 @@ import {
   type IServiceProfile,
   onlyReportEvents,
   qualifyFunnelCondition,
+  resolveAudience,
   resolveSeriesForFunnel,
   sankeyService,
   TABLE_NAMES,
@@ -41,6 +42,7 @@ import {
   zChartSeries,
   zCriteria,
   zDateConfig,
+  zReportAudience,
   zRange,
   zReportInput,
   zRetentionBreakdownSort,
@@ -1059,10 +1061,12 @@ export const chartRouter = createTRPCRouter({
         shareId: z.string().optional(),
         id: z.string().optional(),
         bypassCache: z.boolean().optional(),
+        audience: zReportAudience.optional(),
       })
     )
     .query(async ({ input, ctx }) => {
       const projectId = ctx.report?.projectId ?? input.projectId;
+
       let firstEvent = input.firstEvent;
       let secondEvent = input.secondEvent;
       let firstEventFilters: IChartEventFilter[] = input.firstEventFilters;
@@ -1087,6 +1091,29 @@ export const chartRouter = createTRPCRouter({
       const endDate = ctx.report
         ? (input.endDate ?? ctx.report.endDate)
         : input.endDate;
+
+      // Report-level audience for retention. Applied to the INITIAL (day-0)
+      // population only: a cohort is a STATIC set of profile ids, so applying it
+      // to the return leg as well is identical to applying it to the first leg,
+      // while applying it ONLY to the return leg would filter the numerator
+      // against an unfiltered denominator — a ratio whose halves describe
+      // different populations.
+      //
+      // Resolved AFTER the effective dates above, and from `endDate` rather
+      // than `input.endDate`: a saved-report request carries only {id}, so
+      // reading input.endDate (or falling back to wall-clock now) would
+      // evaluate membership as of a different instant than the report's data
+      // and silently shift the counts.
+      const retentionAudience = await resolveAudience(
+        (ctx.report as { audience?: { cohortIds?: string[] } } | undefined)
+          ?.audience?.cohortIds ?? input.audience?.cohortIds,
+        projectId,
+        endDate ?? formatClickhouseDate(new Date()),
+      );
+      const retentionAudiencePredicate = retentionAudience.render('e');
+      const retentionAudienceClause = retentionAudiencePredicate
+        ? `AND ${retentionAudiencePredicate}`
+        : '';
       const interval = ctx.report
         ? (input.interval ?? ctx.report.interval)
         : input.interval;
@@ -1305,12 +1332,24 @@ export const chartRouter = createTRPCRouter({
       const hasEventBreakdown = breakdowns.some(
         (breakdown) => !breakdown.name.startsWith('profile.')
       );
+      // An audience forces BOTH legs onto `events`.
+      //
+      // Retention is retained_users / active_users: the denominator comes from
+      // the first leg and the NUMERATOR from the second. cohort_events_mv's
+      // coverage can lag `events` badly (measured: zero MV rows for a month
+      // where events held 2.8M), so drawing the denominator from complete
+      // `events` while the numerator came from the MV would understate
+      // retention silently, by whatever the coverage gap happens to be.
+      // Both legs must come from the same table.
+      const hasAudience = Boolean(retentionAudiencePredicate);
       const useEventsFirst =
+        hasAudience ||
         hasEventBreakdown ||
         firstEventFirstTimeFilter ||
         needsEventsTable(firstEventFilters) ||
         needsEventsTable(firstComponentFilters);
       const useEventsSecond =
+        hasAudience ||
         secondEventFirstTimeFilter ||
         isRetentionPropertyMeasure(retentionMetric) ||
         needsEventsTable(secondEventFilters) ||
@@ -1550,6 +1589,7 @@ export const chartRouter = createTRPCRouter({
             AND e.created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
             ${firstIdentifiedFilter}
             ${firstFilterClause}
+            ${retentionAudienceClause}
           ${cohortUsersGroupBy}
         ),
         ${topBreakdownsCtes}

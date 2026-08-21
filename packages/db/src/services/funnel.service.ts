@@ -11,6 +11,7 @@ import { ch, chQuery } from '../clickhouse/client';
 import { TABLE_NAMES } from '../clickhouse/client';
 import { clix } from '../clickhouse/query-builder';
 import { db } from '../prisma-client';
+import { resolveAudience } from './custom-cohort.service';
 import { createSqlBuilder } from '../sql-builder';
 import {
   getCustomEventWhereClause,
@@ -298,6 +299,7 @@ export class FunnelService {
     projectId: string;
     traitDescriptors: Map<string, TraitBreakdown>;
     startDate: string;
+    hasAudience?: boolean;
   }): Promise<boolean> {
     // Global kill switch (no code change needed to revert everywhere).
     if (
@@ -306,6 +308,14 @@ export class FunnelService {
     ) {
       return false;
     }
+
+    // A cohort audience compiles to a SESSION-eligibility semi-join, and the MV
+    // (event_profile_firsts_local) has no session_id at all, so the predicate
+    // cannot be expressed there. Filtering the MV on profile_id instead would
+    // be exactly the row-filter semantics the session semi-join exists to
+    // avoid, and would mix two sources whose coverage drifts independently —
+    // the failure already measured on cohort_events_mv. Take the raw path.
+    if (params.hasAudience) return false;
 
     // MV is per profile_id — no session mode.
     if (params.groupBy !== 'profile_id') return false;
@@ -532,6 +542,7 @@ export class FunnelService {
     additionalGroupBy = [],
     traitDescriptors = new Map(),
     expectProfilesFinalJoin = false,
+    audiencePredicate = null,
   }: {
     projectId: string;
     startDate: string;
@@ -557,6 +568,11 @@ export class FunnelService {
      * `traitDescriptors.size > 0`.
      */
     expectProfilesFinalJoin?: boolean;
+    /**
+     * Server-compiled cohort membership predicate (`profile_id IN (...)`).
+     * Applied as SESSION ELIGIBILITY, never as a row filter — see below.
+     */
+    audiencePredicate?: string | null;
   }) {
     // Build first-time-ever CTEs and JOIN aliases for steps that have firstTimeFilter
     const firstTimeCteAliases: string[] = [];
@@ -657,6 +673,44 @@ export class FunnelService {
             ...additionalSelects,
           ];
 
+    // Cohort audience — attachment is MODE-DEPENDENT, because the two funnel
+    // modes compute windowFunnel over different units:
+    //
+    //   session mode  — windowFunnel per session_id, profile extracted via
+    //                   argMax. A session that starts anonymous and becomes
+    //                   identified mid-way must still count, so filtering base
+    //                   rows by profile_id would delete those pre-login rows.
+    //                   Correct predicate: eligible SESSIONS (semi-join).
+    //
+    //   profile mode  — windowFunnel per profile_id directly, already filtered
+    //                   to identified users (profile_id != device_id). Here a
+    //                   session semi-join would be WRONG: it admits every row
+    //                   of an eligible session, so any OTHER profile sharing
+    //                   that session gets its own funnel group and is counted
+    //                   despite not being a cohort member. Correct predicate:
+    //                   the profile filter itself.
+    //
+    // Session-mode eligibility must span the funnel's EXPANDED scan
+    // (endDate + funnelWindow), not endDate: step 1 is anchored to
+    // [start, end] but steps 2..N may land up to funnelWindow later, and a user
+    // who identifies in that tail would otherwise be dropped. Derived from the
+    // same funnelWindowSeconds as the scan so the two cannot drift.
+    //
+    // session_id != '' guards against one cohort member with an empty session
+    // id making every other empty-session event in the project eligible.
+    const eligibilityClause = !audiencePredicate
+      ? null
+      : groupBy === 'session_id'
+        ? `${col('session_id')} IN (
+          SELECT DISTINCT session_id FROM ${TABLE_NAMES.events}
+          WHERE project_id = ${escapedProject}
+            AND created_at >= toDateTime(${escapedStart})
+            AND created_at <= addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})
+            AND session_id != ''
+            AND ${audiencePredicate}
+        )`
+        : qualify(audiencePredicate);
+
     const query = clix(this.client, timezone)
       .select(selects)
       .from(TABLE_NAMES.events, false)
@@ -665,6 +719,7 @@ export class FunnelService {
         `${col('created_at')} >= toDateTime(${escapedStart}) AND ${col('created_at')} <= addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})`
       )
       .where('name', 'IN', allEventNames)
+      .rawWhere(eligibilityClause ?? '1 = 1')
       // When trait CTEs are joined, group by the qualified column (the select
       // aliases it back to the bare name, so downstream refs still work).
       .groupBy([
@@ -844,10 +899,20 @@ export class FunnelService {
     breakdowns = [],
     limit,
     timezone = 'UTC',
+    audience,
   }: IReportInput & { timezone: string; events?: IChartEvent[] }) {
     if (!startDate || !endDate) {
       throw new Error('startDate and endDate are required');
     }
+
+    // Resolve the report-level audience once. asOf is the funnel's end date, so
+    // a relative cohort window is evaluated as of the same instant as the data.
+    const resolvedAudience = await resolveAudience(
+      audience?.cohortIds,
+      projectId,
+      endDate,
+    );
+    const audiencePredicate = resolvedAudience.render(null);
 
     const funnelOptions = options?.type === 'funnel' ? options : undefined;
     const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
@@ -989,6 +1054,7 @@ export class FunnelService {
     // MV when the funnel is "simple" (see isMvEligibleFunnel). Same
     // windowFunnel semantics, ~90× faster on install→engagement funnels.
     const useMv = await this.isMvEligibleFunnel({
+      hasAudience: Boolean(audiencePredicate),
       eventSeries,
       breakdowns,
       groupBy: group,
@@ -1032,6 +1098,7 @@ export class FunnelService {
         // buildFunnelCte so its internal windowFunnel step conditions
         // pre-qualify their event columns with `events.`.
         expectProfilesFinalJoin: anyFilterOnProfile || anyBreakdownOnProfile,
+        audiencePredicate,
       });
       funnelCte = built.query;
       firstTimeCtes = built.firstTimeCtes;

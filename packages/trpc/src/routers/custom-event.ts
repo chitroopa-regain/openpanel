@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { db } from '@openpanel/db';
+import { db, invalidateAudienceEpoch } from '@openpanel/db';
 import { zCustomEventInput } from '@openpanel/validation';
 
 import { getProjectAccess } from '../access';
@@ -42,7 +42,7 @@ export const customEventRouter = createTRPCRouter({
         throw TRPCAccessError('You do not have access to this project');
       }
 
-      return db.customEvent.create({
+      const created = await db.customEvent.create({
         data: {
           name: input.name,
           projectId: input.projectId,
@@ -51,6 +51,10 @@ export const customEventRouter = createTRPCRouter({
           icon: input.icon,
         },
       });
+      // A cohort criterion may reference this custom event, so its definition
+      // changing changes cohort membership.
+      invalidateAudienceEpoch();
+      return created;
     }),
 
   update: protectedProcedure
@@ -73,7 +77,7 @@ export const customEventRouter = createTRPCRouter({
         throw TRPCAccessError('You do not have access to this project');
       }
 
-      return db.customEvent.update({
+      const updated = await db.customEvent.update({
         where: { id: input.id },
         data: {
           name: input.name,
@@ -82,6 +86,8 @@ export const customEventRouter = createTRPCRouter({
           icon: input.icon,
         },
       });
+      invalidateAudienceEpoch();
+      return updated;
     }),
 
   delete: protectedProcedure
@@ -100,8 +106,10 @@ export const customEventRouter = createTRPCRouter({
         throw TRPCAccessError('You do not have access to this project');
       }
 
-      return db.customEvent.delete({
+      const deleted = await db.customEvent.delete({
         where: { id },
       });
+      invalidateAudienceEpoch();
+      return deleted;
     }),
 });

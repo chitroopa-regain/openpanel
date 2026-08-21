@@ -161,6 +161,9 @@ function ReportSqlContent({ active }: { active: boolean }) {
         retentionUnit: retentionOptions?.retentionUnit,
         breakdowns: report.breakdowns,
         interval: report.interval,
+        // Forward the audience — this call builds its own input rather than
+        // passing the whole report, so omitting it silently drops the cohort.
+        audience: report.audience,
         id: 'id' in report ? report.id : undefined,
       },
       {

@@ -104,6 +104,10 @@ export function ReportRetentionChart() {
     breakdownSort,
     breakdowns: report.breakdowns,
     interval: report.interval,
+    // Retention builds its own input for chart.cohort rather than passing the
+    // whole report, so the audience has to be forwarded explicitly. Omitting it
+    // made the picker accept a cohort and change nothing.
+    audience: report.audience,
     shareId,
     id: 'id' in report ? report.id : undefined,
   };

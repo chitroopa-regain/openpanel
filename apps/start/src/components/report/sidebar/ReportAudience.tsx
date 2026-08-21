@@ -17,17 +17,49 @@ import { changeAudience } from '../reportSlice';
  * Report-level audience. A cohort is applied ONCE to the base population of
  * every series, not per series — one audience for the whole report.
  */
+/**
+ * Chart types whose query path applies the audience. Anything else would accept
+ * a cohort and silently ignore it — the exact failure this feature exists to
+ * prevent — so the picker is disabled with a reason instead.
+ */
+export const AUDIENCE_SUPPORTED_CHART_TYPES = new Set([
+  'linear',
+  'bar',
+  'area',
+  'pie',
+  'metric',
+  'table',
+  'map',
+  'histogram',
+  'funnel',
+  'funnel_metric',
+  'retention',
+]);
+
 export function ReportAudience() {
   const { projectId } = useAppParams();
   const trpc = useTRPC();
   const dispatch = useDispatch();
   const audience = useSelector((state) => state.report.audience);
+  const chartType = useSelector((state) => state.report.chartType);
+  const supported = AUDIENCE_SUPPORTED_CHART_TYPES.has(chartType);
 
   const cohortsQuery = useQuery(
     trpc.customCohort.list.queryOptions({ projectId })
   );
   const cohorts = cohortsQuery.data ?? [];
   const selected = audience?.cohortIds ?? [];
+
+  if (!supported) {
+    return (
+      <div>
+        <h3 className="mb-2 font-medium">Audience</h3>
+        <div className="rounded-md border border-dashed p-3 text-muted-foreground text-sm">
+          Audiences aren't supported on this chart type yet.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
