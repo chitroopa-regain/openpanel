@@ -1550,6 +1550,60 @@ describe('FunnelService.isMvEligibleFunnel', () => {
     ).toBe(true);
   });
 
+  it('accepts step with profile-trait filter (profile.properties.country)', async () => {
+    // Trait filters compile to `profile_id IN (SELECT ... profile_traits)`,
+    // which only needs profile_id — available in the MV grain.
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          {
+            name: 'Application Installed',
+            filters: [
+              {
+                name: 'profile.properties.country',
+                value: ['US'],
+                operator: 'is',
+              },
+            ],
+            segment: 'event',
+          },
+          simpleFunnel.eventSeries[1],
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it('accepts custom-event component with profile-trait filter', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          simpleFunnel.eventSeries[0],
+          {
+            name: 'setup',
+            filters: [],
+            segment: 'event',
+            customEventComponents: [
+              {
+                eventName: 'OB: Setup Completed',
+                filters: [
+                  {
+                    name: 'profile.properties.country',
+                    value: ['US'],
+                    operator: 'is',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
   it('accepts step with whitelisted top-level filter (country)', async () => {
     const s = new FunnelService({} as any);
     expect(
@@ -1822,13 +1876,47 @@ describe('FunnelService.getFunnelTimingStatsFromMv (MV timing path)', () => {
     expect(sql).toContain('min(ts) as step_1_ts');
     expect(sql).toContain("ts >= toDateTime64('2026-06-15 00:00:00', 3)");
     expect(sql).toContain("ts <= toDateTime64('2026-07-16 00:00:00', 3)");
-    // step_2 chained + funnel window gate
-    expect(sql).toContain('step_2 AS');
-    expect(sql).toContain('e.ts > prev.step_1_ts');
+    // Single pass: events pre-filtered to step-1 entrants, folded per
+    // profile into a sorted (ts, mask) array gated by the funnel window.
+    expect(sql).toContain('WHERE profile_id IN (SELECT profile_id FROM step_1)');
+    expect(sql).toContain('e.ts > s1.step_1_ts');
     expect(sql).toContain("dateDiff('second', s1.step_1_ts, e.ts) <= 86400");
+    expect(sql).toContain("toUInt64(name = 'Counter Bubble: Shown') * 2 AS mask");
+    // Chain walk: step 2 = first event with bit 1 set after step_1_ts
+    expect(sql).toContain(
+      'arrayFirst(x -> bitAnd(x.2, 2) != 0 AND x.1 > step_1_ts, arr).1 AS step_2_ts'
+    );
+    // No JOIN ladder — the MV slice must be read exactly once.
+    expect(sql).not.toContain('step_2 AS');
+    expect(sql.match(/FROM event_profile_firsts_local/g)?.length).toBe(1);
     // Median select
     expect(sql).toContain('quantileTDigestIf(0.5)');
     expect(sql).toContain('step_1_median');
+  });
+
+  it('short-circuits later steps and masks each step with its own bit', async () => {
+    const s = new FunnelService({} as any);
+    await (s as any).getFunnelTimingStatsFromMv({
+      ...timingInput,
+      stepConditions: [
+        "name = 'Application Installed'",
+        "name = 'A'",
+        "(name = 'B' OR name = 'C')",
+        "name = 'D'",
+      ],
+    });
+    const sql = normalizeSql(String(mocks.chQuery.mock.calls[0]?.[0] ?? ''));
+    expect(sql).toContain(
+      "toUInt64(name = 'A') * 2 + toUInt64((name = 'B' OR name = 'C')) * 4 + toUInt64(name = 'D') * 8 AS mask"
+    );
+    expect(sql).toContain(
+      'if(step_2_ts = toDateTime64(0, 3), toDateTime64(0, 3), arrayFirst(x -> bitAnd(x.2, 4) != 0 AND x.1 > step_2_ts, arr).1) AS step_3_ts'
+    );
+    expect(sql).toContain(
+      'if(step_3_ts = toDateTime64(0, 3), toDateTime64(0, 3), arrayFirst(x -> bitAnd(x.2, 8) != 0 AND x.1 > step_3_ts, arr).1) AS step_4_ts'
+    );
+    expect(sql).toContain('step_3_median');
+    expect(sql).not.toContain('step_4_median');
   });
 
   it('rewrites created_at refs in step conditions to ts', async () => {

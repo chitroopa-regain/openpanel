@@ -328,16 +328,25 @@ export class FunnelService {
     // scratchpad/mv_baseline.md — this whitelist covers ~66% of brainpal +
     // 79% of regain funnels while keeping MV row growth under ~1.5×.
     const MV_ALLOWED_COLUMNS = new Set(['app_version', 'country']);
+    // Profile-trait filters (profile.properties.<key>) compile to
+    // `profile_id IN (SELECT profile_id FROM profile_traits ...)` (see
+    // traitSubquery) — a semi-join keyed only on profile_id, which the
+    // MV grain carries. They never reference event columns, so they pass
+    // through toMvCondition untouched. Without this, any step-1 filter on
+    // e.g. profile.properties.country forced the raw path, whose chained
+    // timing JOINs take 90-180 s (and OOM) on regain-app.
+    const isMvSupportedFilter = (f: { name: string }) =>
+      MV_ALLOWED_COLUMNS.has(f.name) ||
+      getTraitBreakdownDescriptor(f.name) !== null;
 
     for (const step of params.eventSeries) {
       if (step.firstTimeFilter) return false;
       const stepFilters = step.filters ?? [];
-      if (stepFilters.some((f) => !MV_ALLOWED_COLUMNS.has(f.name))) return false;
+      if (stepFilters.some((f) => !isMvSupportedFilter(f))) return false;
       const componentFilters = (step.customEventComponents ?? []).flatMap(
         (c) => c.filters ?? [],
       );
-      if (componentFilters.some((f) => !MV_ALLOWED_COLUMNS.has(f.name)))
-        return false;
+      if (componentFilters.some((f) => !isMvSupportedFilter(f))) return false;
     }
 
     // Breakdown on any column outside the whitelist → raw. Trait
@@ -1604,18 +1613,26 @@ export class FunnelService {
   }
 
   /**
-   * MV-backed drop-in for getFunnelTimingStats. Same chained-CTE shape,
-   * but sources events from `event_profile_firsts_local` via an mv_events
-   * CTE that unpacks each row's (min, max) identified timestamps via
-   * arrayJoin. Only callable when isMvEligibleFunnel() has already
-   * accepted the funnel (guarantees: profile_id grouping, no breakdowns,
-   * no traits, filters only on whitelisted top-level cols).
+   * MV-backed drop-in for getFunnelTimingStats, sourced from
+   * `event_profile_firsts_local` via an mv_events CTE that unpacks each
+   * row's (min, max) identified timestamps via arrayJoin. Only callable
+   * when isMvEligibleFunnel() has already accepted the funnel
+   * (guarantees: profile_id grouping, no breakdowns, filters only on
+   * whitelisted top-level cols or profile-trait semi-joins).
    *
-   * The raw path frequently hits `MEMORY_LIMIT_EXCEEDED` on the JOIN
-   * chain for large date ranges (see scratchpad/timing_baseline.md —
-   * 11 of 132 timing queries failed in a 6h window, each eating ~29 s
-   * of wall-clock before erroring). This path scans ~200 M pre-aggregated
-   * rows instead of billions of raw events, so those failures go away.
+   * Shape: SINGLE PASS, not the chained step_N JOIN ladder the raw path
+   * uses. The ladder put `mv_events` on the build side of N-1 hash joins,
+   * so ClickHouse re-materialised the whole (project, names, range) slice
+   * once per step: on regain-app a 7-day, 6-step funnel read 105 M rows
+   * and took 81 s. Here the slice is read once, pre-filtered to step-1
+   * entrants, and each profile's events are folded into a sorted
+   * (ts, stepMask) array; the strict step chain (step k must land after
+   * step k-1 and within funnelWindow of step 1) is then walked with
+   * arrayFirst. Same query on the same data: 1.5 s, identical medians.
+   *
+   * stepMask bit i (1 << i) is set when the event satisfies step i+1's
+   * condition, so one event can satisfy several steps (custom events
+   * whose components overlap) exactly as the ladder allowed.
    */
   private async getFunnelTimingStatsFromMv({
     projectId,
@@ -1643,6 +1660,7 @@ export class FunnelService {
     const escapedProject = sqlstring.escape(projectId);
     const escapedStart = sqlstring.escape(startDate);
     const escapedEnd = sqlstring.escape(endDate);
+    const ZERO_TS = 'toDateTime64(0, 3)';
 
     // Rewrite step-condition column refs from `created_at` (raw column)
     // to `ts` (arrayJoin output). All other refs (name, profile_id,
@@ -1651,11 +1669,8 @@ export class FunnelService {
     const toMvCondition = (cond: string) =>
       cond.replace(/\bcreated_at\b/g, 'ts');
 
-    const ctes: string[] = [];
-
     // Base CTE: unpack (min, max) as ts stream — same as buildFunnelCteFromMv.
-    // Reused across all step_N CTEs (CH materializes CTE once per WITH).
-    ctes.push(`mv_events AS (
+    const mvEventsCte = `mv_events AS (
       SELECT project_id, name, profile_id, app_version, country,
         arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
       FROM ${TABLE_NAMES.event_profile_firsts}
@@ -1663,55 +1678,77 @@ export class FunnelService {
         AND name IN (${nameList})
         AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), 1)
         AND min_created_at_identified > toDateTime64('1970-01-02', 3)
-    )`);
+    )`;
 
     // Step 1: anchored to [startDate, endDate].
-    ctes.push(`step_1 AS (
+    const step1Cte = `step_1 AS (
       SELECT profile_id, min(ts) as step_1_ts
       FROM mv_events
       WHERE ts >= toDateTime64(${escapedStart}, 3)
         AND ts <= toDateTime64(${escapedEnd}, 3)
         AND (${toMvCondition(stepConditions[0]!)})
       GROUP BY profile_id
-    )`);
+    )`;
 
-    // Steps 2..N: chain forward, gated by ts > prev.step_N_ts AND
-    // funnelWindow from step_1_ts.
+    // Steps 2..N as a bitmask per event. Bit i ↔ step i+1.
+    const maskExpr = stepConditions
+      .slice(1)
+      .map((cond, idx) => `toUInt64(${toMvCondition(cond)}) * ${1 << (idx + 1)}`)
+      .join(' + ');
+
+    // Only step-1 entrants' events are folded; drop events that cannot
+    // participate (no step bit, at/before step 1, outside the window).
+    const perProfileCte = `per_profile AS (
+      SELECT s1.profile_id AS profile_id,
+        any(s1.step_1_ts) AS step_1_ts,
+        arraySort(x -> x.1, groupArrayIf(
+          (e.ts, e.mask),
+          e.mask != 0
+            AND e.ts > s1.step_1_ts
+            AND dateDiff('second', s1.step_1_ts, e.ts) <= ${funnelWindowSeconds}
+        )) AS arr
+      FROM (
+        SELECT profile_id, ts, ${maskExpr} AS mask
+        FROM mv_events
+        WHERE profile_id IN (SELECT profile_id FROM step_1)
+      ) e
+      JOIN step_1 s1 ON e.profile_id = s1.profile_id
+      GROUP BY s1.profile_id
+    )`;
+
+    // Walk the chain: step_k_ts = first event with bit k-1 set strictly
+    // after step_{k-1}_ts; ZERO_TS (arrayFirst's default) means "did not
+    // reach", and short-circuits every later step.
+    const chainSelects: string[] = [];
     for (let i = 1; i < stepConditions.length; i++) {
-      const prevCte = `step_${i}`;
-      const currCte = `step_${i + 1}`;
-      ctes.push(`${currCte} AS (
-        SELECT prev.profile_id AS profile_id, min(e.ts) as ${currCte}_ts
-        FROM ${prevCte} prev
-        JOIN mv_events e ON e.profile_id = prev.profile_id
-        JOIN step_1 s1 ON s1.profile_id = prev.profile_id
-        WHERE e.ts > prev.${prevCte}_ts
-          AND dateDiff('second', s1.step_1_ts, e.ts) <= ${funnelWindowSeconds}
-          AND (${toMvCondition(stepConditions[i]!)})
-        GROUP BY prev.profile_id
-      )`);
+      const prevTs = i === 1 ? 'step_1_ts' : `step_${i}_ts`;
+      const bit = 1 << i;
+      const first = `arrayFirst(x -> bitAnd(x.2, ${bit}) != 0 AND x.1 > ${prevTs}, arr).1`;
+      chainSelects.push(
+        i === 1
+          ? `${first} AS step_2_ts`
+          : `if(${prevTs} = ${ZERO_TS}, ${ZERO_TS}, ${first}) AS step_${i + 1}_ts`,
+      );
     }
+    const chainCte = `chain AS (
+      SELECT profile_id, step_1_ts,
+        ${chainSelects.join(',\n        ')}
+      FROM per_profile
+    )`;
 
     // Final aggregation — quantileTDigestIf medians (same as raw path).
-    const stepJoins: string[] = [];
     const medianSelects: string[] = [];
     for (let i = 1; i < stepConditions.length; i++) {
-      const stepCte = `step_${i + 1}`;
-      const tsCol = `${stepCte}.${stepCte}_ts`;
-      const nullableTs = `nullIf(${tsCol}, toDateTime64(0, 3))`;
-      stepJoins.push(
-        `LEFT JOIN ${stepCte} ON s1.profile_id = ${stepCte}.profile_id`,
-      );
+      const tsCol = `step_${i + 1}_ts`;
       medianSelects.push(
-        `quantileTDigestIf(0.5)(dateDiff('second', s1.step_1_ts, ${nullableTs}), isNotNull(${nullableTs})) as step_${i}_median`,
+        `quantileTDigestIf(0.5)(dateDiff('second', step_1_ts, ${tsCol}), ${tsCol} != ${ZERO_TS}) as step_${i}_median`,
       );
     }
 
     const sql = `
-      WITH ${ctes.join(',\n')}
+      WITH ${[mvEventsCte, step1Cte, perProfileCte, chainCte].join(',\n')}
       SELECT ${medianSelects.join(',\n')}
-      FROM step_1 s1
-      ${stepJoins.join('\n')}
+      FROM chain
     `;
 
     const rows = await chQuery<Record<string, any>>(sql, {
