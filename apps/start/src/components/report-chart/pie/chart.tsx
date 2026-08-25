@@ -81,9 +81,13 @@ export function Chart({ data }: Props) {
     () => getHiddenSeriesKeys(report.series),
     [report.series]
   );
+  // A pie must show every slice or its center total (and per-slice percents)
+  // silently understate the real value — a 16-cell breakdown at the default
+  // limit of 5 showed ~17k of a 54k cohort. 50 covers any breakdown a pie can
+  // legibly render; beyond that the report should be a bar/table anyway.
   const { series, setVisibleSeries } = useVisibleSeries(
     data,
-    undefined,
+    50,
     hiddenSeriesIds
   );
   const number = useNumber();
