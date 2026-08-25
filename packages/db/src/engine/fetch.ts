@@ -222,6 +222,11 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
         breakdowns: [],
         timezone: plan.timezone,
         customEventComponents,
+        // MUST be repeated here. audiencePredicate is a call-time argument, not part
+        // of queryInput, so omitting it made the retry run UNFILTERED: a report with
+        // an audience whose breakdown legitimately matched nothing fell back to a
+        // confident non-zero total that ignored the audience entirely.
+        audiencePredicate,
       });
       queries.push(fallbackSql);
       queryResult = await chQuery<ISerieDataItem>(fallbackSql, {
