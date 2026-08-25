@@ -5,6 +5,7 @@ import {
   timeWindows,
 } from '@openpanel/constants';
 import type {
+  ICohortBreakdown,
   IReportAudience,
   IChartBreakdown,
   IChartEventFilter,
@@ -116,6 +117,8 @@ export function transformReport(
     options: options ?? undefined,
     dateConfig: (report as any).dateConfig ?? undefined,
     audience: ((report as any).audience as IReportAudience) ?? undefined,
+    cohortBreakdown:
+      ((report as any).cohortBreakdown as ICohortBreakdown) ?? undefined,
   };
 }
 

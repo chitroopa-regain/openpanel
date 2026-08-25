@@ -32,6 +32,47 @@ type CohortTx = Omit<
   '$transaction' | '$connect' | '$disconnect' | '$on' | '$use' | '$extends'
 >;
 
+/** Chart types whose query path ignores a cohort breakdown. */
+const COHORT_BREAKDOWN_UNSUPPORTED = new Set([
+  'funnel',
+  'funnel_metric',
+  'retention',
+  'sankey',
+  'conversion',
+]);
+
+/**
+ * Reject rather than silently store. A report persisted with a cohort breakdown
+ * on a chart type that ignores it renders an unsplit series while still
+ * claiming a breakdown — wrong, and invisible.
+ */
+function assertCohortBreakdownSupported(report: {
+  chartType: string;
+  cohortBreakdown?: { cohortIds?: string[] } | null;
+}) {
+  if (
+    (report.cohortBreakdown?.cohortIds?.length ?? 0) > 0 &&
+    COHORT_BREAKDOWN_UNSUPPORTED.has(report.chartType)
+  ) {
+    throw new Error(
+      `A cohort breakdown is not supported on ${report.chartType} reports.`,
+    );
+  }
+}
+
+/** Every cohort a report references, whether as an audience or a breakdown. */
+function referencedCohortIds(report: {
+  audience?: { cohortIds?: string[] } | null;
+  cohortBreakdown?: { cohortIds?: string[] } | null;
+}): string[] {
+  return [
+    ...new Set([
+      ...(report.audience?.cohortIds ?? []),
+      ...(report.cohortBreakdown?.cohortIds ?? []),
+    ]),
+  ];
+}
+
 async function assertCohortsBelongToProject(
   tx: CohortTx,
   projectId: string,
@@ -93,10 +134,11 @@ export const reportRouter = createTRPCRouter({
       // Report write + reference sync must be atomic: a half-applied save would
       // leave "used by N reports" and the delete protection inconsistent.
       const created = await db.$transaction(async (tx) => {
+        assertCohortBreakdownSupported(report as never);
         await assertCohortsBelongToProject(
           tx,
           dashboard.projectId,
-          [...new Set(report.audience?.cohortIds ?? [])],
+          referencedCohortIds(report),
         );
 
         const row = await tx.report.create({
@@ -121,10 +163,11 @@ export const reportRouter = createTRPCRouter({
           options: report.options,
           dateConfig: (report as any).dateConfig ?? null,
           audience: report.audience ?? Prisma.DbNull,
+          cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
         },
         });
 
-        const ids = [...new Set(report.audience?.cohortIds ?? [])];
+        const ids = referencedCohortIds(report);
         if (ids.length) {
           await tx.customCohortReference.createMany({
             data: ids.map((cohortId) => ({ cohortId, reportId: row.id })),
@@ -159,7 +202,8 @@ export const reportRouter = createTRPCRouter({
       }
 
       const updated = await db.$transaction(async (tx) => {
-        const ids = [...new Set(report.audience?.cohortIds ?? [])];
+        assertCohortBreakdownSupported(report as never);
+        const ids = referencedCohortIds(report);
         await assertCohortsBelongToProject(tx, dbReport.projectId, ids);
 
         const row = await tx.report.update({
@@ -185,6 +229,7 @@ export const reportRouter = createTRPCRouter({
           options: report.options,
           dateConfig: (report as any).dateConfig ?? null,
           audience: report.audience ?? Prisma.DbNull,
+          cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
         },
         });
 

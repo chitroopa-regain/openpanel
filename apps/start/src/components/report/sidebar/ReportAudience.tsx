@@ -50,6 +50,15 @@ export function ReportAudience() {
   const cohorts = cohortsQuery.data ?? [];
   const selected = audience?.cohortIds ?? [];
 
+  // The Audience section is retired in favour of cohort breakdown. It is hidden
+  // for reports that do not have one — but a report that DOES carry an audience
+  // keeps filtering, so hiding it outright would show filtered numbers with no
+  // indication anywhere that a filter is applied. Those reports get a read-only
+  // notice and a Clear action instead.
+  if (selected.length === 0) {
+    return null;
+  }
+
   if (!supported) {
     return (
       <div>
@@ -64,6 +73,10 @@ export function ReportAudience() {
   return (
     <div>
       <h3 className="mb-2 font-medium">Audience</h3>
+      <p className="mb-2 text-muted-foreground text-xs">
+        This report was built with the older Audience filter. It still filters
+        the results.
+      </p>
 
       {selected.length > 0 && (
         <div className="mb-2 flex flex-col gap-1" data-testid="audience-selected">
@@ -91,33 +104,7 @@ export function ReportAudience() {
         </div>
       )}
 
-      <Select
-        onValueChange={(id) => {
-          if (!selected.includes(id)) {
-            dispatch(changeAudience([...selected, id]));
-          }
-        }}
-        value=""
-      >
-        <SelectTrigger data-testid="audience-select">
-          <SelectValue placeholder="All users" />
-        </SelectTrigger>
-        <SelectContent>
-          {cohorts.length === 0 ? (
-            <SelectItem disabled value="__none">
-              No cohorts — create one in Settings
-            </SelectItem>
-          ) : (
-            cohorts
-              .filter((c) => !selected.includes(c.id))
-              .map((cohort) => (
-                <SelectItem key={cohort.id} value={cohort.id}>
-                  {cohort.name}
-                </SelectItem>
-              ))
-          )}
-        </SelectContent>
-      </Select>
+
     </div>
   );
 }

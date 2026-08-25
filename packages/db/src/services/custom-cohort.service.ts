@@ -25,6 +25,27 @@ export interface CompiledCohort {
   render: (alias: CohortAlias) => string;
 }
 
+/**
+ * Resolve cohorts for a BREAKDOWN: each one stays separate (one series per
+ * cohort) rather than being AND-combined into a single audience predicate.
+ * Returned in the REQUESTED id order — never the order Postgres happened to
+ * return rows in — and keyed by id so a rename cannot move data between series.
+ */
+export async function resolveCohortsForBreakdown(
+  cohortIds: string[] | undefined,
+  projectId: string,
+  asOf: string,
+): Promise<CompiledCohort[]> {
+  if (!cohortIds?.length) return [];
+  const resolved = await resolveAudience(cohortIds, projectId, asOf);
+  const byId = new Map(resolved.cohorts.map((c) => [c.cohortId, c]));
+  return cohortIds.map((id) => {
+    const c = byId.get(id);
+    if (!c) throw new Error(`Custom cohort not found: ${id}`);
+    return c;
+  });
+}
+
 export interface ResolvedAudience {
   cohorts: CompiledCohort[];
   /** AND-combined predicate for every cohort, or null when there is no audience. */

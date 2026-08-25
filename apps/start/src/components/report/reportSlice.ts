@@ -34,6 +34,30 @@ type InitialState = IReport & {
   endDate: string | null;
 };
 
+/** Chart types whose query path does not apply a cohort breakdown. */
+export const COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES = new Set<string>([
+  'funnel',
+  'funnel_metric',
+  'retention',
+  'sankey',
+  'conversion',
+]);
+
+/**
+ * A cohort breakdown only means anything on the chart/aggregate query paths.
+ * Applied on HYDRATION as well as on chart-type changes: a report saved before
+ * this rule existed, or created straight through the API, can arrive with an
+ * unsupported chart type and a cohortBreakdown still set, and its query path
+ * would ignore the field and render an unsplit series without complaint.
+ */
+function normalizeCohortBreakdown<T extends { chartType: string; cohortBreakdown?: unknown }>(
+  report: T,
+): T {
+  return COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(report.chartType)
+    ? { ...report, cohortBreakdown: undefined }
+    : report;
+}
+
 // First approach: define the initial state using that type
 const initialState: InitialState = {
   ready: false,
@@ -56,6 +80,7 @@ const initialState: InitialState = {
   options: { type: 'generic', displayMode: 'both' },
   dateConfig: undefined,
   audience: undefined,
+  cohortBreakdown: undefined,
 };
 
 export const reportSlice = createSlice({
@@ -78,6 +103,10 @@ export const reportSlice = createSlice({
       };
     },
     setReport(state, action: PayloadAction<IReport>) {
+      action = {
+        ...action,
+        payload: normalizeCohortBreakdown(action.payload as never) as IReport,
+      };
       // Clear breakdowns if any series uses frequency distribution
       const hasFreqDist = action.payload.series.some(
         (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
@@ -99,6 +128,10 @@ export const reportSlice = createSlice({
       };
     },
     hydrateDraftReport(state, action: PayloadAction<IReport>) {
+      action = {
+        ...action,
+        payload: normalizeCohortBreakdown(action.payload as never) as IReport,
+      };
       const hasFreqDist = action.payload.series.some(
         (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
       );
@@ -207,6 +240,9 @@ export const reportSlice = createSlice({
       action: PayloadAction<Omit<IChartBreakdown, 'id'>>
     ) => {
       state.dirty = true;
+      // Symmetric to changeCohortBreakdown: the two are mutually exclusive, so
+      // adding a property breakdown clears any cohort breakdown.
+      state.cohortBreakdown = undefined;
       state.breakdowns.push({
         id: shortId(),
         ...action.payload,
@@ -242,6 +278,19 @@ export const reportSlice = createSlice({
     },
 
     // Interval
+    changeCohortBreakdown: (state, action: PayloadAction<string[]>) => {
+      state.cohortBreakdown = action.payload.length
+        ? { cohortIds: action.payload }
+        : undefined;
+      // A cohort breakdown and property breakdowns are mutually exclusive (the
+      // server rejects the combination), so selecting cohorts clears any
+      // property breakdown rather than letting the user build a report that
+      // will only fail when it runs.
+      if (action.payload.length) {
+        state.breakdowns = [];
+      }
+      state.dirty = true;
+    },
     changeAudience: (state, action: PayloadAction<string[]>) => {
       state.audience = action.payload.length
         ? { cohortIds: action.payload }
@@ -257,6 +306,17 @@ export const reportSlice = createSlice({
     changeChartType: (state, action: PayloadAction<IChartType>) => {
       state.dirty = true;
       state.chartType = action.payload;
+
+      // Only the chart/aggregate query paths apply a cohort breakdown. Carrying
+      // it onto funnel/retention/sankey/conversion would leave a field set that
+      // those paths ignore, so the report would quietly render unsplit while
+      // still claiming a breakdown. Drop it on the transition instead.
+      if (
+        COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(action.payload) &&
+        state.cohortBreakdown
+      ) {
+        state.cohortBreakdown = undefined;
+      }
 
       // Initialize sankey options if switching to sankey
       if (action.payload === 'sankey' && state.options?.type !== 'sankey') {
@@ -685,6 +745,7 @@ export const {
   reset,
   ready,
   changeAudience,
+  changeCohortBreakdown,
   setReport,
   hydrateDraftReport,
   setName,

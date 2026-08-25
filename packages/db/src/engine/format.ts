@@ -69,10 +69,14 @@ export function format(
         : definition?.name || cs.context.event || 'unknown';
 
     // Find matching previous series
-    const previousSerie = previousSeries?.find(
-      (ps) =>
-        ps.definitionIndex === cs.definitionIndex &&
-        ps.name.slice(1).join(':::') === cs.name.slice(1).join(':::'),
+    // Match on cohort ID for cohort series — matching on the display name would
+    // hand one cohort another cohort's comparison values when two share a name.
+    const previousSerie = previousSeries?.find((ps) =>
+      ps.definitionIndex !== cs.definitionIndex
+        ? false
+        : cs.context.cohortId || ps.context.cohortId
+          ? ps.context.cohortId === cs.context.cohortId
+          : ps.name.slice(1).join(':::') === cs.name.slice(1).join(':::'),
     );
 
     return {

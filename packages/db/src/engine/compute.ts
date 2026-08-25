@@ -43,8 +43,14 @@ export function compute(
       // Create breakdown signature: skip first name part (event/formula name) and use breakdown values
       // If name.length === 1, it means no breakdowns (just event name)
       // If name.length > 1, name[0] is event name, name[1+] are breakdown values
-      const breakdownSignature =
-        serie.name.length > 1 ? serie.name.slice(1).join(':::') : '';
+      // Cohort series are keyed by cohort ID, not by their display name: names
+      // are user-editable and not unique, so two cohorts sharing a name would
+      // collapse into one group here and overwrite each other's formula inputs.
+      const breakdownSignature = serie.context.cohortId
+        ? `cohort:::${serie.context.cohortId}`
+        : serie.name.length > 1
+          ? serie.name.slice(1).join(':::')
+          : '';
 
       if (!seriesByBreakdown.has(breakdownSignature)) {
         seriesByBreakdown.set(breakdownSignature, []);
@@ -203,6 +209,11 @@ export function compute(
           filters: templateSerie.context.filters,
           breakdownValue: templateSerie.context.breakdownValue,
           breakdowns: templateSerie.context.breakdowns,
+          // Inherit the group's cohort identity. Without it a formula series
+          // falls back to display-name grouping — so a chained formula over
+          // two same-named cohorts would collapse, and previous-period matching
+          // would compare against the wrong cohort.
+          cohortId: templateSerie.context.cohortId,
         },
         data: formulaData,
         definition: formula,

@@ -348,6 +348,8 @@ model Report {
 
   /// Report-level audience: CustomCohort ids, AND-combined. See CustomCohortReference.
   audience    Json?
+  /// Breakdown by cohort: one series per CustomCohort id. See CustomCohortReference.
+  cohortBreakdown Json?
 
   dashboardId String
   dashboard   Dashboard     @relation(fields: [dashboardId], references: [id], onDelete: Cascade)

@@ -1,6 +1,11 @@
+import { CohortPickerDialog } from '@/components/custom-cohorts/cohort-picker-dialog';
 import { ColorSquare } from '@/components/color-square';
+import { useTRPC } from '@/integrations/trpc/react';
+import { useAppParams } from '@/hooks/use-app-params';
+import { useQuery } from '@tanstack/react-query';
 import { useDispatch, useSelector } from '@/redux';
-import { ChevronsUpDownIcon, SplitIcon } from 'lucide-react';
+import { ChevronsUpDownIcon, SplitIcon, TargetIcon, XIcon } from 'lucide-react';
+import { useState } from 'react';
 
 import type {
   IChartBreakdown,
@@ -11,7 +16,12 @@ import type {
 
 import { Button } from '@/components/ui/button';
 import { Tooltiper } from '@/components/ui/tooltip';
-import { addBreakdown, changeBreakdown, removeBreakdown } from '../reportSlice';
+import {
+  addBreakdown,
+  changeBreakdown,
+  changeCohortBreakdown,
+  removeBreakdown,
+} from '../reportSlice';
 import { PropertiesCombobox } from './PropertiesCombobox';
 import { ReportBreakdownMore } from './ReportBreakdownMore';
 import type { ReportEventMoreProps } from './ReportEventMore';
@@ -21,7 +31,26 @@ export function ReportBreakdowns() {
   const chartType = useSelector((state) => state.report.chartType);
   const options = useSelector((state) => state.report.options);
   const series = useSelector((state) => state.report.series);
+  const cohortBreakdown = useSelector((state) => state.report.cohortBreakdown);
   const dispatch = useDispatch();
+  const [cohortPickerOpen, setCohortPickerOpen] = useState(false);
+  const { projectId } = useAppParams();
+  const trpc = useTRPC();
+  const cohortsQuery = useQuery(
+    trpc.customCohort.list.queryOptions({ projectId })
+  );
+  const selectedCohortIds = cohortBreakdown?.cohortIds ?? [];
+  const cohortName = (id: string) =>
+    (cohortsQuery.data ?? []).find((c) => c.id === id)?.name ?? id;
+
+  // Cohort breakdown is only applied on the chart/aggregate query paths.
+  // Offering it elsewhere would accept a selection that silently does nothing.
+  const cohortBreakdownSupported =
+    chartType !== 'funnel' &&
+    chartType !== 'funnel_metric' &&
+    chartType !== 'retention' &&
+    chartType !== 'sankey' &&
+    chartType !== 'conversion';
 
   let scopedBreakdownSource: IChartEventItem | undefined;
   if (chartType === 'retention') {
@@ -54,6 +83,43 @@ export function ReportBreakdowns() {
     <div>
       <h3 className="mb-2 font-medium">Breakdown</h3>
       <div className="flex flex-col gap-4">
+        {selectedCohortIds.length > 0 && (
+          <div className="flex flex-col gap-1" data-testid="cohort-breakdown-chips">
+            {selectedCohortIds.map((id, index) => (
+              <div
+                className="flex items-center gap-2 rounded-lg border bg-def-100 p-2 px-3"
+                key={id}
+              >
+                <ColorSquare className="shrink-0">{index}</ColorSquare>
+                <TargetIcon className="size-4 shrink-0 text-violet-500" />
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {cohortName(id)}
+                </span>
+                <Button
+                  onClick={() =>
+                    dispatch(
+                      changeCohortBreakdown(
+                        selectedCohortIds.filter((x) => x !== id)
+                      )
+                    )
+                  }
+                  size="icon"
+                  variant="ghost"
+                >
+                  <XIcon className="size-3" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              className="self-start"
+              onClick={() => setCohortPickerOpen(true)}
+              size="sm"
+              variant="ghost"
+            >
+              Edit cohorts
+            </Button>
+          </div>
+        )}
         {selectedBreakdowns.map((item, index) => {
           return (
             <div key={item.name} className="rounded-lg border bg-def-100">
@@ -112,6 +178,11 @@ export function ReportBreakdowns() {
               })
             );
           }}
+          onSelectCohort={
+            cohortBreakdownSupported
+              ? () => setCohortPickerOpen(true)
+              : undefined
+          }
         >
           {(setOpen) => (
             <Button
@@ -129,6 +200,13 @@ export function ReportBreakdowns() {
             </Button>
           )}
         </PropertiesCombobox>
+
+        <CohortPickerDialog
+          onConfirm={(ids) => dispatch(changeCohortBreakdown(ids))}
+          onOpenChange={setCohortPickerOpen}
+          open={cohortPickerOpen}
+          value={selectedCohortIds}
+        />
       </div>
     </div>
   );

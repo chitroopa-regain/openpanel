@@ -15,7 +15,10 @@ import {
   getAggregateChartSql,
   getChartPrevStartEndDate,
 } from '../services/chart.service';
-import { resolveAudience } from '../services/custom-cohort.service';
+import {
+  resolveAudience,
+  resolveCohortsForBreakdown,
+} from '../services/custom-cohort.service';
 import {
   getOrganizationSubscriptionChartEndDate,
   getSettingsForProject,
@@ -68,6 +71,8 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
       ...normalized,
       ...previousPeriod,
     });
+    // Same membership snapshot as the current period — see Plan.membershipAsOf.
+    previousPlan.membershipAsOf = normalized.endDate;
 
     const previousFetchResult = await fetch(previousPlan);
     previousSeries = compute(
@@ -117,6 +122,15 @@ export async function executeAggregateChart(
     normalized.endDate,
   );
   const audiencePredicate = aggregateAudience.render(null);
+
+  // Cohort breakdown on the aggregate (bar/pie/metric/table) path. Without
+  // this the field is accepted and silently ignored here, so a bar chart shows
+  // one un-split series while the same report as a line chart shows several.
+  const aggregateBreakdownCohorts = await resolveCohortsForBreakdown(
+    input.cohortBreakdown?.cohortIds,
+    input.projectId,
+    normalized.endDate,
+  );
 
   const { timezone } = await getSettingsForProject(normalized.projectId);
 
@@ -197,6 +211,45 @@ export async function executeAggregateChart(
       customEventComponents,
       audiencePredicate,
     };
+
+    // One query per cohort — same reasoning as the chart path: cohorts overlap,
+    // so a GROUP BY would drop overlapping members from all but one series.
+    if (aggregateBreakdownCohorts.length > 0) {
+      for (const cohort of aggregateBreakdownCohorts) {
+        const cohortSql = getAggregateChartSql({
+          ...queryInput,
+          audiencePredicate: [audiencePredicate, cohort.render(null)]
+            .filter(Boolean)
+            .join(' AND '),
+        });
+        allQueries.push(cohortSql);
+        const rows = await chQuery<ISerieDataItem>(cohortSql, {
+          session_timezone: timezone,
+        });
+        const grouped = groupByLabels(rows);
+        fetchedSeries.push({
+          // Structural identity from (definition, cohort), never the label.
+          id: `${eventName}-cohort-${cohort.cohortId}-${i}`,
+          definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
+          definitionIndex: i,
+          name: [eventDisplayName ?? eventName, cohort.name],
+          context: {
+            event: eventName,
+            filters: eventFilters,
+            cohortId: cohort.cohortId,
+          },
+          data: (grouped[0]?.data ?? [{ date: normalized.endDate, count: 0 }]).map(
+            (item: any) => ({
+              date: item.date,
+              count: Number(item.count ?? 0),
+              label: item.label_0,
+            }),
+          ),
+          definition,
+        } as ConcreteSeries);
+      }
+      continue;
+    }
 
     // Execute aggregate query
     const sql = getAggregateChartSql(queryInput);
@@ -370,6 +423,45 @@ export async function executeAggregateChart(
         customEventComponents: prevCustomEventComponents,
         audiencePredicate,
       };
+
+      // Previous period must be split by cohort too. Without this the current
+      // period has N cohort series and the previous period has one un-split
+      // series, so format() finds no match and every comparison silently
+      // disappears — the chart shows cohort series with no "vs previous".
+      if (aggregateBreakdownCohorts.length > 0) {
+        for (const cohort of aggregateBreakdownCohorts) {
+          const cohortPrevSql = getAggregateChartSql({
+            ...queryInput,
+            audiencePredicate: [audiencePredicate, cohort.render(null)]
+              .filter(Boolean)
+              .join(' AND '),
+          });
+          const rows = await chQuery<ISerieDataItem>(cohortPrevSql, {
+            session_timezone: timezone,
+          });
+          const grouped = groupByLabels(rows);
+          previousFetchedSeries.push({
+            id: `${prevEventName}-cohort-${cohort.cohortId}-${i}`,
+            definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
+            definitionIndex: i,
+            name: [prevEventDisplayName ?? prevEventName, cohort.name],
+            context: {
+              event: prevEventName,
+              filters: prevEventFilters,
+              cohortId: cohort.cohortId,
+            },
+            data: (
+              grouped[0]?.data ?? [{ date: previousPeriod.endDate, count: 0 }]
+            ).map((item: any) => ({
+              date: item.date,
+              count: Number(item.count ?? 0),
+              label: item.label_0,
+            })),
+            definition,
+          } as ConcreteSeries);
+        }
+        continue;
+      }
 
       const prevSql = getAggregateChartSql(queryInput);
       let queryResult = await chQuery<ISerieDataItem>(prevSql, {

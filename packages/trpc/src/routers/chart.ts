@@ -41,6 +41,7 @@ import {
   zChartEventFilter,
   zChartSeries,
   zCriteria,
+  zCohortBreakdown,
   zDateConfig,
   zReportAudience,
   zRange,
@@ -98,6 +99,45 @@ function utc(date: string | Date) {
     return date.replace('T', ' ').slice(0, 19);
   }
   return formatISO(date).replace('T', ' ').slice(0, 19);
+}
+
+/**
+ * These query paths do not apply a cohort breakdown. Accepting the field and
+ * ignoring it would return an unsplit series while the caller believes it asked
+ * for one — wrong, and invisible. Persistence already rejects the combination;
+ * this closes the same hole at the query boundary, where an ad-hoc API request
+ * (or a stale client) can arrive with the field set.
+ */
+/**
+ * Middleware form, so the check runs BEFORE `cacher`. As a resolver statement it
+ * was skipped entirely on a cache hit, meaning a previously cached unsplit
+ * result — most plausibly a legacy saved report keyed only by id — would still
+ * be served silently. Ordering matters more than the check itself here.
+ */
+const guardNoCohortBreakdown =
+  (path: string) =>
+  async ({ ctx, next, getRawInput }: any) => {
+    const rawInput = (await getRawInput()) as
+      | { cohortBreakdown?: { cohortIds?: string[] } | null }
+      | undefined;
+    assertNoCohortBreakdown([rawInput, ctx?.report], path);
+    return next();
+  };
+
+function assertNoCohortBreakdown(
+  sources: Array<{ cohortBreakdown?: { cohortIds?: string[] } | null } | null | undefined>,
+  path: string,
+) {
+  // Check the EFFECTIVE report, not just the raw input. These handlers can load
+  // a saved report from ctx.report, so a caller passing only `{ id }` for a
+  // report that already carries a cohortBreakdown (one created before the write
+  // path started rejecting the combination) would otherwise get an unsplit
+  // series with no error.
+  for (const source of sources) {
+    if ((source?.cohortBreakdown?.cohortIds?.length ?? 0) > 0) {
+      throw new Error(`A cohort breakdown is not supported on ${path} reports.`);
+    }
+  }
 }
 
 const cacher = cacheMiddleware(getReportFreshness);
@@ -740,6 +780,7 @@ export const chartRouter = createTRPCRouter({
     ),
 
   funnel: chartProcedure
+    .use(guardNoCohortBreakdown('funnel'))
     .use(cacher)
     .input(
       zReportInput.and(
@@ -878,6 +919,7 @@ export const chartRouter = createTRPCRouter({
     }),
 
   conversion: chartProcedure
+    .use(guardNoCohortBreakdown('conversion'))
     .use(cacher)
     .input(
       zReportInput.and(
@@ -939,6 +981,7 @@ export const chartRouter = createTRPCRouter({
     }),
 
   sankey: protectedProcedure
+    .use(guardNoCohortBreakdown('sankey'))
     .use(cacher)
     .input(zReportInput)
     .query(async ({ input }) => {
@@ -1029,6 +1072,7 @@ export const chartRouter = createTRPCRouter({
     }),
 
   cohort: chartProcedure
+    .use(guardNoCohortBreakdown('retention'))
     .use(cacher)
     .input(
       z.object({
@@ -1062,6 +1106,10 @@ export const chartRouter = createTRPCRouter({
         id: z.string().optional(),
         bypassCache: z.boolean().optional(),
         audience: zReportAudience.optional(),
+        // Declared ONLY so the guard below can reject it. Retention builds its
+        // own input schema, so an undeclared key is silently stripped by zod
+        // and the request succeeds while the caller's breakdown vanishes.
+        cohortBreakdown: zCohortBreakdown.optional(),
       })
     )
     .query(async ({ input, ctx }) => {

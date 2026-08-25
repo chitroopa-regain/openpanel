@@ -17,13 +17,19 @@ import type { ICustomCohortDefinition } from '@openpanel/validation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { PlusIcon, TargetIcon, Trash2Icon } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 export const Route = createFileRoute(
   '/_app/$organizationId/$projectId/settings/_tabs/custom-cohorts'
 )({
   component: CustomCohortsSettings,
+  // The cohort picker's "Create cohort" link arrives with ?new=1. Landing on
+  // the list and making the user hunt for the button they just clicked defeats
+  // the point of the link, so the create dialog opens on arrival.
+  validateSearch: (search: Record<string, unknown>) => ({
+    new: search.new ? 1 : undefined,
+  }),
 });
 
 function CustomCohortsSettings() {
@@ -32,6 +38,14 @@ function CustomCohortsSettings() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<CustomCohortForm | null>(null);
+  const search = Route.useSearch();
+
+  useEffect(() => {
+    if (search.new) {
+      setEditing({ name: '', definition: emptyDefinition });
+      setDialogOpen(true);
+    }
+  }, [search.new]);
 
   const cohortsQuery = useQuery(
     trpc.customCohort.list.queryOptions({ projectId })

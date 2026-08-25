@@ -57,6 +57,19 @@ export async function normalize(
     },
   );
 
+  // Cohort breakdown and property breakdowns are mutually exclusive: allowing
+  // both means K x M series (5 cohorts x 40 countries = 200 queries). Reject it
+  // rather than silently dropping one, which would show a chart that is not the
+  // one the user asked for.
+  if (
+    (input.cohortBreakdown?.cohortIds?.length ?? 0) > 0 &&
+    (input.breakdowns?.length ?? 0) > 0
+  ) {
+    throw new Error(
+      'A cohort breakdown cannot be combined with a property breakdown. Remove one of them.',
+    );
+  }
+
   return {
     ...input,
     series: normalizedSeries,

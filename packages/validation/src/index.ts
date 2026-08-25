@@ -256,6 +256,26 @@ export const zCustomCohortInput = z.object({
   definition: zCustomCohortDefinition,
 });
 
+/**
+ * Breakdown by cohort: one series per selected cohort.
+ *
+ * Deliberately NOT part of `breakdowns[]`. Every consumer of that array treats
+ * `breakdown.name` as a column reference — it flows into getSelectPropertyKey,
+ * into GROUP BY, and into `context.breakdowns` as { country: 'SE' }. A cohort id
+ * there would either be rejected by the identifier check or generate nonsense
+ * SQL. The picker lives in the Breakdown menu; the value lives in its own field.
+ */
+export const zCohortBreakdown = z.object({
+  cohortIds: z
+    .array(z.string())
+    .max(5)
+    // Duplicates would produce two indistinguishable series over the same
+    // membership set. Selection ORDER is preserved so series order is stable.
+    .refine((ids) => new Set(ids).size === ids.length, 'Duplicate cohort ids')
+    .default([]),
+});
+export type ICohortBreakdown = z.infer<typeof zCohortBreakdown>;
+
 /** Report-level audience. Cohort ids are AND-combined. */
 export const zReportAudience = z.object({
   cohortIds: z.array(z.string()).max(5).default([]),
@@ -486,6 +506,11 @@ export const zReportInput = z.object({
     .optional()
     .describe(
       'Report-level audience: custom cohort ids, AND-combined, applied to the base population'
+    ),
+  cohortBreakdown: zCohortBreakdown
+    .optional()
+    .describe(
+      'Split the chart into one series per cohort. Overlapping members are counted in every matching series.'
     ),
   dateConfig: zDateConfig
     .optional()

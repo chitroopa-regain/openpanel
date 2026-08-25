@@ -9,7 +9,10 @@ import type {
 import { chQuery } from '../clickhouse/client';
 import { db } from '../prisma-client';
 import { getChartSql } from '../services/chart.service';
-import { resolveAudience } from '../services/custom-cohort.service';
+import {
+  resolveAudience,
+  resolveCohortsForBreakdown,
+} from '../services/custom-cohort.service';
 import type { ConcreteSeries, Plan } from './types';
 
 /**
@@ -31,9 +34,39 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
   const audience = await resolveAudience(
     plan.input.audience?.cohortIds,
     plan.input.projectId,
-    plan.input.endDate,
+    plan.membershipAsOf ?? plan.input.endDate,
   );
   const audiencePredicate = audience.render(null);
+
+  // Breakdown by cohort: one series per cohort, resolved once in the REQUESTED
+  // order. Kept separate from the audience — the audience narrows the
+  // population, the breakdown splits what remains, so each series is
+  // `audience ∩ cohort_i`.
+  const breakdownCohorts = await resolveCohortsForBreakdown(
+    plan.input.cohortBreakdown?.cohortIds,
+    plan.input.projectId,
+    plan.membershipAsOf ?? plan.input.endDate,
+  );
+
+  // Cohorts OVERLAP: a profile can belong to several. A GROUP BY would assign
+  // each row to exactly one bucket and silently drop overlapping members from
+  // all but one series, so each cohort gets its OWN query instead and overlap
+  // falls out correctly by construction. Bounded concurrency keeps an
+  // S x K report from firing every scan at once.
+  const runWithLimit = async <T>(
+    items: T[],
+    limit: number,
+    fn: (item: T, index: number) => Promise<void>,
+  ) => {
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (cursor < items.length) {
+        const index = cursor++;
+        await fn(items[index]!, index);
+      }
+    });
+    await Promise.all(workers);
+  };
 
   // Process each event definition
   for (let i = 0; i < plan.definitions.length; i++) {
@@ -119,6 +152,56 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
       limit: plan.input.limit,
       offset: plan.input.offset,
     };
+
+    // Cohort breakdown: one query per cohort, one series per cohort.
+    //
+    // Attribution is by cohort ID, assigned here in JS — never read back out of
+    // the result. That is not merely defensive: ClickHouse's WITH FILL emits
+    // zero-buckets with an EMPTY label, so a cohort matching nobody would
+    // otherwise be attributed to '' instead of to itself. Those filled buckets
+    // are also why an empty cohort still renders as a flat-zero line rather
+    // than vanishing — the bucket domain comes from the same WITH FILL the
+    // ordinary path uses, so it cannot drift from it on timezone or DST edges.
+    if (breakdownCohorts.length > 0) {
+      const perCohort: ConcreteSeries[] = new Array(breakdownCohorts.length);
+      await runWithLimit(breakdownCohorts, 4, async (cohort, cohortIndex) => {
+        const cohortSql = getChartSql({
+          ...queryInput,
+          timezone: plan.timezone,
+          customEventComponents,
+          audiencePredicate: [audiencePredicate, cohort.render(null)]
+            .filter(Boolean)
+            .join(' AND '),
+        });
+        queries.push(cohortSql);
+        const rows = await chQuery<ISerieDataItem>(cohortSql, {
+          session_timezone: plan.timezone,
+        });
+        perCohort[cohortIndex] = {
+          // Structural identity: derived from (definition, cohort), not from
+          // the label, so two cohorts sharing a NAME stay distinct and a
+          // rename relabels without moving data.
+          id: `${placeholder.id}-cohort-${cohort.cohortId}`,
+          definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
+          definitionIndex: i,
+          name: [eventDisplayName ?? eventName, cohort.name],
+          context: {
+            event: eventName,
+            filters: eventFilters,
+            cohortId: cohort.cohortId,
+          },
+          data: rows.map((item) => ({
+            date: item.date,
+            count: Number(item.count ?? 0),
+            total_count: item.total_count ? Number(item.total_count) : undefined,
+            label: item.label_0,
+          })),
+          definition,
+        } as ConcreteSeries;
+      });
+      results.push(...perCohort);
+      continue;
+    }
 
     // Execute query
     const sql = getChartSql({

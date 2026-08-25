@@ -12,7 +12,7 @@ import { useAppParams } from '@/hooks/use-app-params';
 import { useEventProperties } from '@/hooks/use-event-properties';
 import type { IChartEvent } from '@openpanel/validation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeftIcon, DatabaseIcon, UserIcon } from 'lucide-react';
+import { ArrowLeftIcon, DatabaseIcon, TargetIcon, UserIcon } from 'lucide-react';
 import VirtualList from 'rc-virtual-list';
 import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
 import { resolvePropertiesQueryMode } from './properties-combobox.utils';
@@ -28,6 +28,9 @@ interface PropertiesComboboxProps {
   }) => void;
   exclude?: string[];
   mode?: 'events' | 'profile';
+  /** When provided, a "Custom cohort" entry is offered alongside the property
+   *  sources. Omitted where cohort breakdown is not supported. */
+  onSelectCohort?: () => void;
 }
 
 function SearchHeader({
@@ -57,6 +60,7 @@ function SearchHeader({
 }
 
 export function PropertiesCombobox({
+  onSelectCohort,
   event,
   customEventId,
   children,
@@ -158,6 +162,23 @@ export function PropertiesCombobox({
           Profile properties
           <UserIcon className="size-4 group-hover:text-blue-500 group-hover:scale-125 transition-all group-hover:rotate-12" />
         </DropdownMenuItem>
+        {onSelectCohort ? (
+          <DropdownMenuItem
+            className="group justify-between gap-2"
+            data-testid="breakdown-custom-cohort"
+            onClick={(e) => {
+              e.preventDefault();
+              setOpen(false);
+              // Defer: Radix closes the dropdown asynchronously and its closing
+              // pointer event would otherwise land on the freshly-opened dialog
+              // and dismiss it in the same tick.
+              setTimeout(() => onSelectCohort(), 0);
+            }}
+          >
+            Custom cohort
+            <TargetIcon className="size-4 group-hover:text-violet-500 group-hover:scale-125 transition-all group-hover:rotate-12" />
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuGroup>
     );
   };

@@ -31,6 +31,13 @@ export type ConcreteSeries = {
     filters: IChartEventFilter[]; // All filters including breakdown value
     breakdownValue?: string; // The breakdown value for this concrete series (deprecated, use breakdowns instead)
     breakdowns?: Record<string, string>; // Breakdown keys and values: { country: 'SE', path: '/ewoqmepwq' }
+    /**
+     * Set when this series came from a COHORT breakdown. Identity is the id,
+     * never the name: cohort names are user-editable and not unique, so two
+     * cohorts sharing a name would otherwise be indistinguishable downstream
+     * and could collide in chart/React keys.
+     */
+    cohortId?: string;
   };
 
   // Data points for this series
@@ -52,6 +59,13 @@ export type Plan = {
   definitions: SeriesDefinition[];
   input: IReportInputWithDates;
   timezone: string;
+  /**
+   * The instant cohort membership is evaluated at. Set explicitly so the
+   * PREVIOUS period uses the same snapshot as the current one — resolving it
+   * from each plan's own endDate would compare two different populations and
+   * conflate membership change with behaviour change.
+   */
+  membershipAsOf?: string;
 };
 
 /**
