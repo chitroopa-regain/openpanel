@@ -15,6 +15,8 @@ import {
   LayoutPanelTopIcon,
   PlusIcon,
   SparklesIcon,
+  TargetIcon,
+  TimerIcon,
   TrendingUpDownIcon,
   UndoDotIcon,
   UsersIcon,
@@ -67,8 +69,14 @@ export default function SidebarProjectMenu({
       <SidebarLink compact={compact} href={'/pages'} icon={LayersIcon} label="Pages" />
       <SidebarLink compact={compact} href={'/realtime'} icon={Globe2Icon} label="Realtime" />
       <SidebarLink compact={compact} href={'/events'} icon={GanttChartIcon} label="Events" />
-      <SidebarLink compact={compact} href={'/sessions'} icon={UsersIcon} label="Sessions" />
+      <SidebarLink compact={compact} href={'/sessions'} icon={TimerIcon} label="Sessions" />
       <SidebarLink compact={compact} href={'/profiles'} icon={UsersIcon} label="Profiles" />
+      <SidebarLink
+        compact={compact}
+        href={'/settings/custom-cohorts'}
+        icon={TargetIcon}
+        label="Custom Cohorts"
+      />
       <div className="mt-4 mb-2 font-medium text-muted-foreground text-sm lg:hidden">
         Manage
       </div>
