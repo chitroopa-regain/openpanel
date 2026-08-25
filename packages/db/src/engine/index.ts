@@ -338,6 +338,17 @@ export async function executeAggregateChart(
         prevEventProperty = event.property;
       }
 
+      // The previous-period query omitted firstTimeFilter while the current
+      // period applied it, so any aggregate report using a first-time filter
+      // with "compare to previous" measured a FILTERED current value against
+      // an UNFILTERED previous one.
+      const prevFirstTimeFilter =
+        definition.type === 'custom_event'
+          ? (definition as IChartCustomEvent).firstTimeFilter
+          : definition.type === 'event'
+            ? (definition as IChartEventItem & { type: 'event' }).firstTimeFilter
+            : undefined;
+
       const queryInput = {
         event: {
           id: definition.id,
@@ -346,6 +357,7 @@ export async function executeAggregateChart(
           filters: prevEventFilters,
           displayName: prevEventDisplayName,
           property: prevEventProperty,
+          firstTimeFilter: prevFirstTimeFilter,
         },
         projectId: normalized.projectId,
         startDate: previousPeriod.startDate,
