@@ -128,6 +128,17 @@ export const CHART_SERIES_SUPPORT: Record<
   // Sankey's cap depends on options.mode: 2 for 'between', 1 otherwise.
   // Entering sankey initialises mode 'after', so the cap ON ENTRY is 1.
   sankey: { kinds: ['event'], cap: 1 },
+  // Funnels have NO step cap — a funnel legitimately has many steps — but they
+  // cannot evaluate a formula either. resolveSeriesForFunnel branches on
+  // 'event' / 'custom_event' with no else (funnel.service.ts), so a formula is
+  // silently skipped: it stays visible in the editor while the server ignores
+  // it. Listed here so it is removed on entry rather than dropped invisibly.
+  // funnel_metric runs the same funnel path, so it behaves identically.
+  funnel: { kinds: ['event', 'custom_event'], cap: Number.POSITIVE_INFINITY },
+  funnel_metric: {
+    kinds: ['event', 'custom_event'],
+    cap: Number.POSITIVE_INFINITY,
+  },
 };
 
 /**

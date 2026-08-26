@@ -195,3 +195,41 @@ describe('the notice states the real reason', () => {
     expect(s.series).toHaveLength(2);
   });
 });
+
+describe('funnel and funnel_metric', () => {
+  it.each(['funnel', 'funnel_metric'])(
+    '%s keeps every step — funnels have no cap',
+    (target) => {
+      let s = withSeries([ev('A'), ev('B'), ev('C'), ev('D')], 'linear');
+      s = reportSlice.reducer(s, changeChartType(target as any));
+      expect(s.series).toHaveLength(4);
+      expect(s.lastTransitionNotice).toBeUndefined();
+    },
+  );
+
+  it.each(['funnel', 'funnel_metric'])(
+    '%s removes formulas, which resolveSeriesForFunnel silently skips',
+    (target) => {
+      // No else branch in resolveSeriesForFunnel: a formula would sit in the
+      // editor while the server ignored it.
+      let s = withSeries(
+        [ev('A'), { id: 'F', type: 'formula', formula: 'A/B' }, ev('B')],
+        'linear',
+      );
+      s = reportSlice.reducer(s, changeChartType(target as any));
+      expect((s.series as any[]).some((x) => x.type === 'formula')).toBe(false);
+      expect(s.lastTransitionNotice).toMatch(
+        new RegExp(`formula, which ${target} cannot use`),
+      );
+    },
+  );
+
+  it('funnel keeps custom events', () => {
+    let s = withSeries(
+      [{ id: 'CE', type: 'custom_event', customEventId: 'ce-1', filters: [] }, ev('B')],
+      'linear',
+    );
+    s = reportSlice.reducer(s, changeChartType('funnel'));
+    expect(s.series).toHaveLength(2);
+  });
+});
