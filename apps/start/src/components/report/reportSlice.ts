@@ -1,5 +1,11 @@
 import { shortId } from '@openpanel/common';
 import {
+  extractRetentionSelection,
+  fitSeriesToChartType,
+  fromRetentionShape,
+  toRetentionShape,
+} from '@openpanel/validation';
+import {
   getDefaultIntervalByDates,
   getDefaultIntervalByRange,
   isHourIntervalEnabledByRange,
@@ -33,6 +39,11 @@ type InitialState = IReport & {
   ready: boolean;
   startDate: string | null;
   endDate: string | null;
+  /**
+   * What the last chart-type change silently removed, for the UI to show.
+   * Editor-only: never persisted, cleared at the start of every transition.
+   */
+  lastTransitionNotice?: string;
 };
 
 /** Chart types whose query path does not apply a cohort breakdown. */
@@ -355,12 +366,79 @@ export const reportSlice = createSlice({
     // Chart type
     changeChartType: (state, action: PayloadAction<IChartType>) => {
       state.dirty = true;
+      const previousChartType = state.chartType;
       state.chartType = action.payload;
+      state.lastTransitionNotice = undefined;
 
       // Only the chart/aggregate query paths apply a cohort breakdown. Carrying
       // it onto funnel/retention/sankey/conversion would leave a field set that
       // those paths ignore, so the report would quietly render unsplit while
       // still claiming a breakdown. Drop it on the transition instead.
+      // Cross the retention boundary: the selected event lives in `name` for
+      // every chart type EXCEPT retention, which carries it in a reserved
+      // `name` filter. Without translating, the events are still in the store
+      // but where the new chart type is not looking, so both slots read
+      // "Select event".
+      const enteringRetention =
+        action.payload === 'retention' && previousChartType !== 'retention';
+      const leavingRetention =
+        previousChartType === 'retention' && action.payload !== 'retention';
+
+      if (enteringRetention) {
+        state.series = state.series.map(
+          (serie) => toRetentionShape(serie as any) as typeof serie,
+        );
+      } else if (leavingRetention) {
+        const dropped: string[] = [];
+        state.series = state.series.map((serie) => {
+          const converted = fromRetentionShape(serie as any);
+          dropped.push(...converted.droppedNames);
+          return converted.serie as typeof serie;
+        });
+        // A multi-event slot cannot fit a single-event chart type. Keeping the
+        // first silently changes the NUMBER while the report looks unchanged,
+        // so say what was removed.
+        state.lastTransitionNotice = dropped.length
+          ? `Kept the first event per metric. Dropped: ${dropped.join(', ')}.`
+          : undefined;
+      }
+
+      // Trim to what the target can actually run — over the SUPPORTED series,
+      // never raw indices. Matches Mixpanel: entering retention keeps the first
+      // two metrics and drops the rest, permanently. Replaces the old state
+      // where extras were persisted but silently ignored by the query.
+      const fitted = fitSeriesToChartType(state.series as any[], action.payload, {
+        sankeyMode:
+          state.options?.type === 'sankey' ? state.options.mode : undefined,
+      });
+      if (fitted.removed.length > 0) {
+        state.series = fitted.kept as typeof state.series;
+        // State the REAL reason. "Cannot use" and "no room for" are different
+        // things, and reporting the wrong one sends people looking for a
+        // compatibility problem they do not have.
+        const notes: string[] = [];
+        if (fitted.unsupported.length > 0) {
+          const formulas = fitted.unsupported.filter(
+            (serie: any) => serie.type === 'formula',
+          ).length;
+          const kind =
+            formulas === fitted.unsupported.length
+              ? formulas > 1
+                ? 'formulas'
+                : 'a formula'
+              : `${fitted.unsupported.length} metric${fitted.unsupported.length > 1 ? 's' : ''}`;
+          notes.push(`Removed ${kind}, which ${action.payload} cannot use.`);
+        }
+        if (fitted.overCap.length > 0) {
+          notes.push(
+            `${action.payload} uses ${fitted.kept.length} metric${fitted.kept.length > 1 ? 's' : ''}, so ${fitted.overCap.length} more ${fitted.overCap.length > 1 ? 'were' : 'was'} removed.`,
+          );
+        }
+        state.lastTransitionNotice = [state.lastTransitionNotice, ...notes]
+          .filter(Boolean)
+          .join(' ');
+      }
+
       if (COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(action.payload)) {
         state.cohortBreakdown = undefined;
         // The filters must go too, for the same reason and with worse

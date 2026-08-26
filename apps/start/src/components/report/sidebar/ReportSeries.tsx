@@ -9,6 +9,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
+import { extractRetentionSelection } from '@openpanel/validation';
 import {
   SortableContext,
   sortableKeyboardCoordinates,
@@ -44,7 +45,6 @@ import {
 } from '../reportSlice';
 import { PropertiesCombobox } from './PropertiesCombobox';
 import { CohortPickerDialog } from '@/components/custom-cohorts/cohort-picker-dialog';
-import { extractRetentionSelection } from '@openpanel/db';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import {

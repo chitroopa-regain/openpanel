@@ -1,10 +1,10 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { extractRetentionSelection } from '@openpanel/validation';
 import { useEffect, useState } from 'react';
 import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
-import { extractRetentionSelection } from '@openpanel/db';
 import { useReportChartContext } from '../context';
 import {
   getReportDisplayMode,

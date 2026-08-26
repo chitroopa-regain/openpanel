@@ -1,4 +1,5 @@
 import { round } from '@openpanel/common';
+import { extractRetentionSelection } from '@openpanel/validation';
 import {
   AggregateChartEngine,
   ChartEngine,
@@ -25,7 +26,6 @@ import {
   type IClickhouseProfile,
   type IServiceProfile,
   cohortBucketPredicate,
-  extractRetentionSelection,
   onlyReportEvents,
   qualifyFunnelCondition,
   resolveAudience,

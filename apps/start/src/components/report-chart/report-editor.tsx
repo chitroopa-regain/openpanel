@@ -1,5 +1,5 @@
 import type { IServiceReport } from '@openpanel/db';
-import { extractRetentionSelection } from '@openpanel/db';
+import { extractRetentionSelection } from '@openpanel/validation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter, useSearch } from '@tanstack/react-router';
 import {

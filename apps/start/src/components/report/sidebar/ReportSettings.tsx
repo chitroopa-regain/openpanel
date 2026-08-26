@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { extractRetentionSelection } from '@openpanel/db';
+import { extractRetentionSelection } from '@openpanel/validation';
 import {
   changeCriteria,
   changeFunnelBreakdownStep,

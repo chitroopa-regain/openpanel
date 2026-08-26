@@ -935,3 +935,4 @@ export type ICreateImport = z.infer<typeof zCreateImport>;
 export * from './event-blocklist';
 export * from './track.validation';
 export * from './types.insights';
+export * from './retention-series';

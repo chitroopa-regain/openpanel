@@ -1,4 +1,5 @@
 import { CreateCustomEventDialog } from '@/components/custom-events/create-custom-event-dialog';
+import { extractRetentionSelection } from '@openpanel/validation';
 import { ColorSquare } from '@/components/color-square';
 import { ComboboxEvents } from '@/components/ui/combobox-events';
 import { Input } from '@/components/ui/input';
@@ -23,7 +24,6 @@ import {
   duplicateEvent,
   removeEvent,
 } from '../reportSlice';
-import { extractRetentionSelection } from '@openpanel/db';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import { ReportSeriesItem } from './ReportSeriesItem';

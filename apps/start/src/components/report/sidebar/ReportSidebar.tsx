@@ -18,7 +18,9 @@ export function ReportSidebar({
   className,
   showFooter = true,
 }: ReportSidebarProps) {
-  const { chartType, options, series } = useSelector((state) => state.report);
+  const { chartType, options, series, lastTransitionNotice } = useSelector(
+    (state) => state.report,
+  );
   const hasFrequencyDistribution = series.some(
     (s) => s.type !== 'formula' && s.segment === 'frequency_distribution'
   );
@@ -27,6 +29,18 @@ export function ReportSidebar({
   return (
     <>
       <div className={cn('flex flex-col gap-8', className)}>
+        {/* What the last chart-type change removed. Truncation matches
+            Mixpanel and is deliberate, but it must not be silent: dropping a
+            metric, a formula, or extra events from a retention slot changes
+            what the report measures. */}
+        {lastTransitionNotice && (
+          <div
+            className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+            data-testid="transition-notice"
+          >
+            {lastTransitionNotice}
+          </div>
+        )}
         {showFixedEvents ? (
           <ReportFixedEvents
             numberOfEvents={
