@@ -4,6 +4,7 @@ import { AspectContainer } from '../aspect-container';
 import { ReportChartEmpty } from '../common/empty';
 import { ReportChartError } from '../common/error';
 import { ReportChartLoading } from '../common/loading';
+import { extractRetentionSelection } from '@openpanel/db';
 import { useReportChartContext } from '../context';
 import {
   getReportDisplayMode,
@@ -22,33 +23,23 @@ export function ReportRetentionChart() {
   const firstItem = report.series[0];
   const secondItem = report.series[1];
 
-  const firstEvent =
-    firstItem?.type === 'event'
-      ? (firstItem.filters?.[0]?.value ?? []).map(String)
-      : [];
+  // Split each slot by PREDICATE, not by position. `filters[0]` was assumed to
+  // be the reserved event-name filter and `.slice(1)` to be the rest, so a
+  // series whose first filter was an ordinary one had that filter's value read
+  // as the event list and the filter itself dropped.
+  const firstSelection = extractRetentionSelection(firstItem);
+  const secondSelection = extractRetentionSelection(secondItem);
+  const selectionError = firstSelection.error ?? secondSelection.error;
+
+  const firstEvent = firstSelection.names;
   const firstCustomEventId =
     firstItem?.type === 'custom_event' ? firstItem.customEventId : undefined;
-  const secondEvent =
-    secondItem?.type === 'event'
-      ? (secondItem.filters?.[0]?.value ?? []).map(String)
-      : [];
+  const secondEvent = secondSelection.names;
   const secondCustomEventId =
     secondItem?.type === 'custom_event' ? secondItem.customEventId : undefined;
 
-  // Extract additional filters (beyond filters[0] which is the event name).
-  // For custom events, all filters are "outer" filters (no filters[0] event name).
-  const firstEventFilters =
-    firstItem?.type === 'event'
-      ? (firstItem.filters ?? []).slice(1)
-      : firstItem?.type === 'custom_event'
-        ? (firstItem.filters ?? [])
-        : [];
-  const secondEventFilters =
-    secondItem?.type === 'event'
-      ? (secondItem.filters ?? []).slice(1)
-      : secondItem?.type === 'custom_event'
-        ? (secondItem.filters ?? [])
-        : [];
+  const firstEventFilters = firstSelection.otherFilters;
+  const secondEventFilters = secondSelection.otherFilters;
   const firstEventFirstTimeFilter =
     firstItem?.type === 'event' || firstItem?.type === 'custom_event'
       ? !!firstItem.firstTimeFilter
@@ -120,6 +111,13 @@ export function ReportRetentionChart() {
   useReportRevalidation(res, queryOptions.queryKey, () =>
     trpc.chart.cohort.queryOptions({ ...cohortInput, bypassCache: true })
   );
+
+  // An ambiguous series must say so rather than quietly render "Select 2
+  // events", which reads as "you haven't finished configuring" when the real
+  // problem is that the report cannot be interpreted.
+  if (selectionError) {
+    return <Ambiguous message={selectionError} />;
+  }
 
   if (!isEnabled) {
     return <Disabled />;
@@ -233,6 +231,16 @@ function Empty() {
   return (
     <AspectContainer>
       <ReportChartEmpty />
+    </AspectContainer>
+  );
+}
+
+function Ambiguous({ message }: { message: string }) {
+  return (
+    <AspectContainer>
+      <ReportChartEmpty title="This report is ambiguous">
+        {message}
+      </ReportChartEmpty>
     </AspectContainer>
   );
 }

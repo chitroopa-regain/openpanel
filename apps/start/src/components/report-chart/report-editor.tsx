@@ -1,4 +1,5 @@
 import type { IServiceReport } from '@openpanel/db';
+import { extractRetentionSelection } from '@openpanel/db';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter, useSearch } from '@tanstack/react-router';
 import {
@@ -64,34 +65,23 @@ function ReportSqlContent({ active }: { active: boolean }) {
   const chartType = report.chartType;
   const firstSeriesItem = report.series[0];
   const secondSeriesItem = report.series[1];
-  const firstRetentionEvent =
-    firstSeriesItem?.type === 'event'
-      ? (firstSeriesItem.filters?.[0]?.value ?? []).map(String)
-      : [];
+  // Same shared extractor the chart and the server use — the SQL shown here
+  // must be the SQL that actually runs, so it cannot have its own opinion about
+  // which filter carries the event names.
+  const firstRetentionSelection = extractRetentionSelection(firstSeriesItem);
+  const secondRetentionSelection = extractRetentionSelection(secondSeriesItem);
+  const firstRetentionEvent = firstRetentionSelection.names;
   const firstRetentionCustomEventId =
     firstSeriesItem?.type === 'custom_event'
       ? firstSeriesItem.customEventId
       : undefined;
-  const secondRetentionEvent =
-    secondSeriesItem?.type === 'event'
-      ? (secondSeriesItem.filters?.[0]?.value ?? []).map(String)
-      : [];
+  const secondRetentionEvent = secondRetentionSelection.names;
   const secondRetentionCustomEventId =
     secondSeriesItem?.type === 'custom_event'
       ? secondSeriesItem.customEventId
       : undefined;
-  const firstRetentionFilters =
-    firstSeriesItem?.type === 'event'
-      ? (firstSeriesItem.filters ?? []).slice(1)
-      : firstSeriesItem?.type === 'custom_event'
-        ? (firstSeriesItem.filters ?? [])
-        : [];
-  const secondRetentionFilters =
-    secondSeriesItem?.type === 'event'
-      ? (secondSeriesItem.filters ?? []).slice(1)
-      : secondSeriesItem?.type === 'custom_event'
-        ? (secondSeriesItem.filters ?? [])
-        : [];
+  const firstRetentionFilters = firstRetentionSelection.otherFilters;
+  const secondRetentionFilters = secondRetentionSelection.otherFilters;
   const firstRetentionFirstTimeFilter =
     firstSeriesItem?.type === 'event' ||
     firstSeriesItem?.type === 'custom_event'

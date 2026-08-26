@@ -23,6 +23,7 @@ import {
   duplicateEvent,
   removeEvent,
 } from '../reportSlice';
+import { extractRetentionSelection } from '@openpanel/db';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import { ReportSeriesItem } from './ReportSeriesItem';
@@ -225,11 +226,9 @@ export function ReportFixedEvents({
                   (isCustomEvent
                     ? ((event as IChartCustomEvent).displayName ?? '')
                     : isSelectManyEvents
-                    ? ((
-                        event as IChartEventItem & {
-                          type: 'event';
-                        }
-                      ).filters[0]?.value ?? [])
+                    ? extractRetentionSelection(
+                        event as IChartEventItem & { type: 'event' },
+                      ).names
                     : (
                         event as IChartEventItem & {
                           type: 'event';

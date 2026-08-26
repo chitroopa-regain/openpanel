@@ -44,6 +44,7 @@ import {
 } from '../reportSlice';
 import { PropertiesCombobox } from './PropertiesCombobox';
 import { CohortPickerDialog } from '@/components/custom-cohorts/cohort-picker-dialog';
+import { extractRetentionSelection } from '@openpanel/db';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import {
@@ -473,11 +474,9 @@ export function ReportSeries() {
                           searchable
                           value={
                             (isSelectManyEvents
-                              ? ((
-                                  event as IChartEventItem & {
-                                    type: 'event';
-                                  }
-                                ).filters[0]?.value ?? [])
+                              ? extractRetentionSelection(
+                                  event as IChartEventItem & { type: 'event' },
+                                ).names
                               : (
                                   event as IChartEventItem & {
                                     type: 'event';

@@ -25,6 +25,7 @@ import {
   type IClickhouseProfile,
   type IServiceProfile,
   cohortBucketPredicate,
+  extractRetentionSelection,
   onlyReportEvents,
   qualifyFunnelCondition,
   resolveAudience,
@@ -1225,8 +1226,12 @@ export const chartRouter = createTRPCRouter({
         const secondItem = ctx.report.series[1];
 
         if (firstItem?.type === 'event') {
-          firstEvent = (firstItem.filters?.[0]?.value ?? []).map(String);
-          firstEventFilters = (firstItem.filters ?? []).slice(1);
+          // By predicate, not by position. filters[0] is not necessarily the
+          // reserved event-name filter, and slicing it off dropped a real one.
+          const sel = extractRetentionSelection(firstItem);
+          if (sel.error) throw new Error(sel.error);
+          firstEvent = sel.names;
+          firstEventFilters = sel.otherFilters;
           firstEventFirstTimeFilter = !!firstItem.firstTimeFilter;
         } else if (firstItem?.type === 'custom_event') {
           const ce = await db.customEvent.findUnique({
@@ -1247,8 +1252,10 @@ export const chartRouter = createTRPCRouter({
         }
 
         if (secondItem?.type === 'event') {
-          secondEvent = (secondItem.filters?.[0]?.value ?? []).map(String);
-          secondEventFilters = (secondItem.filters ?? []).slice(1);
+          const sel = extractRetentionSelection(secondItem);
+          if (sel.error) throw new Error(sel.error);
+          secondEvent = sel.names;
+          secondEventFilters = sel.otherFilters;
           secondEventFirstTimeFilter = !!secondItem.firstTimeFilter;
         } else if (secondItem?.type === 'custom_event') {
           const ce = await db.customEvent.findUnique({

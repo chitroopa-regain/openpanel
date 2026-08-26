@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { extractRetentionSelection } from '@openpanel/db';
 import {
   changeCriteria,
   changeFunnelBreakdownStep,
@@ -78,7 +79,8 @@ export function ReportSettings() {
     propertySourceEvent && 'name' in propertySourceEvent
       ? chartType === 'retention'
         ? String(
-            propertySourceEvent.filters?.[0]?.value?.[0] ??
+            // By predicate: filters[0] is not necessarily the event selector.
+            extractRetentionSelection(propertySourceEvent as any).names[0] ??
               propertySourceEvent.name
           )
         : propertySourceEvent.name
