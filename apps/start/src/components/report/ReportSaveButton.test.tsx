@@ -137,6 +137,9 @@ describe('ReportSaveButton update', () => {
       id: 'report-1',
       dashboardId: 'regain-pro',
       projectId: 'regain-app',
+      // Revision stamp: the cached report shape carries updatedAt, which the
+      // query cache keys saved reports on.
+      updatedAt: expect.anything(),
     });
     expect(mocks.fetchQuery).toHaveBeenCalledWith({
       queryKey: mocks.getQueryKey,

@@ -38,13 +38,11 @@ import {
   addSerie,
   COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES,
   changeEvent,
-  changeSeriesCohortFilter,
   duplicateEvent,
   removeEvent,
   reorderEvents,
 } from '../reportSlice';
 import { PropertiesCombobox } from './PropertiesCombobox';
-import { CohortPickerDialog } from '@/components/custom-cohorts/cohort-picker-dialog';
 import type { ReportEventMoreProps } from './ReportEventMore';
 import { ReportEventMore } from './ReportEventMore';
 import {
@@ -204,23 +202,6 @@ export function ReportSeries() {
   ).data ?? []) as Array<{ id: string; name: string; components?: unknown }>;
   const [editingCustomEvent, setEditingCustomEvent] =
     React.useState<IChartCustomEvent | null>(null);
-  const [cohortFilterSeriesId, setCohortFilterSeriesId] = React.useState<
-    string | null
-  >(null);
-  const [cohortFilterOperator, setCohortFilterOperator] = React.useState<
-    'in' | 'not_in'
-  >('in');
-  // Same rule as the breakdown: these chart types never apply the predicate, so
-  // the entry is disabled WITH A REASON rather than hidden — a silently absent
-  // option is indistinguishable from a broken one.
-  const cohortFilterDisabledReason = COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(
-    chartType,
-  )
-    ? `Not available on ${chartType.replace('_', ' ')} charts`
-    : undefined;
-  const cohortFilterCountFor = (serie: unknown) =>
-    (serie as { cohortFilter?: { cohortIds?: string[] } } | null)?.cohortFilter
-      ?.cohortIds?.length ?? 0;
 
   const showSegment = ![
     'retention',
@@ -294,15 +275,6 @@ export function ReportSeries() {
               firstTimeFilter: !currentFirstTime,
             } as any)
           );
-        }
-        case 'cohortFilter': {
-          // Opens the picker for THIS series; the dialog dispatches
-          // changeSeriesCohortFilter, which touches only cohortFilter rather
-          // than replacing the whole series object.
-          setCohortFilterSeriesId(
-            ('type' in event ? event.id : (event as IChartEvent).id) ?? null,
-          );
-          return;
         }
         case 'editCustomEvent': {
           if ('type' in event && event.type === 'custom_event') {
@@ -398,8 +370,6 @@ export function ReportSeries() {
                           (event as IChartCustomEvent).firstTimeFilter
                         }
                         hidden={(event as IChartCustomEvent).hidden}
-                        cohortFilterCount={cohortFilterCountFor(event)}
-                        cohortFilterDisabledReason={cohortFilterDisabledReason}
                         onClick={handleMore(event)}
                         onDisplayNameChange={(value) => {
                           dispatchChangeEvent({
@@ -429,7 +399,6 @@ export function ReportSeries() {
                         displayNamePlaceholder={`Display name (${alphabetIds[index]})`}
                         hidden={event.hidden}
                         hideFirstTimeFilter
-                        hideCohortFilter
                         onClick={handleMore(event)}
                         onDisplayNameChange={(value) => {
                           dispatchChangeFormula({
@@ -499,8 +468,6 @@ export function ReportSeries() {
                         hidden={
                           (event as IChartEventItem & { type: 'event' }).hidden
                         }
-                        cohortFilterCount={cohortFilterCountFor(event)}
-                        cohortFilterDisabledReason={cohortFilterDisabledReason}
                         onClick={handleMore(event)}
                         onDisplayNameChange={(value) => {
                           dispatchChangeEvent({
@@ -630,39 +597,6 @@ export function ReportSeries() {
           setEditingCustomEvent(null);
         }}
         open={!!editingCustomEvent}
-      />
-      <CohortPickerDialog
-        onConfirm={(cohortIds: string[]) => {
-          if (!cohortFilterSeriesId) return;
-          dispatch(
-            changeSeriesCohortFilter({
-              seriesId: cohortFilterSeriesId,
-              // An empty selection means "no filter", not "a filter matching
-              // nobody" — storing {cohortIds: []} would fail min(1) validation
-              // and reads as an active filter in the UI.
-              filter: cohortIds.length
-                ? { operator: cohortFilterOperator, cohortIds }
-                : undefined,
-            }),
-          );
-          setCohortFilterSeriesId(null);
-        }}
-        onOpenChange={(next: boolean) => {
-          if (!next) setCohortFilterSeriesId(null);
-        }}
-        onOperatorChange={setCohortFilterOperator}
-        open={!!cohortFilterSeriesId}
-        operator={cohortFilterOperator}
-        title="Filter this metric by cohort"
-        value={
-          (
-            selectedSeries.find(
-              (serie: { id?: string }) => serie.id === cohortFilterSeriesId,
-            ) as
-              | { cohortFilter?: { cohortIds?: string[] } }
-              | undefined
-          )?.cohortFilter?.cohortIds ?? []
-        }
       />
     </div>
   );

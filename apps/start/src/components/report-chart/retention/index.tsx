@@ -12,7 +12,8 @@ import {
 } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
-import CohortTable from './table';
+import CohortTable, { type CohortRow } from './table';
+import { hasRenderableRetention } from './has-renderable-retention';
 import { Combobox } from '@/components/ui/combobox';
 import { Label } from '@/components/ui/label';
 import { useTRPC } from '@/integrations/trpc/react';
@@ -96,9 +97,13 @@ export function ReportRetentionChart() {
     breakdowns: report.breakdowns,
     interval: report.interval,
     // Retention builds its own input for chart.cohort rather than passing the
-    // whole report, so the audience has to be forwarded explicitly. Omitting it
-    // made the picker accept a cohort and change nothing.
-    audience: report.audience,
+    // whole report, so the cohort filter has to be forwarded explicitly.
+    // Omitting it makes the picker accept a cohort and change nothing.
+    cohortFilters: report.cohortFilters,
+    // Same reason for the breakdown: this input is built field by field,
+    // so an unforwarded cohortBreakdown leaves the sidebar showing buckets
+    // over a grid that was never split.
+    cohortBreakdown: report.cohortBreakdown,
     shareId,
     id: 'id' in report ? report.id : undefined,
   };
@@ -131,9 +136,42 @@ export function ReportRetentionChart() {
     return <Error />;
   }
 
-  if (!res.data || res.data.data.length === 0) {
+  if (!res.data || !hasRenderableRetention(res.data)) {
     return <Empty />;
   }
+
+  // Flatten the custom-cohort buckets into one row list, stamping each row with
+  // the bucket it came from. Identity is (cohortId, membership) — never the
+  // label, so two cohorts sharing a name stay distinct and `In` / `Not In`
+  // cannot collapse into each other.
+  //
+  // A bucket that matched nobody comes back with NO rows. Dropping it would
+  // make an empty cohort silently vanish from the grid, which reads as "this
+  // cohort was not requested" rather than "this cohort has no users". So its
+  // grid is synthesised here, in the view, from a sibling bucket's interval
+  // domain — the query layer stays honest about having returned nothing.
+  const buckets = res.data.buckets ?? [];
+  const template = buckets.find((bucket) => bucket.data.length > 0)?.data ?? [];
+  const rows: CohortRow[] = buckets.length
+    ? buckets.flatMap((bucket) => {
+        const key = `${bucket.cohortId}:${bucket.membership}`;
+        const source = bucket.data.length
+          ? bucket.data
+          : template.map((row) => ({
+              ...row,
+              sum: 0,
+              values: row.values.map((value) => (value === null ? null : 0)),
+              percentages: row.percentages.map((value) =>
+                value === null ? null : 0,
+              ),
+            }));
+        return source.map((row) => ({
+          ...row,
+          cohortKey: key,
+          cohortLabel: bucket.label,
+        }));
+      })
+    : (res.data.data as CohortRow[]);
 
   const isDashboardLayout = options.retentionLayout === 'dashboard';
   const displayMode = getReportDisplayMode(
@@ -192,18 +230,18 @@ export function ReportRetentionChart() {
         {showChart &&
           (isDashboardLayout ? (
             <div className="min-h-0 overflow-hidden">
-              <Chart data={res.data.data} />
+              <Chart data={rows} />
             </div>
           ) : (
             <AspectContainer>
-              <Chart data={res.data.data} />
+              <Chart data={rows} />
             </AspectContainer>
           ))}
         {showTable && (
           <div
             className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}
           >
-            <CohortTable data={res.data.data} />
+            <CohortTable data={rows} />
           </div>
         )}
       </div>

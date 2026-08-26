@@ -16,6 +16,7 @@ import { Chart, Summary } from './chart';
 import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdowns';
 import { useTRPC } from '@/integrations/trpc/react';
 import { pushModal } from '@/modals';
+import { parseCohortSerieId } from '../cohort-serie-id';
 import { useDispatch } from '@/redux';
 
 export function ReportFunnelChart() {
@@ -84,13 +85,17 @@ export function ReportFunnelChart() {
   );
 
   const handleInspectStep = useCallback(
-    (stepIndex: number, breakdownValues?: string[]) => {
+    (stepIndex: number, breakdownValues?: string[], serieId?: string) => {
+      const bucket = parseCohortSerieId(serieId);
       pushModal('ViewChartUsers', {
         type: 'funnel',
         report: {
           projectId: report.projectId,
           series: report.series,
           breakdowns: report.breakdowns || [],
+          // The funnel's own cohort restriction. Without it the modal lists the
+          // unfiltered population beside a filtered number.
+          cohortFilters: report.cohortFilters,
           interval: report.interval || 'day',
           startDate: report.startDate,
           endDate: report.endDate,
@@ -103,9 +108,13 @@ export function ReportFunnelChart() {
         },
         stepIndex,
         breakdownValues,
+        // Which bucket was clicked, and the instant the SERVER resolved
+        // membership at — never re-derived here.
+        ...(bucket ?? {}),
+        membershipAsOf: res.data?.membershipAsOf,
       });
     },
-    [report, funnelOptions]
+    [report, funnelOptions, res.data?.membershipAsOf]
   );
 
   if (isLazyLoading || res.isLoading) {

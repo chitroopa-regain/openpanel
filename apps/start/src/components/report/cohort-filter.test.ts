@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { reportSlice } from './reportSlice';
 
-const {
-  addSerie,
-  changeChartType,
-  changeReportCohortFilter,
-  changeSeriesCohortFilter,
-  setReport,
-} = reportSlice.actions;
+const { addSerie, changeChartType, changeCohortFilters, changeCohortBreakdown, setReport } =
+  reportSlice.actions;
 const initial = reportSlice.getInitialState();
 
 function withOneEvent() {
@@ -22,140 +17,117 @@ function withOneEvent() {
   );
 }
 
-describe('inline (per-metric) cohort filter', () => {
-  it('applies to only the targeted series', () => {
-    let state = withOneEvent();
-    state = reportSlice.reducer(
-      state,
-      addSerie({
-        type: 'event',
-        name: 'Other Event',
-        segment: 'event',
-        filters: [],
-      } as any),
-    );
-    const [first, second] = state.series;
-
-    state = reportSlice.reducer(
-      state,
-      changeSeriesCohortFilter({
-        seriesId: first!.id!,
-        filter: { operator: 'in', cohortIds: ['cohort-a'] },
-      }),
+describe('report-level cohort filter rows', () => {
+  it('stores rows in order and clears on empty', () => {
+    let state = reportSlice.reducer(
+      withOneEvent(),
+      changeCohortFilters([
+        { operator: 'in', cohortIds: ['a', 'b'] },
+        { operator: 'not_in', cohortIds: ['c'] },
+      ]),
     );
 
-    expect((state.series[0] as any).cohortFilter).toEqual({
-      operator: 'in',
-      cohortIds: ['cohort-a'],
-    });
-    // The sibling must be untouched — the whole point of a per-metric filter.
-    expect((state.series[1] as any).cohortFilter).toBeUndefined();
-    expect(state.series[1]!.id).toBe(second!.id);
+    expect(state.cohortFilters).toEqual([
+      { operator: 'in', cohortIds: ['a', 'b'] },
+      { operator: 'not_in', cohortIds: ['c'] },
+    ]);
+    expect(state.dirty).toBe(true);
+
+    state = reportSlice.reducer(state, changeCohortFilters([]));
+    // Normalised to undefined rather than an empty array: a stored `[]` would
+    // read as "a filter exists" everywhere downstream.
+    expect(state.cohortFilters).toBeUndefined();
   });
 
-  it('preserves the rest of the series when setting a filter', () => {
-    // A dedicated action exists precisely because changeEvent replaces the whole
-    // object; this pins that sibling fields survive.
-    let state = withOneEvent();
-    const id = state.series[0]!.id!;
-    state = reportSlice.reducer(
-      state,
-      changeSeriesCohortFilter({
-        seriesId: id,
-        filter: { operator: 'not_in', cohortIds: ['cohort-b'] },
-      }),
-    );
-    expect((state.series[0] as any).name).toBe('FT: Overlay Shown');
-    expect((state.series[0] as any).segment).toBe('event');
-    expect((state.series[0] as any).cohortFilter.operator).toBe('not_in');
-  });
-
-  it('clears the filter when passed undefined', () => {
-    let state = withOneEvent();
-    const id = state.series[0]!.id!;
-    state = reportSlice.reducer(
-      state,
-      changeSeriesCohortFilter({
-        seriesId: id,
-        filter: { operator: 'in', cohortIds: ['cohort-a'] },
-      }),
-    );
-    state = reportSlice.reducer(
-      state,
-      changeSeriesCohortFilter({ seriesId: id, filter: undefined }),
+  it('does not touch the series — a cohort filter is report-level only', () => {
+    const state = reportSlice.reducer(
+      withOneEvent(),
+      changeCohortFilters([{ operator: 'in', cohortIds: ['a'] }]),
     );
     expect((state.series[0] as any).cohortFilter).toBeUndefined();
+    expect((state.series[0] as { name?: string }).name).toBe('FT: Overlay Shown');
   });
 });
 
-describe('report-level cohort filter', () => {
-  it('round-trips and clears', () => {
-    let state = reportSlice.reducer(
-      initial,
-      changeReportCohortFilter({ operator: 'in', cohortIds: ['a', 'b'] }),
-    );
-    expect(state.cohortFilter).toEqual({ operator: 'in', cohortIds: ['a', 'b'] });
-
-    state = reportSlice.reducer(state, changeReportCohortFilter(undefined));
-    expect(state.cohortFilter).toBeUndefined();
-  });
-});
-
-describe('unsupported chart types strip every cohort surface', () => {
-  it.each(['funnel', 'funnel_metric', 'retention', 'sankey', 'conversion'])(
-    'hydrating a saved %s report drops report-level AND inline filters',
+describe('chart types that DO apply the filter keep it', () => {
+  // The regression this pins: funnel and retention apply the cohort filter in
+  // their query paths, so stripping it on switch (as the old shared list did)
+  // would silently widen the report.
+  it.each(['funnel', 'funnel_metric', 'retention'] as const)(
+    'keeps the filter when switching to %s',
     (chartType) => {
-      const state = reportSlice.reducer(
-        initial,
-        setReport({
-          ...initial,
-          chartType: chartType as any,
-          cohortFilter: { operator: 'in', cohortIds: ['a'] },
-          cohortBreakdown: { cohortIds: ['b'] },
-          series: [
-            {
-              id: 'A',
-              type: 'event',
-              name: 'E',
-              segment: 'event',
-              filters: [],
-              cohortFilter: { operator: 'in', cohortIds: ['c'] },
-            },
-          ],
-        } as any),
+      let state = reportSlice.reducer(
+        withOneEvent(),
+        changeCohortFilters([{ operator: 'in', cohortIds: ['a'] }]),
       );
-      // Leaving any of these set would show an active filter in the sidebar
-      // over numbers the query path never actually filtered.
-      expect(state.cohortFilter).toBeUndefined();
+      state = reportSlice.reducer(state, changeChartType(chartType));
+      expect(state.cohortFilters).toEqual([
+        { operator: 'in', cohortIds: ['a'] },
+      ]);
+    },
+  );
+
+  it.each(['funnel', 'funnel_metric', 'retention'] as const)(
+    'keeps the cohort BREAKDOWN on %s too',
+    (chartType) => {
+      let state = reportSlice.reducer(withOneEvent(), changeCohortBreakdown(['a']));
+      state = reportSlice.reducer(state, changeChartType(chartType));
+      // These paths now run the per-bucket loop, so the breakdown means
+      // something on them and must survive the switch.
+      expect(state.cohortBreakdown).toEqual({ cohortIds: ['a'] });
+    },
+  );
+
+  it.each(['sankey', 'conversion'] as const)(
+    'still drops the cohort BREAKDOWN on %s',
+    (chartType) => {
+      let state = reportSlice.reducer(withOneEvent(), changeCohortBreakdown(['a']));
+      state = reportSlice.reducer(state, changeChartType(chartType));
+      // No bucket loop on these paths: keeping it would render one unsplit
+      // series while claiming a split.
       expect(state.cohortBreakdown).toBeUndefined();
-      expect((state.series[0] as any).cohortFilter).toBeUndefined();
     },
   );
+});
 
-  it.each(['linear', 'bar', 'area', 'pie', 'metric', 'table', 'histogram'])(
-    'keeps them on %s',
+describe('chart types that ignore the filter strip it', () => {
+  it.each(['sankey', 'conversion'] as const)(
+    'clears the filter when switching to %s',
     (chartType) => {
-      const state = reportSlice.reducer(
-        initial,
-        setReport({
-          ...initial,
-          chartType: chartType as any,
-          cohortFilter: { operator: 'not_in', cohortIds: ['a'] },
-        } as any),
+      let state = reportSlice.reducer(
+        withOneEvent(),
+        changeCohortFilters([{ operator: 'in', cohortIds: ['a'] }]),
       );
-      expect(state.cohortFilter).toEqual({
-        operator: 'not_in',
-        cohortIds: ['a'],
-      });
+      state = reportSlice.reducer(state, changeChartType(chartType));
+      // Worse than rendering unfiltered: the query guard REJECTS a filter these
+      // paths cannot apply, so leaving it set breaks the report outright.
+      expect(state.cohortFilters).toBeUndefined();
     },
   );
 
-  it('switching an existing report to an unsupported type clears the filter', () => {
-    let state = reportSlice.reducer(
+  it('strips it on hydration too, not only on a switch', () => {
+    const state = reportSlice.reducer(
       initial,
-      changeReportCohortFilter({ operator: 'in', cohortIds: ['a'] }),
+      setReport({
+        ...initial,
+        chartType: 'sankey',
+        cohortFilters: [{ operator: 'in', cohortIds: ['a'] }],
+      } as any),
     );
-    state = reportSlice.reducer(state, changeChartType('funnel'));
-    expect(state.cohortFilter).toBeUndefined();
+    expect(state.cohortFilters).toBeUndefined();
+  });
+
+  it('hydrates a filter untouched on a supporting chart type', () => {
+    const state = reportSlice.reducer(
+      initial,
+      setReport({
+        ...initial,
+        chartType: 'retention',
+        cohortFilters: [{ operator: 'not_in', cohortIds: ['a'] }],
+      } as any),
+    );
+    expect(state.cohortFilters).toEqual([
+      { operator: 'not_in', cohortIds: ['a'] },
+    ]);
   });
 });

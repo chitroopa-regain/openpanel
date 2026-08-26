@@ -60,7 +60,7 @@ describe('cohort breakdown is dropped on chart types that ignore it', () => {
   const withCohorts = () =>
     reportSlice.reducer(initial, changeCohortBreakdown(['cohort-a']));
 
-  it.each(['funnel', 'funnel_metric', 'retention', 'sankey', 'conversion'])(
+  it.each(['sankey', 'conversion'])(
     'clears the cohort breakdown when switching to %s',
     (type) => {
       // Those query paths ignore the field, so leaving it set would render an
@@ -70,7 +70,12 @@ describe('cohort breakdown is dropped on chart types that ignore it', () => {
     },
   );
 
-  it.each(['linear', 'bar', 'area', 'pie', 'metric', 'table', 'histogram'])(
+  it.each([
+    'linear', 'bar', 'area', 'pie', 'metric', 'table', 'histogram',
+    // funnel and retention run the per-bucket loop now, so the breakdown is
+    // meaningful on them and must survive the switch.
+    'funnel', 'funnel_metric', 'retention',
+  ])(
     'keeps the cohort breakdown when switching to %s',
     (type) => {
       const s = reportSlice.reducer(withCohorts(), changeChartType(type as never));
@@ -87,12 +92,17 @@ describe('hydration drops a cohort breakdown the chart type cannot apply', () =>
       cohortBreakdown: { cohortIds: ['cohort-a'] },
     }) as never;
 
-  it('strips it when loading a saved funnel report', () => {
+  it('strips it when loading a saved sankey report', () => {
     // Reports saved before this rule existed — or created straight through the
-    // API — can arrive in this state; the funnel path would ignore the field
+    // API — can arrive in this state; the sankey path would ignore the field
     // and render an unsplit series without complaint.
-    const s = reportSlice.reducer(initial, setReport(report('funnel')));
+    const s = reportSlice.reducer(initial, setReport(report('sankey')));
     expect(s.cohortBreakdown).toBeUndefined();
+  });
+
+  it('keeps it when loading a saved funnel report', () => {
+    const s = reportSlice.reducer(initial, setReport(report('funnel')));
+    expect(s.cohortBreakdown?.cohortIds).toEqual(['cohort-a']);
   });
 
   it('keeps it when loading a saved linear report', () => {

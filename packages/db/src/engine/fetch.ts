@@ -3,7 +3,6 @@ import { groupByLabels } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import type {
   IChartCustomEvent,
-  ICohortFilter,
   ICustomEventComponent,
   IGetChartDataInput,
 } from '@openpanel/validation';
@@ -13,8 +12,7 @@ import { getChartSql } from '../services/chart.service';
 import {
   cohortBucketLabel,
   cohortBucketPredicate,
-  resolveAudience,
-  resolveCohortFilter,
+  resolveCohortFilters,
   resolveCohortsForBreakdown,
 } from '../services/custom-cohort.service';
 import type { ConcreteSeries, Plan } from './types';
@@ -32,31 +30,20 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
   const results: ConcreteSeries[] = [];
   const queries: string[] = [];
 
-  // Resolve the report-level audience ONCE, not per series. Compiled
-  // server-side from cohort ids; `endDate` is the canonical asOf so every
-  // series in the report sees the same membership.
-  const audience = await resolveAudience(
-    plan.input.audience?.cohortIds,
+  // Resolve the report's cohort filter ONCE, not per series: it restricts the
+  // base population of the whole report. `membershipAsOf` is the canonical
+  // instant (§3.2 of the v3 plan) so every series — and the previous period —
+  // sees exactly the same membership.
+  const reportFilter = await resolveCohortFilters(
+    plan.input.cohortFilters,
     plan.input.projectId,
     plan.membershipAsOf ?? plan.input.endDate
   );
-  // The report-level cohort FILTER is separate from the legacy audience: its
-  // ids are OR-combined, the audience's are ANDed. Both narrow every series,
-  // so they compose by AND.
-  const reportFilter = await resolveCohortFilter(
-    plan.input.cohortFilter,
-    plan.input.projectId,
-    plan.membershipAsOf ?? plan.input.endDate
-  );
-  const reportPredicate =
-    [audience.render(null), reportFilter.render(null)]
-      .filter(Boolean)
-      .join(' AND ') || null;
+  const reportPredicate = reportFilter.predicate(null);
 
   // Breakdown by cohort: one series per cohort, resolved once in the REQUESTED
-  // order. Kept separate from the audience — the audience narrows the
-  // population, the breakdown splits what remains, so each series is
-  // `audience ∩ cohort_i`.
+  // order. Kept separate from the filter — the filter narrows the population,
+  // the breakdown splits what remains, so each series is `filter ∩ bucket_i`.
   const breakdownCohorts = await resolveCohortsForBreakdown(
     plan.input.cohortBreakdown?.cohortIds,
     plan.input.projectId,
@@ -149,19 +136,10 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
               .firstTimeFilter
           : undefined;
 
-    // INLINE cohort filter — scoped to THIS metric only, unlike the report-level
-    // one. Resolved per definition and ANDed onto the report predicate, so the
-    // metric is computed over a narrower population than its siblings.
-    // Read structurally: formula definitions carry no cohortFilter.
-    const inlineFilter = await resolveCohortFilter(
-      (definition as { cohortFilter?: ICohortFilter }).cohortFilter,
-      plan.input.projectId,
-      plan.membershipAsOf ?? plan.input.endDate
-    );
-    const audiencePredicate =
-      [reportPredicate, inlineFilter.render(null)]
-        .filter(Boolean)
-        .join(' AND ') || null;
+    // One predicate for every series: the report's filter rows. There is no
+    // per-metric scope — membership is a property of the profile, so narrowing
+    // a single metric by cohort is the report-level filter with extra steps.
+    const audiencePredicate = reportPredicate;
 
     // Build query input
     const queryInput: IGetChartDataInput = {
@@ -281,8 +259,8 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
         customEventComponents,
         // MUST be repeated here. audiencePredicate is a call-time argument, not part
         // of queryInput, so omitting it made the retry run UNFILTERED: a report with
-        // an audience whose breakdown legitimately matched nothing fell back to a
-        // confident non-zero total that ignored the audience entirely.
+        // a cohort filter whose breakdown legitimately matched nothing fell back to
+        // a confident non-zero total that ignored the filter entirely.
         audiencePredicate,
       });
       queries.push(fallbackSql);

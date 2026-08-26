@@ -14,8 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   chQuery: vi.fn(),
   getChartSql: vi.fn(),
-  resolveAudience: vi.fn(),
-  resolveCohortFilter: vi.fn(),
+  resolveCohortFilters: vi.fn(),
   resolveCohortsForBreakdown: vi.fn(),
 }));
 
@@ -27,9 +26,10 @@ vi.mock('../clickhouse/client', () => ({
 vi.mock('../prisma-client', () => ({ db: {} }));
 vi.mock('../services/chart.service', () => ({ getChartSql: mocks.getChartSql }));
 vi.mock('../services/custom-cohort.service', () => ({
-  resolveAudience: mocks.resolveAudience,
-  resolveCohortFilter: mocks.resolveCohortFilter,
+  resolveCohortFilters: mocks.resolveCohortFilters,
   resolveCohortsForBreakdown: mocks.resolveCohortsForBreakdown,
+  cohortBucketPredicate: vi.fn(),
+  cohortBucketLabel: vi.fn(),
 }));
 
 const AUDIENCE_SQL = "profile_id IN (SELECT profile_id FROM cohort_42)";
@@ -61,9 +61,11 @@ function makePlan(): any {
 describe('fetch() empty-result fallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveAudience.mockResolvedValue({ render: () => AUDIENCE_SQL });
-    // No cohort filter in this scenario — only the legacy audience.
-    mocks.resolveCohortFilter.mockResolvedValue({ render: () => null });
+    mocks.resolveCohortFilters.mockResolvedValue({
+      predicate: () => AUDIENCE_SQL,
+      cohortIds: ['cohort-a'],
+      effectiveVersion: 1,
+    });
     mocks.resolveCohortsForBreakdown.mockResolvedValue([]);
     mocks.getChartSql.mockImplementation(() => 'SELECT 1');
     // First query (with breakdowns) returns nothing -> triggers the fallback.

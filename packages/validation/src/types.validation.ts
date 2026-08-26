@@ -95,13 +95,16 @@ export type IChartSerie = {
     name: string;
     breakdowns?: Record<string, string>;
     /**
-     * Cohort restrictions that produced this series, carried to the client so
-     * a drill-down ("View Users") can reproduce the SAME population. Omitting
-     * them lists people outside the number that was clicked.
+     * The cohort BUCKET that produced this series, carried to the client so a
+     * drill-down ("View Users") reproduces the same population. Omitting it
+     * lists people outside the number that was clicked.
+     *
+     * There is deliberately no per-series cohort filter here: a cohort filter
+     * is report-level, so it travels on the report, not on each series. Leaving
+     * the field would invite the removed per-metric scope back in.
      */
     cohortId?: string;
     cohortMembership?: 'in' | 'not_in';
-    cohortFilter?: { operator?: 'in' | 'not_in'; cohortIds: string[] };
   };
   metrics: Metrics;
   serieType?: 'event' | 'formula' | 'custom_event';
@@ -117,6 +120,13 @@ export type FinalChart = {
   metrics: Metrics;
   queries?: string[];
   timezone?: string;
+  /**
+   * The instant cohort membership was evaluated at for this response. Sent to
+   * the client so a drill-down echoes it back verbatim: re-deriving an instant
+   * on the drill-down side lists a different population than the chart showed,
+   * and nothing on screen would say so.
+   */
+  membershipAsOf?: string;
 };
 
 export type ISetCookie = (

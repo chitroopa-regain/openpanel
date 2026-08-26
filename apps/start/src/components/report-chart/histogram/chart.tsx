@@ -66,8 +66,7 @@ export function Chart({ data }: Props) {
       range,
       series: reportSeries,
       breakdowns,
-      audience,
-      cohortFilter,
+      cohortFilters,
       options: reportOptions,
     },
     options: { hideXAxis, hideYAxis },
@@ -142,10 +141,9 @@ export function Chart({ data }: Props) {
                 projectId,
                 series: reportSeries,
                 breakdowns: breakdowns || [],
-                // Without these the drill-down lists the UNFILTERED population
+                // Without this the drill-down lists the UNFILTERED population
                 // while the chart shows a cohort-filtered number.
-                audience,
-                cohortFilter,
+                cohortFilters,
                 interval,
                 startDate,
                 endDate,
@@ -179,11 +177,10 @@ export function Chart({ data }: Props) {
       data,
       reportSeries,
       breakdowns,
-      // Without these the handler keeps a STALE closure: changing the cohort
+      // Without this the handler keeps a STALE closure: changing the cohort
       // filter without touching the series would leave View Users querying the
       // previous (or unfiltered) population while the chart shows the new one.
-      audience,
-      cohortFilter,
+      cohortFilters,
       interval,
       startDate,
       endDate,

@@ -346,12 +346,16 @@ model Report {
   /// [IDateConfig]
   dateConfig   Json?
 
-  /// Report-level audience: CustomCohort ids, AND-combined. See CustomCohortReference.
-  audience    Json?
   /// Breakdown by cohort: one series per CustomCohort id. See CustomCohortReference.
   cohortBreakdown Json?
-  /// Report-level cohort FILTER: {operator, cohortIds}, ids OR-combined.
-  /// Distinct from `audience`, whose ids are AND-combined. See CustomCohortReference.
+  /// Report-level cohort filter ROWS: [{operator, cohortIds}]. Ids within a row
+  /// are OR-combined, rows AND together. See CustomCohortReference.
+  /// [ICohortFilters]
+  cohortFilters   Json?
+
+  /// Legacy, dropped once every deployment reads `cohortFilters` (v3 phase 0).
+  /// Kept for the cutover only — nothing reads these.
+  audience        Json?
   cohortFilter    Json?
 
   dashboardId String

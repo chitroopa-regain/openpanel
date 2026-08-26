@@ -11,7 +11,7 @@ import { ch, chQuery } from '../clickhouse/client';
 import { TABLE_NAMES } from '../clickhouse/client';
 import { clix } from '../clickhouse/query-builder';
 import { db } from '../prisma-client';
-import { resolveAudience } from './custom-cohort.service';
+import { resolveCohortFilters } from './custom-cohort.service';
 import { createSqlBuilder } from '../sql-builder';
 import {
   getCustomEventWhereClause,
@@ -299,7 +299,7 @@ export class FunnelService {
     projectId: string;
     traitDescriptors: Map<string, TraitBreakdown>;
     startDate: string;
-    hasAudience?: boolean;
+    hasCohortRestriction?: boolean;
   }): Promise<boolean> {
     // Global kill switch (no code change needed to revert everywhere).
     if (
@@ -309,13 +309,13 @@ export class FunnelService {
       return false;
     }
 
-    // A cohort audience compiles to a SESSION-eligibility semi-join, and the MV
+    // A cohort restriction compiles to a SESSION-eligibility semi-join, and the MV
     // (event_profile_firsts_local) has no session_id at all, so the predicate
     // cannot be expressed there. Filtering the MV on profile_id instead would
     // be exactly the row-filter semantics the session semi-join exists to
     // avoid, and would mix two sources whose coverage drifts independently —
     // the failure already measured on cohort_events_mv. Take the raw path.
-    if (params.hasAudience) return false;
+    if (params.hasCohortRestriction) return false;
 
     // MV is per profile_id — no session mode.
     if (params.groupBy !== 'profile_id') return false;
@@ -682,43 +682,17 @@ export class FunnelService {
             ...additionalSelects,
           ];
 
-    // Cohort audience — attachment is MODE-DEPENDENT, because the two funnel
-    // modes compute windowFunnel over different units:
-    //
-    //   session mode  — windowFunnel per session_id, profile extracted via
-    //                   argMax. A session that starts anonymous and becomes
-    //                   identified mid-way must still count, so filtering base
-    //                   rows by profile_id would delete those pre-login rows.
-    //                   Correct predicate: eligible SESSIONS (semi-join).
-    //
-    //   profile mode  — windowFunnel per profile_id directly, already filtered
-    //                   to identified users (profile_id != device_id). Here a
-    //                   session semi-join would be WRONG: it admits every row
-    //                   of an eligible session, so any OTHER profile sharing
-    //                   that session gets its own funnel group and is counted
-    //                   despite not being a cohort member. Correct predicate:
-    //                   the profile filter itself.
-    //
-    // Session-mode eligibility must span the funnel's EXPANDED scan
-    // (endDate + funnelWindow), not endDate: step 1 is anchored to
-    // [start, end] but steps 2..N may land up to funnelWindow later, and a user
-    // who identifies in that tail would otherwise be dropped. Derived from the
-    // same funnelWindowSeconds as the scan so the two cannot drift.
-    //
-    // session_id != '' guards against one cohort member with an empty session
-    // id making every other empty-session event in the project eligible.
-    const eligibilityClause = !audiencePredicate
-      ? null
-      : groupBy === 'session_id'
-        ? `${col('session_id')} IN (
-          SELECT DISTINCT session_id FROM ${TABLE_NAMES.events}
-          WHERE project_id = ${escapedProject}
-            AND created_at >= toDateTime(${escapedStart})
-            AND created_at <= addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})
-            AND session_id != ''
-            AND ${audiencePredicate}
-        )`
-        : qualify(audiencePredicate);
+    // Attachment is MODE-DEPENDENT; see cohortEligibilityClause.
+    const eligibilityClause = this.cohortEligibilityClause({
+      predicate: audiencePredicate,
+      groupBy,
+      projectId,
+      startDate: startDate,
+      endDate: endDate,
+      funnelWindowSeconds,
+      sessionColumn: col('session_id'),
+      qualifyPredicate: qualify,
+    });
 
     const query = clix(this.client, timezone)
       .select(selects)
@@ -908,20 +882,46 @@ export class FunnelService {
     breakdowns = [],
     limit,
     timezone = 'UTC',
-    audience,
-  }: IReportInput & { timezone: string; events?: IChartEvent[] }) {
+    cohortFilters,
+    membershipAsOf,
+    extraCohortPredicate = null,
+  }: IReportInput & {
+    timezone: string;
+    events?: IChartEvent[];
+    /**
+     * The canonical instant cohort membership is evaluated at, supplied by the
+     * caller. NOT defaulted to this call's own `endDate`: the router invokes
+     * getFunnel twice — current and previous period — and resolving from each
+     * invocation's end would compare two different populations and read the
+     * difference as behaviour change.
+     */
+    membershipAsOf?: string;
+    /**
+     * An already-compiled cohort predicate to AND onto the report's filter —
+     * one breakdown bucket (`In 'X'` / `Not In 'X'`).
+     *
+     * It joins the SAME `audiencePredicate` the filter produces, which is what
+     * feeds both the funnel CTE and `isMvEligibleFunnel`. Attaching it anywhere
+     * else would let a bucketed funnel reach the materialized view, which has no
+     * session_id and cannot express the restriction — a confidently unfiltered
+     * number.
+     */
+    extraCohortPredicate?: string | null;
+  }) {
     if (!startDate || !endDate) {
       throw new Error('startDate and endDate are required');
     }
 
-    // Resolve the report-level audience once. asOf is the funnel's end date, so
-    // a relative cohort window is evaluated as of the same instant as the data.
-    const resolvedAudience = await resolveAudience(
-      audience?.cohortIds,
+    // Resolve the report's cohort filter rows once, at the canonical instant.
+    const resolvedFilters = await resolveCohortFilters(
+      cohortFilters,
       projectId,
-      endDate,
+      membershipAsOf ?? endDate,
     );
-    const audiencePredicate = resolvedAudience.render(null);
+    const audiencePredicate =
+      [resolvedFilters.predicate(null), extraCohortPredicate]
+        .filter(Boolean)
+        .join(' AND ') || null;
 
     const funnelOptions = options?.type === 'funnel' ? options : undefined;
     const funnelWindowUnit = funnelOptions?.funnelWindowUnit ?? 'hour';
@@ -1063,7 +1063,7 @@ export class FunnelService {
     // MV when the funnel is "simple" (see isMvEligibleFunnel). Same
     // windowFunnel semantics, ~90× faster on install→engagement funnels.
     const useMv = await this.isMvEligibleFunnel({
-      hasAudience: Boolean(audiencePredicate),
+      hasCohortRestriction: Boolean(audiencePredicate),
       eventSeries,
       breakdowns,
       groupBy: group,
@@ -1373,6 +1373,13 @@ export class FunnelService {
     return {
       data,
       queries,
+      /**
+       * The compiled cohort restriction this funnel actually ran with. Handed
+       * back so the property-stats side query reuses the SAME predicate,
+       * resolved at the SAME instant, instead of resolving its own and
+       * silently disagreeing with the funnel above it.
+       */
+      cohortPredicate: audiencePredicate,
     };
   }
 
@@ -1759,6 +1766,57 @@ export class FunnelService {
   }
 
   /**
+   * The cohort restriction, attached the way this funnel GROUPS.
+   *
+   * Session mode: eligible SESSIONS (semi-join). Filtering base rows by
+   * profile_id would delete the pre-login rows of a user identified mid-funnel,
+   * who must still count.
+   *
+   * Profile mode: the profile predicate itself. A session semi-join here would
+   * be WRONG — it admits every row of an eligible session, so another profile
+   * sharing that session would get its own funnel group and be counted despite
+   * not being a member.
+   *
+   * Session eligibility spans the funnel's EXPANDED scan (endDate +
+   * funnelWindow), derived from the same funnelWindowSeconds as the scan so the
+   * two cannot drift: step 1 is anchored to [start, end] but steps 2..N may land
+   * later, and a user who identifies in that tail would otherwise be dropped.
+   *
+   * `session_id != ''` guards against one member with an empty session id making
+   * every other empty-session event in the project eligible.
+   */
+  private cohortEligibilityClause({
+    predicate,
+    groupBy,
+    projectId,
+    startDate,
+    endDate,
+    funnelWindowSeconds,
+    sessionColumn = 'session_id',
+    qualifyPredicate = (expr: string) => expr,
+  }: {
+    predicate: string | null;
+    groupBy: 'session_id' | 'profile_id';
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    funnelWindowSeconds: number;
+    sessionColumn?: string;
+    qualifyPredicate?: (expr: string) => string;
+  }): string | null {
+    if (!predicate) return null;
+    if (groupBy !== 'session_id') return qualifyPredicate(predicate);
+    return `${sessionColumn} IN (
+          SELECT DISTINCT session_id FROM ${TABLE_NAMES.events}
+          WHERE project_id = ${sqlstring.escape(projectId)}
+            AND created_at >= toDateTime(${sqlstring.escape(startDate)})
+            AND created_at <= addSeconds(toDateTime(${sqlstring.escape(endDate)}), ${funnelWindowSeconds})
+            AND session_id != ''
+            AND ${predicate}
+        )`;
+  }
+
+  /**
    * Compute numeric property aggregates for entities that completed the
    * entire funnel. Uses chained CTEs (same pattern as getFunnelTimingStats)
    * to pin the exact last-step timestamp per entity, then extracts the
@@ -1778,6 +1836,7 @@ export class FunnelService {
     breakdowns = [],
     breakdownStep,
     timezone,
+    cohortPredicate = null,
   }: {
     projectId: string;
     startDate: string;
@@ -1790,6 +1849,13 @@ export class FunnelService {
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     timezone: string;
+    /**
+     * Compiled cohort restriction for the report, already resolved at the
+     * canonical membership instant. Without it these aggregates would be
+     * computed over the FULL population while the funnel above them was
+     * filtered — a funnel_metric that silently contradicts its own funnel.
+     */
+    cohortPredicate?: string | null;
   }): Promise<Map<string, { sum: number; average: number; count: number }>> {
     const result = new Map<
       string,
@@ -1816,6 +1882,19 @@ export class FunnelService {
     // *candidate* set — it does not change which users count.
     const escapedExtendedEnd = `addSeconds(toDateTime(${sqlstring.escape(endDate)}), ${funnelWindowSeconds})`;
 
+    // Cohort restriction, attached exactly as the funnel itself attaches it
+    // (same helper, so the two cannot drift). Applied to step_1: every later
+    // step joins on this entity key, so restricting entry restricts the chain.
+    const eligibilityClause = this.cohortEligibilityClause({
+      predicate: cohortPredicate,
+      groupBy,
+      projectId,
+      startDate,
+      endDate,
+      funnelWindowSeconds,
+    });
+    const eligibilityFilter = eligibilityClause ? `AND ${eligibilityClause}` : '';
+
     // Step 1 CTE — stays anchored to the report window.
     ctes.push(`step_1 AS (
       SELECT ${entityKey},
@@ -1825,6 +1904,7 @@ export class FunnelService {
         AND created_at BETWEEN toDateTime(${sqlstring.escape(startDate)}) AND toDateTime(${sqlstring.escape(endDate)})
         AND name IN (${nameList})
         ${identifiedFilter}
+        ${eligibilityFilter}
         AND (${stepConditions[0]})
       GROUP BY ${entityKey}
     )`);

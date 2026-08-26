@@ -14,7 +14,7 @@ import {
 import type {
   IChartBreakdown,
   IChartEventItem,
-  ICohortFilter,
+  ICohortFilters,
   IChartLineType,
   IChartRange,
   IChartType,
@@ -48,9 +48,20 @@ type InitialState = IReport & {
 
 /** Chart types whose query path does not apply a cohort breakdown. */
 export const COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES = new Set<string>([
-  'funnel',
-  'funnel_metric',
-  'retention',
+  'sankey',
+  'conversion',
+]);
+
+/**
+ * Chart types whose query path does not apply a cohort FILTER. A shorter list
+ * than the breakdown's: funnel and retention DO apply the filter (funnel as a
+ * mode-dependent eligibility restriction, retention on the day-0 population),
+ * they just cannot be split into In/Not In buckets yet.
+ *
+ * Two lists rather than one because collapsing them would either hide a filter
+ * that works or offer a breakdown that does nothing.
+ */
+export const COHORT_FILTER_UNSUPPORTED_CHART_TYPES = new Set<string>([
   'sankey',
   'conversion',
 ]);
@@ -66,27 +77,21 @@ function normalizeCohortBreakdown<
   T extends {
     chartType: string;
     cohortBreakdown?: unknown;
-    cohortFilter?: unknown;
-    series?: unknown[];
+    cohortFilters?: unknown;
   },
 >(report: T): T {
-  if (!COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(report.chartType)) {
-    return report;
+  const next = { ...report };
+  if (COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(report.chartType)) {
+    next.cohortBreakdown = undefined;
   }
-  // Strip ALL THREE cohort surfaces, not just the breakdown: a report created
-  // before this rule, or straight through the API, can arrive with a report-level
-  // or inline filter that this chart type's query path never applies. Leaving it
-  // set would show an active filter in the sidebar over unfiltered numbers.
-  return {
-    ...report,
-    cohortBreakdown: undefined,
-    cohortFilter: undefined,
-    series: report.series?.map((serie) =>
-      serie && typeof serie === 'object' && 'cohortFilter' in serie
-        ? { ...serie, cohortFilter: undefined }
-        : serie,
-    ),
-  };
+  // The filter is stripped on a SHORTER list. A stale filter is worse than a
+  // stale breakdown: the query guard rejects it outright, so a report switched
+  // to an unsupporting chart type would error rather than merely render
+  // unsplit.
+  if (COHORT_FILTER_UNSUPPORTED_CHART_TYPES.has(report.chartType)) {
+    next.cohortFilters = undefined;
+  }
+  return next;
 }
 
 // First approach: define the initial state using that type
@@ -110,8 +115,8 @@ const initialState: InitialState = {
   limit: 500,
   options: { type: 'generic', displayMode: 'both' },
   dateConfig: undefined,
-  audience: undefined,
   cohortBreakdown: undefined,
+  cohortFilters: undefined,
 };
 
 export const reportSlice = createSlice({
@@ -227,33 +232,22 @@ export const reportSlice = createSlice({
       });
     },
     /**
-     * Set or clear ONE series' inline cohort filter.
+     * Set or clear the report's cohort filter ROWS.
      *
-     * A dedicated action rather than reusing `changeEvent`, which replaces the
-     * whole series object: callers that built their payload before the filter
-     * existed would silently wipe it. This touches only `cohortFilter`.
+     * Rows AND together and ids within a row OR, so this is the whole filter in
+     * one action: partial row edits are done by the caller on a copy, which
+     * keeps the reducer from having to reason about row identity.
+     *
+     * There is deliberately no per-metric equivalent. Membership is a property
+     * of the profile, pinned at one instant, so scoping a cohort to one metric,
+     * one funnel step, or one retention leg cannot change the answer.
      */
-    changeSeriesCohortFilter: (
+    changeCohortFilters: (
       state,
-      action: PayloadAction<{ seriesId: string; filter?: ICohortFilter }>,
+      action: PayloadAction<ICohortFilters | undefined>,
     ) => {
       state.dirty = true;
-      state.series = state.series.map((serie) => {
-        if (serie.id !== action.payload.seriesId) return serie;
-        // Formulas have no population of their own to filter — they evaluate
-        // over operands that are already filtered.
-        if (serie.type === 'formula') return serie;
-        return { ...serie, cohortFilter: action.payload.filter } as IChartEventItem;
-      });
-    },
-
-    /** Report-level cohort filter: narrows every series. */
-    changeReportCohortFilter: (
-      state,
-      action: PayloadAction<ICohortFilter | undefined>,
-    ) => {
-      state.dirty = true;
-      state.cohortFilter = action.payload;
+      state.cohortFilters = action.payload?.length ? action.payload : undefined;
     },
 
     changeEvent: (state, action: PayloadAction<IChartEventItem>) => {
@@ -352,12 +346,6 @@ export const reportSlice = createSlice({
       }
       state.dirty = true;
     },
-    changeAudience: (state, action: PayloadAction<string[]>) => {
-      state.audience = action.payload.length
-        ? { cohortIds: action.payload }
-        : undefined;
-      state.dirty = true;
-    },
     changeInterval: (state, action: PayloadAction<IInterval>) => {
       state.dirty = true;
       state.interval = action.payload;
@@ -441,16 +429,12 @@ export const reportSlice = createSlice({
 
       if (COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(action.payload)) {
         state.cohortBreakdown = undefined;
-        // The filters must go too, for the same reason and with worse
-        // consequences: a stale cohortFilter is REJECTED by the query guard, so
-        // switching an existing report to funnel would break it outright rather
-        // than merely rendering unsplit.
-        state.cohortFilter = undefined;
-        state.series = state.series.map((serie) =>
-          serie.type === 'formula'
-            ? serie
-            : ({ ...serie, cohortFilter: undefined } as typeof serie),
-        );
+      }
+      // Shorter list for the filter: funnel and retention keep it (their query
+      // paths apply it), only the types that ignore it entirely lose it — and
+      // they must, because the query guard rejects a filter it cannot apply.
+      if (COHORT_FILTER_UNSUPPORTED_CHART_TYPES.has(action.payload)) {
+        state.cohortFilters = undefined;
       }
 
       // Initialize sankey options if switching to sankey
@@ -879,8 +863,8 @@ export const reportSlice = createSlice({
 export const {
   reset,
   ready,
-  changeAudience,
   changeCohortBreakdown,
+  changeCohortFilters,
   setReport,
   hydrateDraftReport,
   setName,
@@ -888,8 +872,6 @@ export const {
   removeEvent,
   duplicateEvent,
   changeEvent,
-  changeSeriesCohortFilter,
-  changeReportCohortFilter,
   addBreakdown,
   removeBreakdown,
   changeBreakdown,

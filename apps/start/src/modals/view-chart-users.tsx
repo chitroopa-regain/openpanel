@@ -164,6 +164,12 @@ interface ChartUsersViewProps {
   report: IReportInput;
   date: string;
   serieId?: string;
+  /**
+   * The instant the chart response resolved cohort membership at. Comes from
+   * the server, is never recomputed here — the two must be the same instant or
+   * the listed profiles are a different population from the number clicked.
+   */
+  membershipAsOf?: string;
 }
 
 function ChartUsersView({
@@ -171,6 +177,7 @@ function ChartUsersView({
   report,
   date,
   serieId,
+  membershipAsOf,
 }: ChartUsersViewProps) {
   const trpc = useTRPC();
   // Seeded from the clicked series' OWN metric, not blindly from the first one.
@@ -231,28 +238,20 @@ function ChartUsersView({
             : [],
         breakdowns: selectedBreakdown?.event.breakdowns,
         interval: report.interval,
-        // Forward every cohort restriction the chart applied. Omitting any of
-        // them lists people outside the population whose number was clicked.
-        audience: report.audience,
-        cohortFilter: report.cohortFilter,
-        serieCohortFilter:
-          selectedReportSerie && selectedReportSerie.type === 'event'
-            ? (
-                selectedReportSerie as {
-                  cohortFilter?: {
-                    operator?: 'in' | 'not_in';
-                    cohortIds: string[];
-                  };
-                }
-              ).cohortFilter
-            : undefined,
+        // Forward the report's cohort filter. Omitting it lists people outside
+        // the population whose number was clicked.
+        cohortFilters: report.cohortFilters,
         // Breakdown bucket identity, so `Not In 'X'` drills into non-members
         // rather than members.
         cohortId: selectedBreakdown?.event.cohortId,
         cohortMembership: selectedBreakdown?.event.cohortMembership,
-        // Same instant the chart resolved membership at, so the count on screen
-        // and the people listed are the same population.
-        membershipAsOf: report.endDate ?? undefined,
+        // The instant the chart's own response reported resolving membership
+        // at, passed through untouched. NOT report.endDate: a relative-range
+        // report has no endDate on the client, and the server would then fall
+        // back to the clicked bucket's date — a different population from the
+        // one the number was computed over. The server now rejects a cohort
+        // restriction that arrives without it rather than guessing.
+        membershipAsOf: membershipAsOf ?? undefined,
       },
       {
         enabled: !!selectedReportSerie && selectedReportSerie.type === 'event',
@@ -334,6 +333,9 @@ function ChartUsersView({
 
 // Funnel-specific props and component
 interface FunnelUsersViewProps {
+  cohortId?: string;
+  cohortMembership?: 'in' | 'not_in';
+  membershipAsOf?: string;
   report: IReportInput;
   stepIndex: number;
   initialShowDropoffs?: boolean;
@@ -345,6 +347,9 @@ function FunnelUsersView({
   stepIndex,
   initialShowDropoffs = false,
   breakdownValues,
+  cohortId,
+  cohortMembership,
+  membershipAsOf,
 }: FunnelUsersViewProps) {
   const trpc = useTRPC();
   const [showDropoffs, setShowDropoffs] = useState(initialShowDropoffs);
@@ -369,6 +374,12 @@ function FunnelUsersView({
           report.options?.type === 'funnel'
             ? report.options.funnelWindowUnit
             : undefined,
+        // Every cohort restriction the funnel applied, or this lists the
+        // unfiltered population beside a filtered number.
+        cohortFilters: report.cohortFilters,
+        cohortId,
+        cohortMembership,
+        membershipAsOf,
         funnelGroup:
           report.options?.type === 'funnel'
             ? report.options.funnelGroup
@@ -493,6 +504,8 @@ type ViewChartUsersProps =
       date: string;
       /** The chart series the user actually clicked, when the chart knows it. */
       serieId?: string;
+      /** The server-reported membership instant for that chart response. */
+      membershipAsOf?: string;
     }
   | {
       type: 'funnel';
@@ -500,6 +513,11 @@ type ViewChartUsersProps =
       stepIndex: number;
       initialShowDropoffs?: boolean;
       breakdownValues?: string[];
+      /** The cohort bucket that was clicked, when the funnel is broken down. */
+      cohortId?: string;
+      cohortMembership?: 'in' | 'not_in';
+      /** The server-reported membership instant for that funnel response. */
+      membershipAsOf?: string;
     };
 
 // Main component that routes to the appropriate view
@@ -511,6 +529,9 @@ export default function ViewChartUsers(props: ViewChartUsersProps) {
         stepIndex={props.stepIndex}
         initialShowDropoffs={props.initialShowDropoffs}
         breakdownValues={props.breakdownValues}
+        cohortId={props.cohortId}
+        cohortMembership={props.cohortMembership}
+        membershipAsOf={props.membershipAsOf}
       />
     );
   }
@@ -521,6 +542,7 @@ export default function ViewChartUsers(props: ViewChartUsersProps) {
       report={props.report}
       date={props.date}
       serieId={props.serieId}
+      membershipAsOf={props.membershipAsOf}
     />
   );
 }

@@ -78,6 +78,10 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
             id: reportId,
             dashboardId: res.dashboardId,
             projectId: res.projectId,
+            // Optimistic revision stamp. The server's own value arrives with
+            // the refetch below; this only keeps the cached shape complete in
+            // the meantime.
+            updatedAt: res.updatedAt ?? new Date(),
           });
           try {
             await queryClient.fetchQuery({ ...reportQuery, staleTime: 0 });

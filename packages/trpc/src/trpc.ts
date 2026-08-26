@@ -321,8 +321,23 @@ export const cacheMiddleware = (
       return next();
     }
 
+    // Report revision. A saved-report request carries only `{id}`, so the
+    // canonical input key below cannot see a change to the report itself: after
+    // adding a cohort filter, the dashboard and every share view would keep
+    // serving the PREVIOUS, unfiltered numbers until the TTL expired. The
+    // hydrating procedure has already put the report on ctx by the time this
+    // middleware runs, so its updatedAt is available here and rotates the key
+    // on every save. Requests that send the full report body are unaffected —
+    // their changes are already in the canonical input.
+    const reportRevision = (
+      ctx as { report?: { updatedAt?: Date | string } | null } | undefined
+    )?.report?.updatedAt;
+    const revision = reportRevision
+      ? new Date(reportRevision).getTime().toString(36)
+      : 'r0';
+
     // Canonical key: same logical query → same entry across every view.
-    let key = `trpc:${epoch}:${path}:`;
+    let key = `trpc:${epoch}:${revision}:${path}:`;
     if (rawInput) {
       key += canonicalKey(rawInput).replace(/"/g, "'");
     }

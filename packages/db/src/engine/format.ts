@@ -90,24 +90,11 @@ export function format(
         id: definition?.id,
         name: eventName,
         breakdowns: cs.context.breakdowns,
-        // Cohort identity is carried out to the client so any drill-down can
-        // reproduce the series' actual population. Today the only drill-down
-        // is on funnels, where cohort filters are rejected server-side, so
-        // nothing can currently list users outside the shown population — but
-        // a drill-down added to a supported chart type would silently do so
-        // unless the restriction travels with the series.
+        // Cohort identity is carried out to the client so a drill-down can
+        // reproduce the series' actual population: without it "View users"
+        // would list profiles outside the bucket that was clicked.
         cohortId: cs.context.cohortId,
         cohortMembership: cs.context.cohortMembership,
-        cohortFilter: (
-          cs.definition as
-            | {
-                cohortFilter?: {
-                  operator?: 'in' | 'not_in';
-                  cohortIds: string[];
-                };
-              }
-            | undefined
-        )?.cohortFilter,
       },
       serieType: definition?.type ?? 'event',
       metrics: {

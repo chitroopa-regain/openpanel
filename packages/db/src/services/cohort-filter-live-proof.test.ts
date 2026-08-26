@@ -4,8 +4,8 @@ import { db } from '../prisma-client';
 import {
   cohortBucketLabel,
   cohortBucketPredicate,
-  resolveAudience,
-  resolveCohortFilter,
+  loadCohorts,
+  resolveCohortFilters,
 } from './custom-cohort.service';
 
 /**
@@ -55,21 +55,21 @@ describe('cohort filter — live SQL proof', () => {
       );
     }
 
-    const inF = await resolveCohortFilter(
-      { operator: 'in', cohortIds: [cohort.id] },
+    const inF = await resolveCohortFilters(
+      [{ operator: 'in', cohortIds: [cohort.id] }],
       PROJECT_ID,
       ASOF,
     );
-    const notF = await resolveCohortFilter(
-      { operator: 'not_in', cohortIds: [cohort.id] },
+    const notF = await resolveCohortFilters(
+      [{ operator: 'not_in', cohortIds: [cohort.id] }],
       PROJECT_ID,
       ASOF,
     );
 
-    const inPred = inF.render(null)!;
-    const notPred = notF.render(null)!;
+    const inPred = inF.predicate(null)!;
+    const notPred = notF.predicate(null)!;
     expect(inPred).toBeTruthy();
-    expect(notPred.startsWith('NOT ')).toBe(true);
+    expect(notPred.includes('NOT ')).toBe(true);
 
     const base = `FROM events WHERE project_id = '${PROJECT_ID}'`;
     const [tot] = await chQuery<{ c: string }>(`SELECT count() AS c ${base}`);
@@ -118,26 +118,26 @@ describe('cohort filter — live SQL proof', () => {
           .c,
       );
 
-    const a = await resolveCohortFilter(
-      { operator: 'in', cohortIds: [cohorts[0]!.id] },
+    const a = await resolveCohortFilters(
+      [{ operator: 'in', cohortIds: [cohorts[0]!.id] }],
       PROJECT_ID,
       ASOF,
     );
-    const b = await resolveCohortFilter(
-      { operator: 'in', cohortIds: [cohorts[1]!.id] },
+    const b = await resolveCohortFilters(
+      [{ operator: 'in', cohortIds: [cohorts[1]!.id] }],
       PROJECT_ID,
       ASOF,
     );
-    const both = await resolveCohortFilter(
-      { operator: 'in', cohortIds: [cohorts[0]!.id, cohorts[1]!.id] },
+    const both = await resolveCohortFilters(
+      [{ operator: 'in', cohortIds: [cohorts[0]!.id, cohorts[1]!.id] }],
       PROJECT_ID,
       ASOF,
     );
 
     const [ca, cb, cboth] = [
-      await count(a.render(null)!),
-      await count(b.render(null)!),
-      await count(both.render(null)!),
+      await count(a.predicate(null)!),
+      await count(b.predicate(null)!),
+      await count(both.predicate(null)!),
     ];
 
     // Union: at least as large as either side, never larger than their sum.
@@ -158,7 +158,7 @@ describe('breakdown buckets — live partition proof', () => {
     });
     if (!cohort) throw new Error('LIVE PROOF COULD NOT RUN: no cohorts seeded.');
 
-    const resolved = await resolveAudience([cohort.id], PROJECT_ID, ASOF);
+    const resolved = await loadCohorts([cohort.id], PROJECT_ID, ASOF);
     const compiled = resolved.cohorts[0]!;
     const inPred = cohortBucketPredicate(compiled, 'in', null);
     const notPred = cohortBucketPredicate(compiled, 'not_in', null);

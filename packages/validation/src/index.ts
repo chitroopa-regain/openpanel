@@ -35,13 +35,14 @@ export const zChartEventSegment = z
   .describe('Defines how the event data should be segmented or aggregated');
 
 /**
- * A cohort filter, used at two scopes: report-level (every series) and inline
- * (one metric). Cohort ids inside ONE filter are OR-combined — Mixpanel's
- * semantics, where adding a cohort WIDENS the population. Composition across
- * scopes is AND: global filter AND inline filter AND breakdown bucket.
+ * ONE row of the report's cohort filter. Cohort ids inside a row are
+ * OR-combined — Mixpanel's semantics, where adding a cohort to a row WIDENS the
+ * population. Rows themselves AND together (see `zCohortFilters`), exactly like
+ * the property filter rows beside them.
  *
- * NOT the same shape as the legacy `audience`, whose ids are AND-combined.
- * That contract is preserved rather than reinterpreted; see resolveAudience.
+ * There is deliberately no per-metric scope: membership is a property of the
+ * profile, pinned at one instant, so scoping a cohort to one funnel step or one
+ * retention leg cannot change the answer.
  */
 export const zCohortFilter = z.object({
   operator: z.enum(['in', 'not_in']).default('in'),
@@ -52,6 +53,14 @@ export const zCohortFilter = z.object({
     .refine((ids) => new Set(ids).size === ids.length, 'Duplicate cohort ids'),
 });
 export type ICohortFilter = z.infer<typeof zCohortFilter>;
+
+/**
+ * The report's cohort filter: an ordered list of rows. Ids within a row are OR,
+ * rows AND together. Order is preserved so a saved report renders its rows the
+ * way they were written.
+ */
+export const zCohortFilters = z.array(zCohortFilter).max(5);
+export type ICohortFilters = z.infer<typeof zCohortFilters>;
 
 export const zChartEvent = z.object({
   id: z
@@ -83,11 +92,6 @@ export const zChartEvent = z.object({
     .optional()
     .describe(
       'When true, only match this event if it is the users absolute first-ever occurrence'
-    ),
-  cohortFilter: zCohortFilter
-    .optional()
-    .describe(
-      'Inline cohort filter: restricts THIS metric to cohort members. Applied before the query, so it changes the dataset this metric is computed over. Composes with the report-level filter by AND.'
     ),
 });
 
@@ -141,11 +145,6 @@ export const zChartCustomEvent = z.object({
     .optional()
     .describe(
       'When true, only match this custom event if it is the users absolute first-ever occurrence'
-    ),
-  cohortFilter: zCohortFilter
-    .optional()
-    .describe(
-      'Inline cohort filter: restricts THIS metric to cohort members. Applied before the query. Composes with the report-level filter by AND.'
     ),
 });
 
@@ -305,17 +304,11 @@ export const zCohortBreakdown = z.object({
 });
 export type ICohortBreakdown = z.infer<typeof zCohortBreakdown>;
 
-/** Report-level audience. Cohort ids are AND-combined. */
-export const zReportAudience = z.object({
-  cohortIds: z.array(z.string()).max(5).default([]),
-});
-
 export type ICustomCohortWindow = z.infer<typeof zCustomCohortWindow>;
 export type ICustomCohortAggregate = z.infer<typeof zCustomCohortAggregate>;
 export type ICustomCohortCriterion = z.infer<typeof zCustomCohortCriterion>;
 export type ICustomCohortGroup = z.infer<typeof zCustomCohortGroup>;
 export type ICustomCohortDefinition = z.infer<typeof zCustomCohortDefinition>;
-export type IReportAudience = z.infer<typeof zReportAudience>;
 
 export const zChartBreakdown = z.object({
   id: z.string().optional(),
@@ -531,15 +524,10 @@ export const zReportInput = z.object({
   options: zReportOptions
     .optional()
     .describe('Chart-specific options (funnel, retention, sankey)'),
-  audience: zReportAudience
+  cohortFilters: zCohortFilters
     .optional()
     .describe(
-      'Report-level audience: custom cohort ids, AND-combined, applied to the base population'
-    ),
-  cohortFilter: zCohortFilter
-    .optional()
-    .describe(
-      'Report-level cohort filter: restricts EVERY series to cohort members. Ids inside it are OR-combined, unlike the legacy AND-combined `audience`.'
+      'Report-level cohort filter rows: restrict EVERY series to cohort members. Ids within a row are OR-combined, rows AND together.'
     ),
   cohortBreakdown: zCohortBreakdown
     .optional()

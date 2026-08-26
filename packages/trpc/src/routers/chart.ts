@@ -25,11 +25,11 @@ import {
   getTraitBreakdownDescriptor,
   type IClickhouseProfile,
   type IServiceProfile,
+  cohortBucketLabel,
   cohortBucketPredicate,
   onlyReportEvents,
   qualifyFunnelCondition,
-  resolveAudience,
-  resolveCohortFilter,
+  resolveCohortFilters,
   resolveCohortsForBreakdown,
   resolveSeriesForFunnel,
   sankeyService,
@@ -46,9 +46,9 @@ import {
   zChartSeries,
   zCriteria,
   zCohortBreakdown,
-  zCohortFilter,
+  type ICohortFilters,
+  zCohortFilters,
   zDateConfig,
-  zReportAudience,
   zRange,
   zReportInput,
   zRetentionBreakdownSort,
@@ -120,22 +120,39 @@ function utc(date: string | Date) {
  * be served silently. Ordering matters more than the check itself here.
  */
 const guardNoCohortBreakdown =
-  (path: string) =>
+  (
+    path: string,
+    {
+      allowFilter = false,
+      allowBreakdown = false,
+    }: { allowFilter?: boolean; allowBreakdown?: boolean } = {},
+  ) =>
   async ({ ctx, next, getRawInput }: any) => {
     const rawInput = (await getRawInput()) as CohortBearing | undefined;
-    assertNoCohortBreakdown([rawInput, ctx?.report], path);
+    assertNoCohortBreakdown(
+      [rawInput, ctx?.report],
+      path,
+      allowFilter,
+      allowBreakdown,
+    );
     return next();
   };
 
 type CohortBearing = {
   cohortBreakdown?: { cohortIds?: string[] } | null;
-  cohortFilter?: { cohortIds?: string[] } | null;
-  series?: readonly unknown[] | null;
+  cohortFilters?: Array<{ cohortIds?: string[] }> | null;
+  breakdowns?: readonly unknown[] | null;
 };
 
 function assertNoCohortBreakdown(
   sources: Array<CohortBearing | null | undefined>,
   path: string,
+  // Funnel and retention DO apply a cohort filter — funnel as a mode-dependent
+  // eligibility restriction, retention on the day-0 population. Conversion and
+  // sankey apply neither.
+  allowFilter = false,
+  // Whether this path runs the per-bucket loop that a breakdown requires.
+  allowBreakdown = false,
 ) {
   // Check the EFFECTIVE report, not just the raw input. These handlers can load
   // a saved report from ctx.report, so a caller passing only `{ id }` for a
@@ -146,23 +163,33 @@ function assertNoCohortBreakdown(
   // This runs BEFORE the cache middleware on purpose: a warm entry would
   // otherwise serve a response for input that should have been refused.
   for (const source of sources) {
-    if ((source?.cohortBreakdown?.cohortIds?.length ?? 0) > 0) {
+    // Property breakdown and cohort breakdown are mutually exclusive on every
+    // chart type. Each cohort bucket is its own query, so a property breakdown
+    // beside it is still truncated to that bucket's own top-N values — the
+    // report would mean something nobody asked for. Enforced at the QUERY
+    // boundary as well as on write: a saved or API-built report reaches here
+    // without passing the write path.
+    if (
+      (source?.cohortBreakdown?.cohortIds?.length ?? 0) > 0 &&
+      (source?.breakdowns?.length ?? 0) > 0
+    ) {
+      throw new Error(
+        'A cohort breakdown cannot be combined with a property breakdown. Remove one of them.',
+      );
+    }
+    if (!allowBreakdown && (source?.cohortBreakdown?.cohortIds?.length ?? 0) > 0) {
       throw new Error(`A cohort breakdown is not supported on ${path} reports.`);
     }
-    // Both filter scopes too. These chart types never apply the predicate, so
-    // accepting one would compute an unfiltered result while the caller
-    // believes a filter is in force — the same silent-wrong-number shape.
-    if ((source?.cohortFilter?.cohortIds?.length ?? 0) > 0) {
+    // The filter, only where the path genuinely ignores it. Accepting one there
+    // would compute an unfiltered result while the caller believes a filter is
+    // in force — the same silent-wrong-number shape.
+    if (
+      !allowFilter &&
+      (source?.cohortFilters ?? []).some(
+        (row) => (row?.cohortIds?.length ?? 0) > 0,
+      )
+    ) {
       throw new Error(`A cohort filter is not supported on ${path} reports.`);
-    }
-    for (const serie of source?.series ?? []) {
-      const inline = (serie as { cohortFilter?: { cohortIds?: string[] } } | null)
-        ?.cohortFilter;
-      if ((inline?.cohortIds?.length ?? 0) > 0) {
-        throw new Error(
-          `A per-metric cohort filter is not supported on ${path} reports.`,
-        );
-      }
     }
   }
 }
@@ -807,7 +834,7 @@ export const chartRouter = createTRPCRouter({
     ),
 
   funnel: chartProcedure
-    .use(guardNoCohortBreakdown('funnel'))
+    .use(guardNoCohortBreakdown('funnel', { allowFilter: true, allowBreakdown: true }))
     .use(cacher)
     .input(
       zReportInput.and(
@@ -835,13 +862,51 @@ export const chartRouter = createTRPCRouter({
         range: chartInput.range,
       });
 
+      // The canonical membership instant for this request: the CURRENT period's
+      // end. Passed explicitly into both calls — letting the previous-period
+      // call resolve from its own endDate would compare two different
+      // populations and read the difference as behaviour change.
+      const membershipAsOf =
+        currentPeriod.endDate ?? formatClickhouseDate(new Date());
+
+      const funnelBreakdownCohorts = await resolveCohortsForBreakdown(
+        (chartInput as { cohortBreakdown?: { cohortIds?: string[] } })
+          ?.cohortBreakdown?.cohortIds,
+        chartInput.projectId,
+        membershipAsOf,
+      );
+      const funnelCohortBuckets = funnelBreakdownCohorts.flatMap((cohort) =>
+        (['in', 'not_in'] as const).map((membership) => ({
+          cohort,
+          membership,
+          label: cohortBucketLabel(cohort.name, membership),
+          // Rendered against the bare column: funnel.service decides where it
+          // attaches (session semi-join vs profile predicate) by mode.
+          predicate: cohortBucketPredicate(cohort, membership, null),
+        })),
+      );
+
+      // One complete funnel run — both periods and, for funnel_metric, the
+      // property aggregates that belong to them. Wrapped so a cohort breakdown
+      // can repeat the WHOLE thing per bucket: running the funnel per bucket
+      // but the property stats once would attach one population's sums to
+      // another's steps.
+      const runFunnelOnce = async (extraCohortPredicate: string | null) => {
       const [current, previous] = await Promise.all([
-        funnelService.getFunnel({ ...chartInput, ...currentPeriod, timezone }),
+        funnelService.getFunnel({
+          ...chartInput,
+          ...currentPeriod,
+          timezone,
+          membershipAsOf,
+          extraCohortPredicate,
+        }),
         chartInput.previous
           ? funnelService.getFunnel({
               ...chartInput,
               ...previousPeriod,
               timezone,
+              membershipAsOf,
+              extraCohortPredicate,
             })
           : Promise.resolve(null),
       ]);
@@ -911,6 +976,10 @@ export const chartRouter = createTRPCRouter({
             breakdowns: chartInput.breakdowns,
             breakdownStep: funnelOptions.breakdownStep,
             timezone,
+            // The SAME predicate the funnel above ran with, not a re-resolved
+            // one: a funnel_metric whose property sums covered the whole
+            // population while its funnel was filtered would contradict itself.
+            cohortPredicate: current.cohortPredicate,
           }),
           previous
             ? funnelService.getFunnelPropertyStats({
@@ -925,6 +994,8 @@ export const chartRouter = createTRPCRouter({
                 breakdowns: chartInput.breakdowns,
                 breakdownStep: funnelOptions.breakdownStep,
                 timezone,
+                // Previous period, same membership instant, same predicate.
+                cohortPredicate: previous.cohortPredicate,
               })
             : Promise.resolve(null),
         ]);
@@ -937,11 +1008,78 @@ export const chartRouter = createTRPCRouter({
         }
       }
 
+        return { current, previous };
+      };
+
+      // Breakdown by cohort: one full funnel per bucket, `In 'X'` and
+      // `Not In 'X'` per cohort. One query per bucket rather than a GROUP BY,
+      // because cohorts overlap and a grouping would put each profile in
+      // exactly one bucket.
+      if (funnelCohortBuckets.length > 0) {
+        const runs: Array<{
+          bucket: (typeof funnelCohortBuckets)[number];
+          result: Awaited<ReturnType<typeof runFunnelOnce>>;
+        }> = new Array(funnelCohortBuckets.length);
+        let cursor = 0;
+        await Promise.all(
+          Array.from(
+            { length: Math.min(2, funnelCohortBuckets.length) },
+            async () => {
+              while (cursor < funnelCohortBuckets.length) {
+                const index = cursor++;
+                const bucket = funnelCohortBuckets[index]!;
+                runs[index] = {
+                  bucket,
+                  result: await runFunnelOnce(bucket.predicate),
+                };
+              }
+            },
+          ),
+        );
+
+        // Label each bucket's series through the SAME `breakdowns` field the
+        // property breakdown uses, so every funnel surface (chart, list,
+        // drill-down) renders it without a special case. The series id stays
+        // structural — (cohortId, membership) — so two cohorts sharing a name
+        // never collapse into one series.
+        const stamp = (
+          series: (typeof runs)[number]['result']['current']['data'],
+          bucket: (typeof funnelCohortBuckets)[number],
+        ) =>
+          series.map((serie) => ({
+            ...serie,
+            id: `${bucket.cohort.cohortId}:${bucket.membership}`,
+            breakdowns: [bucket.label],
+          }));
+
+        return {
+          current: runs.flatMap((run) => stamp(run.result.current.data, run.bucket)),
+          previous: chartInput.previous
+            ? runs.flatMap((run) =>
+                run.result.previous
+                  ? stamp(run.result.previous.data, run.bucket)
+                  : [],
+              )
+            : null,
+          queries: runs.flatMap((run) => [
+            ...run.result.current.queries,
+            ...(run.result.previous?.queries ?? []),
+          ]),
+          timezone,
+          membershipAsOf,
+        };
+      }
+
+      const { current, previous } = await runFunnelOnce(null);
+
       return {
         current: current.data,
         previous: previous?.data ?? null,
         queries: [...current.queries, ...(previous?.queries ?? [])],
         timezone,
+        // Returned so a drill-down evaluates membership at exactly the instant
+        // this response was computed at, instead of guessing from a bucket date.
+        membershipAsOf,
       };
     }),
 
@@ -1099,7 +1237,7 @@ export const chartRouter = createTRPCRouter({
     }),
 
   cohort: chartProcedure
-    .use(guardNoCohortBreakdown('retention'))
+    .use(guardNoCohortBreakdown('retention', { allowFilter: true, allowBreakdown: true }))
     .use(cacher)
     .input(
       z.object({
@@ -1132,12 +1270,12 @@ export const chartRouter = createTRPCRouter({
         shareId: z.string().optional(),
         id: z.string().optional(),
         bypassCache: z.boolean().optional(),
-        audience: zReportAudience.optional(),
-        // Declared ONLY so the guard below can reject them. Retention builds its
-        // own input schema, so an undeclared key is silently stripped by zod
-        // and the request succeeds while the caller's breakdown vanishes.
+        // Retention builds its own input schema, so an undeclared key is
+        // silently stripped by zod and the request would succeed while the
+        // caller's filter or breakdown vanished. Declared here so both are
+        // seen — applied for the filter, rejected for the breakdown.
         cohortBreakdown: zCohortBreakdown.optional(),
-        cohortFilter: zCohortFilter.optional(),
+        cohortFilters: zCohortFilters.optional(),
       })
     )
     .query(async ({ input, ctx }) => {
@@ -1168,7 +1306,7 @@ export const chartRouter = createTRPCRouter({
         ? (input.endDate ?? ctx.report.endDate)
         : input.endDate;
 
-      // Report-level audience for retention. Applied to the INITIAL (day-0)
+      // Report-level cohort filter for retention. Applied to the INITIAL (day-0)
       // population only: a cohort is a STATIC set of profile ids, so applying it
       // to the return leg as well is identical to applying it to the first leg,
       // while applying it ONLY to the return leg would filter the numerator
@@ -1179,14 +1317,36 @@ export const chartRouter = createTRPCRouter({
       // than `input.endDate`: a saved-report request carries only {id}, so
       // reading input.endDate (or falling back to wall-clock now) would
       // evaluate membership as of a different instant than the report's data
-      // and silently shift the counts.
-      const retentionAudience = await resolveAudience(
-        (ctx.report as { audience?: { cohortIds?: string[] } } | undefined)
-          ?.audience?.cohortIds ?? input.audience?.cohortIds,
+      // and silently shift the counts. This is the canonical membership instant
+      // for the whole request and is returned to the client below, so a
+      // drill-down reproduces exactly this population.
+      const membershipAsOf = endDate ?? formatClickhouseDate(new Date());
+      const retentionFilters = await resolveCohortFilters(
+        (ctx.report as { cohortFilters?: ICohortFilters } | undefined)
+          ?.cohortFilters ?? input.cohortFilters,
         projectId,
-        endDate ?? formatClickhouseDate(new Date()),
+        membershipAsOf,
       );
-      const retentionAudiencePredicate = retentionAudience.render('e');
+      const retentionAudiencePredicate = retentionFilters.predicate('e');
+
+      // Breakdown by cohort: one grid per bucket, `In 'X'` and `Not In 'X'`
+      // per cohort. Resolved at the same instant as the filter so a report's
+      // filter and its buckets describe one population, and in the REQUESTED
+      // order so the pairs stay adjacent.
+      const retentionBreakdownCohorts = await resolveCohortsForBreakdown(
+        (ctx.report as { cohortBreakdown?: { cohortIds?: string[] } } | undefined)
+          ?.cohortBreakdown?.cohortIds ?? input.cohortBreakdown?.cohortIds,
+        projectId,
+        membershipAsOf,
+      );
+      const retentionCohortBuckets = retentionBreakdownCohorts.flatMap(
+        (cohort) =>
+          (['in', 'not_in'] as const).map((membership) => ({
+            cohort,
+            membership,
+            predicate: cohortBucketPredicate(cohort, membership, 'e'),
+          })),
+      );
       const retentionAudienceClause = retentionAudiencePredicate
         ? `AND ${retentionAudiencePredicate}`
         : '';
@@ -1423,15 +1583,20 @@ export const chartRouter = createTRPCRouter({
       // `events` while the numerator came from the MV would understate
       // retention silently, by whatever the coverage gap happens to be.
       // Both legs must come from the same table.
-      const hasAudience = Boolean(retentionAudiencePredicate);
+      // A bucket predicate is a cohort restriction like any other: it reads
+      // `e.profile_id` / `e.device_id`, which cohort_events_mv does not carry,
+      // and the MV's coverage lags anyway. Forgetting the buckets here would
+      // send an un-filterable query to the MV.
+      const hasCohortRestriction =
+        Boolean(retentionAudiencePredicate) || retentionCohortBuckets.length > 0;
       const useEventsFirst =
-        hasAudience ||
+        hasCohortRestriction ||
         hasEventBreakdown ||
         firstEventFirstTimeFilter ||
         needsEventsTable(firstEventFilters) ||
         needsEventsTable(firstComponentFilters);
       const useEventsSecond =
-        hasAudience ||
+        hasCohortRestriction ||
         secondEventFirstTimeFilter ||
         isRetentionPropertyMeasure(retentionMetric) ||
         needsEventsTable(secondEventFilters) ||
@@ -1651,7 +1816,11 @@ export const chartRouter = createTRPCRouter({
         ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
         : '';
 
-      const cohortQuery = `
+      // The day-0 cohort restriction is the ONLY thing that varies between
+      // bucket runs, so the template becomes a function of it. With no
+      // breakdown this is called exactly once with the report filter's own
+      // clause, producing the same SQL as before.
+      const buildCohortQuery = (dayZeroClause: string) => `
         WITH
         ${traitBreakdownCtes}
         ${firstEventFirstTimeCte}
@@ -1671,7 +1840,7 @@ export const chartRouter = createTRPCRouter({
             AND e.created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
             ${firstIdentifiedFilter}
             ${firstFilterClause}
-            ${retentionAudienceClause}
+            ${dayZeroClause}
           ${cohortUsersGroupBy}
         ),
         ${topBreakdownsCtes}
@@ -1731,26 +1900,99 @@ export const chartRouter = createTRPCRouter({
         ORDER BY cs.cohort_interval ASC${breakdownOrder}
       `;
 
-      const cohortData = await chQuery<{
-        display_interval?: string;
-        cohort_interval: string;
-        total_first_event_count: number;
-        [key: string]: any;
-      }>(cohortQuery);
+      const runRetention = async (dayZeroClause: string) => {
+        const query = buildCohortQuery(dayZeroClause);
+        const rows = await chQuery<{
+          display_interval?: string;
+          cohort_interval: string;
+          total_first_event_count: number;
+          [key: string]: any;
+        }>(query);
+        return {
+          query,
+          data: processCohortData(
+            rows,
+            diffInterval,
+            dates.startDate,
+            dates.endDate,
+            interval,
+            retentionUnit,
+            retentionMetric,
+            breakdownSort
+          ),
+        };
+      };
+
+      // Breakdown by cohort: one full retention run per bucket. Each bucket is
+      // its OWN query rather than a GROUP BY, because cohorts overlap — a
+      // grouping would assign each profile to one bucket and silently drop
+      // overlapping members from the rest.
+      //
+      // Bounded concurrency: retention is an expensive query and a 2-cohort
+      // breakdown is already 4 of them.
+      if (retentionCohortBuckets.length > 0) {
+        const results: Array<{
+          cohortId: string;
+          membership: 'in' | 'not_in';
+          label: string;
+          data: Awaited<ReturnType<typeof runRetention>>['data'];
+          query: string;
+        }> = new Array(retentionCohortBuckets.length);
+        let cursor = 0;
+        await Promise.all(
+          Array.from(
+            { length: Math.min(2, retentionCohortBuckets.length) },
+            async () => {
+              while (cursor < retentionCohortBuckets.length) {
+                const index = cursor++;
+                const bucket = retentionCohortBuckets[index]!;
+                // The bucket ANDs onto the report filter — a filtered report
+                // splits the population it already narrowed, it does not
+                // escape it.
+                const clause = [retentionAudiencePredicate, bucket.predicate]
+                  .filter(Boolean)
+                  .join(' AND ');
+                const run = await runRetention(`AND ${clause}`);
+                results[index] = {
+                  // Identity is (cohortId, membership) — assigned here in JS,
+                  // never read back out of the result, so two cohorts sharing a
+                  // name stay distinct and the two polarities never collapse.
+                  cohortId: bucket.cohort.cohortId,
+                  membership: bucket.membership,
+                  label: cohortBucketLabel(bucket.cohort.name, bucket.membership),
+                  data: run.data,
+                  query: run.query,
+                };
+              }
+            },
+          ),
+        );
+
+        return {
+          // Deliberately EMPTY when buckets are present. Mirroring the first
+          // bucket here made an empty `In 'X'` look like an empty report and
+          // hid a populated `Not In 'X'`; worse, any consumer that forgot to
+          // read `buckets` would render one bucket's numbers as if they were
+          // the whole report. With no legacy consumers left, the honest shape
+          // is to make `buckets` the only answer.
+          data: [] as (typeof results)[number]['data'],
+          buckets: results,
+          queries: results.map((r) => r.query),
+          timezone,
+          membershipAsOf,
+        };
+      }
+
+      const single = await runRetention(retentionAudienceClause);
 
       return {
-        data: processCohortData(
-          cohortData,
-          diffInterval,
-          dates.startDate,
-          dates.endDate,
-          interval,
-          retentionUnit,
-          retentionMetric,
-          breakdownSort
-        ),
-        queries: [cohortQuery],
+        data: single.data,
+        queries: [single.query],
         timezone,
+        // The instant membership was evaluated at, returned for the same reason
+        // the chart path returns it: a drill-down must reproduce this exact
+        // population rather than re-deriving an instant of its own.
+        membershipAsOf,
       };
     }),
 
@@ -1766,17 +2008,17 @@ export const chartRouter = createTRPCRouter({
         // cohort-filtered chart's "View Users" returns the UNFILTERED
         // population — the numbers on screen and the people behind them would
         // disagree, silently.
-        audience: zReportAudience.optional(),
-        cohortFilter: zCohortFilter.optional(),
-        serieCohortFilter: zCohortFilter.optional(),
+        cohortFilters: zCohortFilters.optional(),
         cohortId: z.string().optional(),
         cohortMembership: z.enum(['in', 'not_in']).optional(),
-        // The instant cohort membership is evaluated at. MUST be the report's
-        // endDate — the same instant the chart used — not the clicked bucket's
-        // date. Resolving at the bucket date would evaluate membership as of
-        // some historical day, so for any cohort whose membership changed since
-        // then the displayed count and the listed profiles are different
-        // populations.
+        // The instant cohort membership is evaluated at: the canonical instant
+        // the chart itself reported, echoed back here. REQUIRED whenever a
+        // cohort restriction travels with the drill-down — deriving it from the
+        // clicked bucket's date would evaluate membership as of some historical
+        // day, so for any cohort whose membership changed since then the
+        // displayed count and the listed profiles are different populations.
+        // A relative-range report makes this routine, not exotic: its endDate
+        // is not even present on the client.
         membershipAsOf: z.string().optional(),
       })
     )
@@ -1836,27 +2078,34 @@ export const chartRouter = createTRPCRouter({
         });
       }
 
-      // Re-apply every cohort restriction the chart itself applied, resolved at
-      // the same instant (the drilled-into bucket's date) so the drill-down
-      // population matches the number that was clicked:
-      //   report audience (legacy, AND) AND report filter (OR)
-      //   AND this metric's inline filter AND the breakdown bucket's polarity.
-      // Falls back to the bucket date only when the caller sends nothing, which
-      // keeps older clients working; every in-repo caller sends the report's
-      // endDate so the two populations agree.
+      // Re-apply the report's cohort restriction, at the SAME instant the chart
+      // used, so the drill-down lists exactly the people behind the number that
+      // was clicked: the report's filter rows AND the breakdown bucket's
+      // polarity.
+      //
+      // No bucket-date fallback. If a cohort restriction is present, the caller
+      // must say which instant it was evaluated at; guessing produces a
+      // different population than the chart showed and nothing on screen says
+      // so. Absent any restriction the value is unused.
+      const hasCohortRestriction =
+        (input.cohortFilters ?? []).some(
+          (row) => (row?.cohortIds?.length ?? 0) > 0,
+        ) || Boolean(input.cohortId);
+      if (hasCohortRestriction && !input.membershipAsOf) {
+        throw new Error(
+          'membershipAsOf is required when a cohort restriction is applied — it must be the instant the chart resolved membership at.',
+        );
+      }
       const cohortAsOf =
         input.membershipAsOf ?? formatClickhouseDate(dateObj).slice(0, 10);
-      const [drillAudience, drillReportFilter, drillSerieFilter] =
-        await Promise.all([
-          resolveAudience(input.audience?.cohortIds, projectId, cohortAsOf),
-          resolveCohortFilter(input.cohortFilter, projectId, cohortAsOf),
-          resolveCohortFilter(input.serieCohortFilter, projectId, cohortAsOf),
-        ]);
-      const cohortPredicates = [
-        drillAudience.render(null),
-        drillReportFilter.render(null),
-        drillSerieFilter.render(null),
-      ].filter(Boolean) as string[];
+      const drillReportFilter = await resolveCohortFilters(
+        input.cohortFilters,
+        projectId,
+        cohortAsOf,
+      );
+      const cohortPredicates = [drillReportFilter.predicate(null)].filter(
+        Boolean,
+      ) as string[];
 
       if (input.cohortId) {
         const bucket = await resolveCohortsForBreakdown(
@@ -1923,6 +2172,17 @@ export const chartRouter = createTRPCRouter({
         breakdownStep: z.number().optional(),
         range: zRange,
         dateConfig: zDateConfig.nullish(),
+        // The funnel's cohort restriction must travel with the drill-down.
+        // Without it, clicking a step on a cohort-filtered funnel — or on one
+        // of its In / Not In buckets — lists the UNFILTERED population while
+        // the number that was clicked came from the filtered one.
+        cohortFilters: zCohortFilters.optional(),
+        cohortId: z.string().optional(),
+        cohortMembership: z.enum(['in', 'not_in']).optional(),
+        // The instant the funnel resolved membership at, echoed back. Required
+        // whenever a cohort restriction is present: deriving one here would
+        // evaluate a different population than the funnel displayed.
+        membershipAsOf: z.string().optional(),
       })
     )
     .query(async ({ input }) => {
@@ -2070,6 +2330,44 @@ export const chartRouter = createTRPCRouter({
       // Tell buildFunnelCte up-front whether we'll attach profiles FINAL
       // below, so it can pre-qualify its internal windowFunnel step
       // conditions before the downstream join makes them ambiguous.
+      // Same restriction the funnel itself ran with, at the same instant, so
+      // the people listed are the people behind the number that was clicked.
+      const drillHasCohort =
+        (input.cohortFilters ?? []).some(
+          (row) => (row?.cohortIds?.length ?? 0) > 0,
+        ) || Boolean(input.cohortId);
+      if (drillHasCohort && !input.membershipAsOf) {
+        throw new Error(
+          'membershipAsOf is required when a cohort restriction is applied — it must be the instant the funnel resolved membership at.',
+        );
+      }
+      const drillCohortAsOf = input.membershipAsOf ?? endDate;
+      const drillFunnelFilters = await resolveCohortFilters(
+        input.cohortFilters,
+        projectId,
+        drillCohortAsOf,
+      );
+      const drillBucket = input.cohortId
+        ? await resolveCohortsForBreakdown(
+            [input.cohortId],
+            projectId,
+            drillCohortAsOf,
+          )
+        : [];
+      const drillCohortPredicate =
+        [
+          drillFunnelFilters.predicate(null),
+          drillBucket[0]
+            ? cohortBucketPredicate(
+                drillBucket[0],
+                input.cohortMembership ?? 'in',
+                null,
+              )
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' AND ') || null;
+
       const {
         query: funnelCte,
         firstTimeCtes,
@@ -2086,6 +2384,9 @@ export const chartRouter = createTRPCRouter({
         additionalGroupBy: breakdownVals ? breakdownGroupBy : [],
         traitDescriptors,
         expectProfilesFinalJoin: anyFilterOnProfile || anyBreakdownOnProfile,
+        // buildFunnelCte attaches this mode-dependently (session semi-join vs
+        // profile predicate), exactly as the funnel query does.
+        audiencePredicate: drillCohortPredicate,
       });
 
       if (allProfileFields.length > 0) {

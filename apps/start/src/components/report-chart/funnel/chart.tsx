@@ -30,6 +30,7 @@ import {
 } from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
+import { parseCohortSerieId } from '../cohort-serie-id';
 import { useReportChartContext } from '../context';
 import { createChartTooltip } from '@/components/charts/chart-tooltip';
 import { ColorSquare } from '@/components/color-square';
@@ -53,6 +54,12 @@ type Props = {
     previous: RouterOutputs['chart']['funnel']['current'][number] | null;
   };
   noTopBorderRadius?: boolean;
+  /**
+   * The instant the server resolved cohort membership at for this response.
+   * Passed through to any drill-down verbatim — a drill-down that re-derives it
+   * lists a different population than the number that was clicked.
+   */
+  membershipAsOf?: string;
 };
 
 type FunnelMeasure =
@@ -315,429 +322,6 @@ export function FunnelTooltipRows({
           {number.formatWithUnit(metrics.droppedOffPercent / 100, '%')})
         </span>
       </div>
-    </div>
-  );
-}
-
-export function Tables({
-  data: {
-    current: { steps, mostDropoffsStep, lastStep, breakdowns },
-    previous: previousData,
-  },
-  noTopBorderRadius,
-}: Props) {
-  const number = useNumber();
-  const hasHeader = breakdowns.length > 0;
-  const {
-    report: {
-      projectId,
-      startDate,
-      endDate,
-      range,
-      interval,
-      series: reportSeries,
-      breakdowns: reportBreakdowns,
-      previous,
-      options,
-      dateConfig,
-    },
-  } = useReportChartContext();
-
-  const funnelOptions = options?.type === 'funnel' ? options : undefined;
-  const measure = getFunnelMeasureFromOptions(options);
-  const selectedMeasureValue = getFunnelMeasureValue(lastStep, measure);
-  const previousSelectedMeasureValue = previousData
-    ? getFunnelMeasureValue(previousData.lastStep, measure)
-    : undefined;
-  const screenshotSeries = reportSeries.flatMap((event, index) =>
-    event.type === 'event'
-      ? [
-          {
-            id: `funnel-step:${index}`,
-            serieType: 'event' as const,
-            event: {
-              id: event.id,
-              name: event.name,
-              breakdowns: {},
-            },
-          },
-        ]
-      : []
-  );
-
-  const handleInspectStep = (
-    step: (typeof steps)[0],
-    stepIndex: number,
-    breakdownValues?: string[]
-  ) => {
-    if (!projectId) {
-      return;
-    }
-
-    pushModal('ViewChartUsers', {
-      type: 'funnel',
-      report: {
-        projectId,
-        series: reportSeries,
-        breakdowns: reportBreakdowns || [],
-        interval: interval || 'day',
-        startDate,
-        endDate,
-        range,
-        previous,
-        chartType: 'funnel',
-        metric: 'sum',
-        options: funnelOptions,
-        dateConfig,
-      },
-      stepIndex,
-      breakdownValues,
-    });
-  };
-  return (
-    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
-    <div
-      className={cn(
-        'col @container card divide-y divide-border',
-        noTopBorderRadius && 'rounded-t-none'
-      )}
-    >
-      {hasHeader && <ChartName breakdowns={breakdowns} className="p-4 py-3" />}
-      <div
-        className={cn(
-          'bg-def-100',
-          !hasHeader && 'rounded-t-md',
-          noTopBorderRadius && 'rounded-t-none'
-        )}
-      >
-        <div className="col md:row divide-border max-md:divide-y md:items-center md:divide-x">
-          <Metric
-            className="p-4 py-3"
-            enhancer={
-              previousData &&
-              previousSelectedMeasureValue !== undefined && (
-                <PreviousDiffIndicatorPure
-                  {...getPreviousMetric(
-                    selectedMeasureValue,
-                    previousSelectedMeasureValue
-                  )}
-                />
-              )
-            }
-            label={getFunnelMeasureLabel(measure)}
-            value={formatFunnelMeasureValue(
-              number,
-              selectedMeasureValue,
-              measure
-            )}
-          />
-          {measure !== 'conversion_rate' && (
-            <Metric
-              className="p-4 py-3"
-              enhancer={
-                previousData && (
-                  <PreviousDiffIndicatorPure
-                    {...getPreviousMetric(
-                      lastStep?.percent,
-                      previousData.lastStep?.percent
-                    )}
-                  />
-                )
-              }
-              label="Conversion"
-              value={number.formatWithUnit(lastStep?.percent / 100, '%')}
-            />
-          )}
-          <Metric
-            className="p-4 py-3"
-            enhancer={
-              previousData && (
-                <PreviousDiffIndicatorPure
-                  {...getPreviousMetric(
-                    lastStep?.count,
-                    previousData.lastStep?.count
-                  )}
-                />
-              )
-            }
-            label="Completed"
-            value={number.format(lastStep?.count)}
-          />
-          {!!mostDropoffsStep && (
-            <Metric
-              className="p-4 py-3"
-              enhancer={
-                <Tooltiper
-                  content={
-                    <span>
-                      <span className="font-semibold">
-                        {mostDropoffsStep?.dropoffCount}
-                      </span>{' '}
-                      dropped after this event. Improve this step and your
-                      conversion rate will likely increase.
-                    </span>
-                  }
-                  tooltipClassName="max-w-xs"
-                >
-                  <InfoIcon className="size-3" />
-                </Tooltiper>
-              }
-              label="Most dropoffs after"
-              value={mostDropoffsStep?.event?.displayName}
-            />
-          )}
-        </div>
-      </div>
-      <div className="col divide-y divide-def-200">
-        <WidgetTable
-          className={'@container text-sm'}
-          columnClassName="px-2 group/row items-center"
-          columns={[
-            {
-              name: 'Event',
-              render: (item, index) => (
-                <div className="row relative min-w-0 items-center gap-2">
-                  <ColorSquare color={getChartColor(index)}>
-                    {alphabetIds[index]}
-                  </ColorSquare>
-                  <ReportSeriesScreenshot
-                    eventName={item.event.displayName}
-                    serieId={`funnel-step:${index}`}
-                    showNoMatch={false}
-                  />
-                  <span className="truncate">{item.event.displayName}</span>
-                </div>
-              ),
-              width: 'w-full',
-              className: 'text-left font-mono font-semibold',
-            },
-            {
-              name: 'Completed',
-              render: (item) => number.format(item.stepConversionCount),
-              className: 'text-right font-mono hidden @xl:block',
-              width: '82px',
-            },
-            {
-              name: 'Dropped after',
-              render: (item) =>
-                item.dropoffCount !== null
-                  ? number.format(item.dropoffCount)
-                  : null,
-              className: 'text-right font-mono hidden @2xl:block',
-              width: '110px',
-            },
-            {
-              name: 'Median Time',
-              render: (item) =>
-                item.medianTimeToConvertSeconds != null
-                  ? formatDuration(item.medianTimeToConvertSeconds)
-                  : '—',
-              className: 'text-right font-mono hidden @xl:block',
-              width: '100px',
-            },
-            {
-              name: 'Conversion',
-              render: (item) =>
-                number.formatWithUnit(item.stepConversionPercent / 100, '%'),
-              className: 'text-right font-mono font-semibold',
-              width: '90px',
-            },
-            {
-              name: '',
-              render: (item, index) => (
-                <Button
-                  className="h-8 w-8 p-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleInspectStep(item, index);
-                  }}
-                  size="sm"
-                  title="View users who completed this step"
-                  variant="ghost"
-                >
-                  <UsersIcon size={16} />
-                </Button>
-              ),
-              className: 'text-right',
-              width: '48px',
-            },
-          ]}
-          data={steps}
-          eachRow={(item, index) => {
-            return (
-              <div className="!p-0 absolute inset-px">
-                <div
-                  className={cn(
-                    'relative h-full bg-def-300 transition-colors group-hover/row:bg-blue-200 dark:group-hover/row:bg-blue-900',
-                    item.isHighestDropoff && [
-                      'bg-red-500/20',
-                      'group-hover/row:bg-red-500/70',
-                    ],
-                    index === steps.length - 1 && 'rounded-bl-sm'
-                  )}
-                  style={{
-                    width: `${item.percent}%`,
-                  }}
-                />
-              </div>
-            );
-          }}
-          keyExtractor={(item) =>
-            item.event.id ?? `step-${steps.indexOf(item)}`
-          }
-        />
-      </div>
-    </div>
-    </ReportSeriesScreenshotsProvider>
-  );
-}
-
-type RechartData = {
-  id: string;
-  stepIndex: number;
-  name: string;
-  [key: `step:percent:${number}`]: number | null;
-  [key: `step:dropoffPercent:${number}`]: number;
-  [key: `step:data:${number}`]:
-    | (RouterOutputs['chart']['funnel']['current'][number] & {
-        step: RouterOutputs['chart']['funnel']['current'][number]['steps'][number];
-      })
-    | null;
-  [key: `prev_step:percent:${number}`]: number | null;
-  [key: `prev_step:data:${number}`]:
-    | (RouterOutputs['chart']['funnel']['current'][number] & {
-        step: RouterOutputs['chart']['funnel']['current'][number]['steps'][number];
-      })
-    | null;
-};
-
-type FunnelBarLabelProps = {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  value?: number | number[] | string | null;
-  payload?: RechartData;
-};
-
-const useRechartData = ({
-  current,
-  previous,
-  visibleBreakdowns,
-}: RouterOutputs['chart']['funnel'] & {
-  visibleBreakdowns: RouterOutputs['chart']['funnel']['current'];
-}): RechartData[] => {
-  const firstFunnel = current[0];
-  // Create a map of original index to visible index
-  const visibleBreakdownIds = new Set(visibleBreakdowns.map((b) => b.id));
-  const originalToVisibleIndex = new Map<number, number>();
-  let visibleIndex = 0;
-  current.forEach((item, originalIndex) => {
-    if (visibleBreakdownIds.has(item.id)) {
-      originalToVisibleIndex.set(originalIndex, visibleIndex);
-      visibleIndex++;
-    }
-  });
-
-  return (
-    firstFunnel?.steps.map((step, stepIndex) => {
-      return {
-        id: step?.event.id ?? `step-${stepIndex}`,
-        stepIndex,
-        name: step?.event.displayName ?? '',
-        ...visibleBreakdowns.reduce((acc, visibleItem, visibleIdx) => {
-          // Find the original index for this visible breakdown
-          const originalIndex = current.findIndex(
-            (item) => item.id === visibleItem.id
-          );
-          if (originalIndex === -1) {
-            return acc;
-          }
-
-          const diff = previous?.[originalIndex];
-          const currentStep = visibleItem.steps[stepIndex];
-          const previousStep =
-            stepIndex > 0 ? visibleItem.steps[stepIndex - 1] : undefined;
-          const dropoffPercent = getFunnelDropoffChartPercent(
-            currentStep?.percent,
-            previousStep?.percent
-          );
-          return {
-            ...acc,
-            [`step:percent:${visibleIdx}`]: currentStep?.percent ?? null,
-            [`step:dropoffPercent:${visibleIdx}`]: dropoffPercent,
-            [`step:data:${visibleIdx}`]: {
-              ...visibleItem,
-              step: currentStep,
-            },
-            [`prev_step:percent:${visibleIdx}`]:
-              diff?.steps[stepIndex]?.percent ?? null,
-            [`prev_step:data:${visibleIdx}`]: diff
-              ? {
-                  ...diff,
-                  step: diff?.steps?.[stepIndex],
-                }
-              : null,
-          };
-        }, {}),
-      };
-    }) ?? []
-  );
-};
-
-const StripedBarShape = (props: any) => {
-  const { x, y, width, height, fill, stroke, value } = props;
-  const patternId = `prev-stripes-${(fill || '').replace(/[^a-z0-9]/gi, '')}`;
-  return (
-    <g>
-      <defs>
-        <pattern
-          height="6"
-          id={patternId}
-          patternTransform="rotate(-45)"
-          patternUnits="userSpaceOnUse"
-          width="6"
-        >
-          <rect fill="transparent" height="6" width="6" />
-          <rect fill={fill} height="6" width="3" />
-        </pattern>
-      </defs>
-      <rect
-        fill={`url(#${patternId})`}
-        height={height}
-        rx={3}
-        width={width}
-        x={x}
-        y={y}
-      />
-      {value > 0 && (
-        <rect
-          fill={stroke}
-          height={2}
-          opacity={0.6}
-          rx={2}
-          stroke="none"
-          width={width}
-          x={x}
-          y={y - 3}
-        />
-      )}
-    </g>
-  );
-};
-
-function FunnelOverallLegend({ percent }: { percent: number }) {
-  const number = useNumber();
-
-  return (
-    <div className="flex items-center justify-center gap-2 text-sm">
-      <div
-        className="size-2.5 rounded-[3px] shrink-0"
-        style={{ backgroundColor: getChartColor(0) }}
-      />
-      <span className="font-medium text-foreground">
-        Overall • {number.formatWithUnit(percent / 100, '%')}
-      </span>
     </div>
   );
 }
@@ -1507,6 +1091,436 @@ function FunnelDrilldownPopover({
   );
 }
 
+export function Tables({
+  data: {
+    current: { steps, mostDropoffsStep, lastStep, breakdowns },
+    previous: previousData,
+  },
+  noTopBorderRadius,
+  membershipAsOf,
+}: Props) {
+  const number = useNumber();
+  const hasHeader = breakdowns.length > 0;
+  const {
+    report: {
+      projectId,
+      startDate,
+      endDate,
+      range,
+      interval,
+      series: reportSeries,
+      breakdowns: reportBreakdowns,
+      previous,
+      options,
+      dateConfig,
+      cohortFilters,
+    },
+  } = useReportChartContext();
+
+  const funnelOptions = options?.type === 'funnel' ? options : undefined;
+  const measure = getFunnelMeasureFromOptions(options);
+  const selectedMeasureValue = getFunnelMeasureValue(lastStep, measure);
+  const previousSelectedMeasureValue = previousData
+    ? getFunnelMeasureValue(previousData.lastStep, measure)
+    : undefined;
+  const screenshotSeries = reportSeries.flatMap((event, index) =>
+    event.type === 'event'
+      ? [
+          {
+            id: `funnel-step:${index}`,
+            serieType: 'event' as const,
+            event: {
+              id: event.id,
+              name: event.name,
+              breakdowns: {},
+            },
+          },
+        ]
+      : []
+  );
+
+  const handleInspectStep = (
+    step: (typeof steps)[0],
+    stepIndex: number,
+    breakdownValues?: string[],
+    serieId?: string,
+  ) => {
+    if (!projectId) {
+      return;
+    }
+
+    pushModal('ViewChartUsers', {
+      type: 'funnel',
+      report: {
+        projectId,
+        series: reportSeries,
+        breakdowns: reportBreakdowns || [],
+        // The funnel's cohort restriction, or the modal lists everyone.
+        cohortFilters,
+        interval: interval || 'day',
+        startDate,
+        endDate,
+        range,
+        previous,
+        chartType: 'funnel',
+        metric: 'sum',
+        options: funnelOptions,
+        dateConfig,
+      },
+      stepIndex,
+      breakdownValues,
+      ...(parseCohortSerieId(serieId) ?? {}),
+      membershipAsOf,
+    });
+  };
+  return (
+    <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
+    <div
+      className={cn(
+        'col @container card divide-y divide-border',
+        noTopBorderRadius && 'rounded-t-none'
+      )}
+    >
+      {hasHeader && <ChartName breakdowns={breakdowns} className="p-4 py-3" />}
+      <div
+        className={cn(
+          'bg-def-100',
+          !hasHeader && 'rounded-t-md',
+          noTopBorderRadius && 'rounded-t-none'
+        )}
+      >
+        <div className="col md:row divide-border max-md:divide-y md:items-center md:divide-x">
+          <Metric
+            className="p-4 py-3"
+            enhancer={
+              previousData &&
+              previousSelectedMeasureValue !== undefined && (
+                <PreviousDiffIndicatorPure
+                  {...getPreviousMetric(
+                    selectedMeasureValue,
+                    previousSelectedMeasureValue
+                  )}
+                />
+              )
+            }
+            label={getFunnelMeasureLabel(measure)}
+            value={formatFunnelMeasureValue(
+              number,
+              selectedMeasureValue,
+              measure
+            )}
+          />
+          {measure !== 'conversion_rate' && (
+            <Metric
+              className="p-4 py-3"
+              enhancer={
+                previousData && (
+                  <PreviousDiffIndicatorPure
+                    {...getPreviousMetric(
+                      lastStep?.percent,
+                      previousData.lastStep?.percent
+                    )}
+                  />
+                )
+              }
+              label="Conversion"
+              value={number.formatWithUnit(lastStep?.percent / 100, '%')}
+            />
+          )}
+          <Metric
+            className="p-4 py-3"
+            enhancer={
+              previousData && (
+                <PreviousDiffIndicatorPure
+                  {...getPreviousMetric(
+                    lastStep?.count,
+                    previousData.lastStep?.count
+                  )}
+                />
+              )
+            }
+            label="Completed"
+            value={number.format(lastStep?.count)}
+          />
+          {!!mostDropoffsStep && (
+            <Metric
+              className="p-4 py-3"
+              enhancer={
+                <Tooltiper
+                  content={
+                    <span>
+                      <span className="font-semibold">
+                        {mostDropoffsStep?.dropoffCount}
+                      </span>{' '}
+                      dropped after this event. Improve this step and your
+                      conversion rate will likely increase.
+                    </span>
+                  }
+                  tooltipClassName="max-w-xs"
+                >
+                  <InfoIcon className="size-3" />
+                </Tooltiper>
+              }
+              label="Most dropoffs after"
+              value={mostDropoffsStep?.event?.displayName}
+            />
+          )}
+        </div>
+      </div>
+      <div className="col divide-y divide-def-200">
+        <WidgetTable
+          className={'@container text-sm'}
+          columnClassName="px-2 group/row items-center"
+          columns={[
+            {
+              name: 'Event',
+              render: (item, index) => (
+                <div className="row relative min-w-0 items-center gap-2">
+                  <ColorSquare color={getChartColor(index)}>
+                    {alphabetIds[index]}
+                  </ColorSquare>
+                  <ReportSeriesScreenshot
+                    eventName={item.event.displayName}
+                    serieId={`funnel-step:${index}`}
+                    showNoMatch={false}
+                  />
+                  <span className="truncate">{item.event.displayName}</span>
+                </div>
+              ),
+              width: 'w-full',
+              className: 'text-left font-mono font-semibold',
+            },
+            {
+              name: 'Completed',
+              render: (item) => number.format(item.stepConversionCount),
+              className: 'text-right font-mono hidden @xl:block',
+              width: '82px',
+            },
+            {
+              name: 'Dropped after',
+              render: (item) =>
+                item.dropoffCount !== null
+                  ? number.format(item.dropoffCount)
+                  : null,
+              className: 'text-right font-mono hidden @2xl:block',
+              width: '110px',
+            },
+            {
+              name: 'Median Time',
+              render: (item) =>
+                item.medianTimeToConvertSeconds != null
+                  ? formatDuration(item.medianTimeToConvertSeconds)
+                  : '—',
+              className: 'text-right font-mono hidden @xl:block',
+              width: '100px',
+            },
+            {
+              name: 'Conversion',
+              render: (item) =>
+                number.formatWithUnit(item.stepConversionPercent / 100, '%'),
+              className: 'text-right font-mono font-semibold',
+              width: '90px',
+            },
+            {
+              name: '',
+              render: (item, index) => (
+                <Button
+                  className="h-8 w-8 p-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleInspectStep(item, index);
+                  }}
+                  size="sm"
+                  title="View users who completed this step"
+                  variant="ghost"
+                >
+                  <UsersIcon size={16} />
+                </Button>
+              ),
+              className: 'text-right',
+              width: '48px',
+            },
+          ]}
+          data={steps}
+          eachRow={(item, index) => {
+            return (
+              <div className="!p-0 absolute inset-px">
+                <div
+                  className={cn(
+                    'relative h-full bg-def-300 transition-colors group-hover/row:bg-blue-200 dark:group-hover/row:bg-blue-900',
+                    item.isHighestDropoff && [
+                      'bg-red-500/20',
+                      'group-hover/row:bg-red-500/70',
+                    ],
+                    index === steps.length - 1 && 'rounded-bl-sm'
+                  )}
+                  style={{
+                    width: `${item.percent}%`,
+                  }}
+                />
+              </div>
+            );
+          }}
+          keyExtractor={(item) =>
+            item.event.id ?? `step-${steps.indexOf(item)}`
+          }
+        />
+      </div>
+    </div>
+    </ReportSeriesScreenshotsProvider>
+  );
+}
+
+type RechartData = {
+  id: string;
+  stepIndex: number;
+  name: string;
+  [key: `step:percent:${number}`]: number | null;
+  [key: `step:dropoffPercent:${number}`]: number;
+  [key: `step:data:${number}`]:
+    | (RouterOutputs['chart']['funnel']['current'][number] & {
+        step: RouterOutputs['chart']['funnel']['current'][number]['steps'][number];
+      })
+    | null;
+  [key: `prev_step:percent:${number}`]: number | null;
+  [key: `prev_step:data:${number}`]:
+    | (RouterOutputs['chart']['funnel']['current'][number] & {
+        step: RouterOutputs['chart']['funnel']['current'][number]['steps'][number];
+      })
+    | null;
+};
+
+type FunnelBarLabelProps = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  value?: number | number[] | string | null;
+  payload?: RechartData;
+};
+
+const useRechartData = ({
+  current,
+  previous,
+  visibleBreakdowns,
+}: RouterOutputs['chart']['funnel'] & {
+  visibleBreakdowns: RouterOutputs['chart']['funnel']['current'];
+}): RechartData[] => {
+  const firstFunnel = current[0];
+  // Create a map of original index to visible index
+  const visibleBreakdownIds = new Set(visibleBreakdowns.map((b) => b.id));
+  const originalToVisibleIndex = new Map<number, number>();
+  let visibleIndex = 0;
+  current.forEach((item, originalIndex) => {
+    if (visibleBreakdownIds.has(item.id)) {
+      originalToVisibleIndex.set(originalIndex, visibleIndex);
+      visibleIndex++;
+    }
+  });
+
+  return (
+    firstFunnel?.steps.map((step, stepIndex) => {
+      return {
+        id: step?.event.id ?? `step-${stepIndex}`,
+        stepIndex,
+        name: step?.event.displayName ?? '',
+        ...visibleBreakdowns.reduce((acc, visibleItem, visibleIdx) => {
+          // Find the original index for this visible breakdown
+          const originalIndex = current.findIndex(
+            (item) => item.id === visibleItem.id
+          );
+          if (originalIndex === -1) {
+            return acc;
+          }
+
+          const diff = previous?.[originalIndex];
+          const currentStep = visibleItem.steps[stepIndex];
+          const previousStep =
+            stepIndex > 0 ? visibleItem.steps[stepIndex - 1] : undefined;
+          const dropoffPercent = getFunnelDropoffChartPercent(
+            currentStep?.percent,
+            previousStep?.percent
+          );
+          return {
+            ...acc,
+            [`step:percent:${visibleIdx}`]: currentStep?.percent ?? null,
+            [`step:dropoffPercent:${visibleIdx}`]: dropoffPercent,
+            [`step:data:${visibleIdx}`]: {
+              ...visibleItem,
+              step: currentStep,
+            },
+            [`prev_step:percent:${visibleIdx}`]:
+              diff?.steps[stepIndex]?.percent ?? null,
+            [`prev_step:data:${visibleIdx}`]: diff
+              ? {
+                  ...diff,
+                  step: diff?.steps?.[stepIndex],
+                }
+              : null,
+          };
+        }, {}),
+      };
+    }) ?? []
+  );
+};
+
+const StripedBarShape = (props: any) => {
+  const { x, y, width, height, fill, stroke, value } = props;
+  const patternId = `prev-stripes-${(fill || '').replace(/[^a-z0-9]/gi, '')}`;
+  return (
+    <g>
+      <defs>
+        <pattern
+          height="6"
+          id={patternId}
+          patternTransform="rotate(-45)"
+          patternUnits="userSpaceOnUse"
+          width="6"
+        >
+          <rect fill="transparent" height="6" width="6" />
+          <rect fill={fill} height="6" width="3" />
+        </pattern>
+      </defs>
+      <rect
+        fill={`url(#${patternId})`}
+        height={height}
+        rx={3}
+        width={width}
+        x={x}
+        y={y}
+      />
+      {value > 0 && (
+        <rect
+          fill={stroke}
+          height={2}
+          opacity={0.6}
+          rx={2}
+          stroke="none"
+          width={width}
+          x={x}
+          y={y - 3}
+        />
+      )}
+    </g>
+  );
+};
+
+function FunnelOverallLegend({ percent }: { percent: number }) {
+  const number = useNumber();
+
+  return (
+    <div className="flex items-center justify-center gap-2 text-sm">
+      <div
+        className="size-2.5 rounded-[3px] shrink-0"
+        style={{ backgroundColor: getChartColor(0) }}
+      />
+      <span className="font-medium text-foreground">
+        Overall • {number.formatWithUnit(percent / 100, '%')}
+      </span>
+    </div>
+  );
+}
+
 export function Chart({
   data,
   visibleBreakdowns,
@@ -1598,10 +1612,15 @@ export function Chart({
         metric: 'sum',
         options: funnelOptions,
         dateConfig: report.dateConfig,
+        cohortFilters: report.cohortFilters,
       },
       stepIndex: query.stepIndex,
       initialShowDropoffs: query.showDropoffs,
       breakdownValues: selectedVariant.breakdowns,
+      // Which bucket, and the instant the server used — both required for the
+      // listed profiles to be the ones behind the clicked number.
+      ...(parseCohortSerieId(selectedVariant.id) ?? {}),
+      membershipAsOf: data.membershipAsOf,
     });
     setDrilldownSelection(null);
   }, [drilldownSelection, report, selectedVariant]);

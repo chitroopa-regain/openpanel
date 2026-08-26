@@ -6,8 +6,7 @@ import {
 } from '@openpanel/constants';
 import type {
   ICohortBreakdown,
-  ICohortFilter,
-  IReportAudience,
+  ICohortFilters,
   IChartBreakdown,
   IChartEventFilter,
   IChartEventItem,
@@ -92,6 +91,7 @@ export function transformReport(
   id: string;
   layout?: ReportLayout | null;
   dashboardId: string;
+  updatedAt: Date;
 } {
   const options = report.options as IReportOptions | null | undefined;
 
@@ -117,10 +117,15 @@ export function transformReport(
     layout: report.layout ?? undefined,
     options: options ?? undefined,
     dateConfig: (report as any).dateConfig ?? undefined,
-    audience: ((report as any).audience as IReportAudience) ?? undefined,
     cohortBreakdown:
       ((report as any).cohortBreakdown as ICohortBreakdown) ?? undefined,
-    cohortFilter: ((report as any).cohortFilter as ICohortFilter) ?? undefined,
+    cohortFilters:
+      ((report as any).cohortFilters as ICohortFilters) ?? undefined,
+    // Carried so the query cache can key a saved report on its revision.
+    // Without it, editing a report's cohort filter leaves the dashboard and
+    // every share view serving the previously cached, unfiltered numbers until
+    // the TTL expires — the `{id}`-only key cannot see the change otherwise.
+    updatedAt: report.updatedAt,
   };
 }
 

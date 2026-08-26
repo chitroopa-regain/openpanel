@@ -43,7 +43,7 @@ export async function resolveCohortsForBreakdown(
   asOf: string,
 ): Promise<CompiledCohort[]> {
   if (!cohortIds?.length) return [];
-  const resolved = await resolveAudience(cohortIds, projectId, asOf);
+  const resolved = await loadCohorts(cohortIds, projectId, asOf);
   const byId = new Map(resolved.cohorts.map((c) => [c.cohortId, c]));
   return cohortIds.map((id) => {
     const c = byId.get(id);
@@ -52,23 +52,20 @@ export async function resolveCohortsForBreakdown(
   });
 }
 
-export interface ResolvedAudience {
+export interface LoadedCohorts {
   cohorts: CompiledCohort[];
-  /** AND-combined predicate for every cohort, or null when there is no audience. */
-  render: (alias: CohortAlias) => string | null;
   /** Max cohort version — folded into cache keys so an edit invalidates. */
   effectiveVersion: number;
 }
 
 /**
- * Compile a cohort FILTER (report-level or inline) into a predicate.
+ * Compile ONE filter row (or one breakdown bucket) into a predicate.
  *
- * Differs from `resolveAudience` in two ways that matter:
+ * Two properties matter:
  *
  *  1. Ids are **OR-combined**, per Mixpanel: "filter by cohort A OR cohort B",
- *     so adding a cohort widens the population. `resolveAudience` ANDs them and
- *     is left untouched — reinterpreting a saved multi-cohort audience as OR
- *     would silently change existing reports.
+ *     so adding a cohort to a row widens the population. Rows AND together in
+ *     `resolveCohortFilters`, which is how a multi-row filter narrows.
  *
  *  2. Membership sets are guarded against the empty profile_id. `profile_id` is
  *     a non-nullable ClickHouse String, so `''` is this schema's null-like
@@ -125,34 +122,67 @@ export function cohortBucketLabel(
   return membership === 'in' ? `In '${cohortName}'` : `Not In '${cohortName}'`;
 }
 
-export interface ResolvedCohortFilter {
-  cohorts: CompiledCohort[];
-  render: (alias: CohortAlias) => string | null;
+export interface ResolvedCohortFilters {
+  /** Flat union of every referenced id, for ownership checks and references. */
+  cohortIds: string[];
+  /** AND of each row's OR-group, or null when there are no rows. */
+  predicate: (alias: CohortAlias) => string | null;
   effectiveVersion: number;
 }
 
-/** Resolve a cohort filter into an OR-combined, optionally negated predicate. */
-export async function resolveCohortFilter(
-  filter: { operator?: 'in' | 'not_in'; cohortIds?: string[] } | null | undefined,
+type CohortFilterRow = {
+  operator?: 'in' | 'not_in';
+  cohortIds?: string[];
+};
+
+/**
+ * Resolve the report's cohort filter ROWS into one predicate.
+ *
+ * Ids within a row are OR-combined; rows AND together. That is the whole
+ * contract, and it is the only way cohort filters reach SQL — every caller
+ * (chart, aggregate, funnel, retention, drill-down) goes through this function
+ * so no path can invent its own composition and drift.
+ *
+ * Every row is compiled from ONE load, so a report with three rows still issues
+ * a single Postgres query.
+ */
+export async function resolveCohortFilters(
+  rows: CohortFilterRow[] | null | undefined,
   projectId: string,
   asOf: string,
-): Promise<ResolvedCohortFilter> {
-  const empty: ResolvedCohortFilter = {
-    cohorts: [],
-    render: () => null,
+): Promise<ResolvedCohortFilters> {
+  const empty: ResolvedCohortFilters = {
+    cohortIds: [],
+    predicate: () => null,
     effectiveVersion: 0,
   };
-  if (!filter?.cohortIds?.length) return empty;
-  // Reuses resolveAudience purely as the loader: it performs the not-found and
-  // cross-project assertions and compiles each cohort. Only its AND-combining
-  // `render` is discarded here.
-  const resolved = await resolveAudience(filter.cohortIds, projectId, asOf);
-  const operator = filter.operator ?? 'in';
+  const present = (rows ?? []).filter((row) => (row?.cohortIds?.length ?? 0) > 0);
+  if (!present.length) return empty;
+
+  const cohortIds = [...new Set(present.flatMap((row) => row.cohortIds ?? []))];
+  const loaded = await loadCohorts(cohortIds, projectId, asOf);
+  const byId = new Map(loaded.cohorts.map((c) => [c.cohortId, c]));
+
   return {
-    cohorts: resolved.cohorts,
-    effectiveVersion: resolved.effectiveVersion,
-    render: (alias: CohortAlias) =>
-      combineCohortPredicates(resolved.cohorts, operator, alias),
+    cohortIds,
+    effectiveVersion: loaded.effectiveVersion,
+    predicate: (alias: CohortAlias) => {
+      const parts = present
+        .map((row) => {
+          const cohorts = (row.cohortIds ?? []).map((id) => {
+            const cohort = byId.get(id);
+            if (!cohort) throw new Error(`Custom cohort not found: ${id}`);
+            return cohort;
+          });
+          return combineCohortPredicates(cohorts, row.operator ?? 'in', alias);
+        })
+        .filter(Boolean) as string[];
+      if (!parts.length) return null;
+      // Parenthesise every row before ANDing: a row can itself be an OR group
+      // or a negation, and without the parens precedence silently reassociates
+      // the expression.
+      return parts.map((part) => `(${part})`).join(' AND ');
+    },
   };
 }
 
@@ -469,19 +499,23 @@ export function compileDefinition(
 }
 
 /**
- * Resolve report `audience.cohortIds` into a compiled, typed predicate.
+ * Load and compile cohorts by id. The ONLY loader: one Postgres query for every
+ * referenced cohort (no N+1), and every row is asserted to belong to the
+ * requesting project — an id alone is never trusted, because a foreign id
+ * satisfies the foreign key.
  *
- * One Postgres query for every referenced cohort (no N+1), and every row is
- * asserted to belong to the requesting project — an id alone is never trusted.
+ * It deliberately returns no combined predicate. Combining is the caller's
+ * decision (rows AND, ids within a row OR, buckets negated) and lives in
+ * `combineCohortPredicates`, so there is exactly one place where cohort SQL is
+ * composed.
  */
-export async function resolveAudience(
+export async function loadCohorts(
   cohortIds: string[] | undefined,
   projectId: string,
   asOf: string,
-): Promise<ResolvedAudience> {
-  const empty: ResolvedAudience = {
+): Promise<LoadedCohorts> {
+  const empty: LoadedCohorts = {
     cohorts: [],
-    render: () => null,
     effectiveVersion: 0,
   };
   if (!cohortIds?.length) return empty;
@@ -527,7 +561,5 @@ export async function resolveAudience(
   return {
     cohorts,
     effectiveVersion: Math.max(...cohorts.map((c) => c.version)),
-    render: (alias: CohortAlias) =>
-      cohorts.length ? cohorts.map((c) => c.render(alias)).join(' AND ') : null,
   };
 }

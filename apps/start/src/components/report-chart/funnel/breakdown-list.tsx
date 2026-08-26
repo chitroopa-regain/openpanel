@@ -42,7 +42,14 @@ interface BreakdownListProps {
   data: RouterOutputs['chart']['funnel'];
   visibleSeriesIds: string[];
   onToggleVisibility: (id: string) => void;
-  onInspectStep?: (stepIndex: number, breakdownValues?: string[]) => void;
+  onInspectStep?: (
+    stepIndex: number,
+    breakdownValues?: string[],
+    // The clicked series' id. For a cohort bucket it encodes
+    // `${cohortId}:${membership}`, which is what lets the drill-down list that
+    // bucket's population instead of the whole funnel.
+    serieId?: string,
+  ) => void;
   savedTopN?: number;
   onTopNChange?: (n: number | undefined) => void;
 }
@@ -868,7 +875,7 @@ export function BreakdownList({
                         key={`${item.id}-s${stepIdx}`}
                         className="px-3 py-2 text-right font-mono whitespace-nowrap border-l border-border cursor-pointer hover:bg-muted/50"
                         onClick={() =>
-                          onInspectStep?.(stepIdx, item.breakdowns)
+                          onInspectStep?.(stepIdx, item.breakdowns, item.id)
                         }
                       >
                         {number.format(step.stepConversionCount)}
@@ -891,7 +898,7 @@ export function BreakdownList({
                       <td
                         className="px-3 py-2 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-muted/50"
                         onClick={() =>
-                          onInspectStep?.(stepIdx, item.breakdowns)
+                          onInspectStep?.(stepIdx, item.breakdowns, item.id)
                         }
                       >
                         {number.format(step.stepConversionCount)}

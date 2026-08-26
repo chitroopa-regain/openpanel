@@ -13,7 +13,18 @@ import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
 
 export type CohortData = RouterOutputs['chart']['cohort']['data'];
-type CohortRow = CohortData[number];
+/**
+ * A row, optionally stamped with the custom-cohort bucket it came from.
+ *
+ * Identity is `cohortKey` = `${cohortId}:${membership}`, assigned where the
+ * buckets are flattened — NOT the label. Two custom cohorts can share a name,
+ * and `In 'X'` / `Not In 'X'` must never collapse into one another; keying on
+ * what is displayed would do exactly that.
+ */
+export type CohortRow = CohortData[number] & {
+  cohortKey?: string;
+  cohortLabel?: string;
+};
 
 export interface CohortBreakdownGroup {
   key: string;
@@ -23,12 +34,15 @@ export interface CohortBreakdownGroup {
 }
 
 export function getCohortBreakdownGroups(
-  data: CohortData
+  data: CohortRow[]
 ): CohortBreakdownGroup[] {
   const groupedRows = new Map<string, CohortRow[]>();
 
   data.forEach((row) => {
-    const key = JSON.stringify(row.breakdowns);
+    // A custom-cohort bucket groups by its own identity; everything else keeps
+    // grouping by the property-breakdown values as before. The two never mix:
+    // the server rejects a property breakdown beside a cohort breakdown.
+    const key = row.cohortKey ?? JSON.stringify(row.breakdowns);
     const rows = groupedRows.get(key) ?? [];
     rows.push(row);
     groupedRows.set(key, rows);
@@ -42,8 +56,9 @@ export function getCohortBreakdownGroups(
     return {
       key,
       label:
-        summary?.breakdowns.map((value) => value || '(not set)').join(' / ') ||
-        '(not set)',
+        summary?.cohortLabel ??
+        (summary?.breakdowns.map((value) => value || '(not set)').join(' / ') ||
+          '(not set)'),
       summary,
       cohorts: rows.filter((row) => row !== summary),
     };
@@ -51,7 +66,7 @@ export function getCohortBreakdownGroups(
 }
 
 interface CohortTableProps {
-  data: CohortData;
+  data: CohortRow[];
 }
 
 const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
@@ -73,7 +88,9 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
   const breakdownDefinitionKey = JSON.stringify(
     breakdowns.map((breakdown) => [breakdown.id, breakdown.name])
   );
-  const hasBreakdowns = data.some((row) => row.breakdowns.length > 0);
+  const hasBreakdowns = data.some(
+    (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey),
+  );
   const breakdownGroups = hasBreakdowns ? getCohortBreakdownGroups(data) : [];
   const screenshotSeries = breakdownGroups.flatMap((group) => {
     const event = series[0];

@@ -16,13 +16,15 @@ import {
   ReportSeriesScreenshotsProvider,
 } from '../common/report-series-screenshots';
 import { useReportChartContext } from '../context';
+import type { CohortRow } from './table';
 import { RetentionTooltip } from './tooltip';
 import type { RouterOutputs } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
 
 interface Props {
-  data: RouterOutputs['chart']['cohort']['data'];
+  // Rows may carry a custom-cohort bucket identity; see table.tsx.
+  data: CohortRow[];
 }
 
 export function toChartValue(
@@ -66,7 +68,11 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
     (row) => row.cohort_interval === 'Weighted Average'
   );
   const averageRow = averageRows[0];
-  const hasBreakdowns = averageRows.some((row) => row.breakdowns.length > 0);
+  const hasBreakdowns = averageRows.some(
+    (row) =>
+      row.breakdowns.length > 0 ||
+      Boolean((row as { cohortKey?: string }).cohortKey),
+  );
   const dataSource = isPercentage
     ? averageRow?.percentages
     : averageRow?.values;
@@ -173,16 +179,24 @@ export function Chart({ data }: Props) {
           },
         }))
       : [];
+  /**
+   * A row's series name. A custom-cohort bucket carries its label instead of
+   * property-breakdown values, and its `breakdowns` are empty — reading them
+   * alone rendered every bucket as "(not set)".
+   */
+  const rowLabel = (row: { breakdowns: string[]; cohortLabel?: string }) =>
+    row.cohortLabel ?? (row.breakdowns.join(' / ') || '(not set)');
+
   const breakdownLegend = () => (
     <div className="flex flex-wrap justify-center gap-3 text-xs">
       {averageRows.map((row, index) => (
         <div className="flex items-center gap-1" key={`retention:${index}`}>
           <ReportSeriesScreenshot
-            eventName={`${retentionEvent?.type === 'event' ? retentionEvent.name : 'Retention'} — ${row.breakdowns.join(' / ') || '(not set)'}`}
+            eventName={`${retentionEvent?.type === 'event' ? retentionEvent.name : 'Retention'} — ${rowLabel(row)}`}
             serieId={`retention:${index}`}
             showNoMatch={false}
           />
-          <span>{row.breakdowns.join(' / ') || '(not set)'}</span>
+          <span>{rowLabel(row)}</span>
         </div>
       ))}
     </div>
@@ -278,8 +292,10 @@ export function Chart({ data }: Props) {
                   dataKey={`series_${index}`}
                   fill="transparent"
                   isAnimationActive={false}
-                  key={JSON.stringify(row.breakdowns)}
-                  name={row.breakdowns.join(' / ') || '(not set)'}
+                  // Bucket identity, never the label: two cohorts can share a
+                  // name, and In / Not In must stay separate lines.
+                  key={row.cohortKey ?? JSON.stringify(row.breakdowns)}
+                  name={rowLabel(row)}
                   stroke={getChartColor(index)}
                   strokeWidth={2}
                   type="monotone"

@@ -151,9 +151,14 @@ function ReportSqlContent({ active }: { active: boolean }) {
         retentionUnit: retentionOptions?.retentionUnit,
         breakdowns: report.breakdowns,
         interval: report.interval,
-        // Forward the audience — this call builds its own input rather than
-        // passing the whole report, so omitting it silently drops the cohort.
-        audience: report.audience,
+        // Forward the cohort filter — this call builds its own input rather
+        // than passing the whole report, so omitting it silently drops the
+        // filter and the grid quietly covers everyone.
+        cohortFilters: report.cohortFilters,
+        // Same reason for the breakdown: this input is built field by field,
+        // so an unforwarded cohortBreakdown leaves the sidebar showing buckets
+        // over a grid that was never split.
+        cohortBreakdown: report.cohortBreakdown,
         id: 'id' in report ? report.id : undefined,
       },
       {

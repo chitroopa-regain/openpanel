@@ -3,7 +3,7 @@ import { SheetClose, SheetFooter } from '@/components/ui/sheet';
 import { cn } from '@/utils/cn';
 import { useSelector } from '@/redux';
 
-import { ReportAudience } from './ReportAudience';
+import { ReportCohortFilter } from './ReportCohortFilter';
 import { ReportBreakdowns } from './ReportBreakdowns';
 import { ReportSeries } from './ReportSeries';
 import { ReportSettings } from './ReportSettings';
@@ -50,8 +50,8 @@ export function ReportSidebar({
         ) : (
           <ReportSeries />
         )}
+        <ReportCohortFilter />
         {showBreakdown && <ReportBreakdowns />}
-        <ReportAudience />
         <ReportSettings />
       </div>
       {showFooter && (

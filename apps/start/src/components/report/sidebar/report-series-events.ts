@@ -43,9 +43,8 @@ export function buildChangedReportEvent({
 
   if (selectedItem) {
     // Spread first. Building this object field-by-field silently discarded
-    // everything not named here — firstTimeFilter, hidden, property and the
-    // metric's cohortFilter — every time a metric was changed to a custom
-    // event, on every chart type.
+    // everything not named here — firstTimeFilter, hidden, property — every
+    // time a metric was changed to a custom event, on every chart type.
     // `name` belongs to the ordinary-event shape and `formula` to formulas;
     // neither exists on a custom event, so they are dropped rather than spread
     // through. Everything else carries over.

@@ -118,12 +118,12 @@ describe('buildChangedReportEvent', () => {
   it('preserves metadata when switching a metric to a custom event', () => {
     // Every field here was silently dropped before: the branch rebuilt the
     // object instead of spreading, so changing a metric to a custom event
-    // discarded its cohort filter, first-time filter, hidden state and property.
+    // discarded its first-time filter, hidden state and property.
     const withMetadata = {
       ...baseEvent,
       hidden: true,
       property: 'value_inr',
-      cohortFilter: { operator: 'in' as const, cohortIds: ['cohort-a'] },
+      displayName: 'Activation start',
     };
     const result = buildChangedReportEvent({
       currentEvent: withMetadata,
@@ -141,7 +141,6 @@ describe('buildChangedReportEvent', () => {
     expect(result.firstTimeFilter).toBe(true);
     expect(result.hidden).toBe(true);
     expect(result.property).toBe('value_inr');
-    expect(result.cohortFilter).toEqual({ operator: 'in', cohortIds: ['cohort-a'] });
     // `name` has no meaning on a custom event and must not linger.
     expect(result.name).toBeUndefined();
   });
@@ -150,7 +149,6 @@ describe('buildChangedReportEvent', () => {
     const withMetadata = {
       ...baseEvent,
       hidden: true,
-      cohortFilter: { operator: 'not_in' as const, cohortIds: ['cohort-b'] },
     };
     const result = buildChangedReportEvent({
       currentEvent: withMetadata,
@@ -160,10 +158,6 @@ describe('buildChangedReportEvent', () => {
 
     expect(result.firstTimeFilter).toBe(true);
     expect(result.hidden).toBe(true);
-    expect(result.cohortFilter).toEqual({
-      operator: 'not_in',
-      cohortIds: ['cohort-b'],
-    });
     expect(result.displayName).toBe('Activation start');
   });
 

@@ -54,11 +54,8 @@ export async function normalize(
         displayName: event.displayName,
         property: event.property,
         // Carried explicitly. This branch rebuilds the event field-by-field
-        // rather than spreading, so anything not named here is silently lost —
-        // an inline cohort filter would vanish and the metric would compute
-        // over the full population while the UI still showed the filter.
+        // rather than spreading, so anything not named here is silently lost.
         firstTimeFilter: event.firstTimeFilter,
-        cohortFilter: (event as { cohortFilter?: unknown }).cohortFilter,
       } as SeriesDefinition;
     },
   );

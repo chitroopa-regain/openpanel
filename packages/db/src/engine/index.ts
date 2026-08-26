@@ -6,7 +6,6 @@ import type {
   IChartCustomEvent,
   IChartEventFilter,
   IChartEventItem,
-  ICohortFilter,
   ICustomEventComponent,
   IReportInput,
 } from '@openpanel/validation';
@@ -19,8 +18,7 @@ import {
 import {
   cohortBucketLabel,
   cohortBucketPredicate,
-  resolveAudience,
-  resolveCohortFilter,
+  resolveCohortFilters,
   resolveCohortsForBreakdown,
 } from '../services/custom-cohort.service';
 import {
@@ -94,7 +92,15 @@ export async function executeChart(input: IReportInput): Promise<FinalChart> {
     previousSeries
   );
 
-  return { ...response, queries: allQueries, timezone: executionPlan.timezone };
+  return {
+    ...response,
+    queries: allQueries,
+    timezone: executionPlan.timezone,
+    // The instant cohort membership was evaluated at. Returned so a drill-down
+    // echoes it back and lists exactly the population behind the number that
+    // was clicked, instead of re-deriving it from the clicked bucket's date.
+    membershipAsOf: executionPlan.membershipAsOf ?? normalized.endDate,
+  };
 }
 
 /**
@@ -116,26 +122,16 @@ export async function executeAggregateChart(
     normalized.endDate = endDate;
   }
 
-  // Aggregate (bar/pie) charts have their own path, so the audience must be
-  // resolved here too or a cohort silently has no effect on those chart types.
+  // Aggregate (bar/pie) charts have their own path, so the cohort filter must be
+  // resolved here too or it silently has no effect on those chart types.
   // Resolved AFTER the subscription clamp so a relative cohort window is
   // evaluated as of the same instant as the chart data.
-  const aggregateAudience = await resolveAudience(
-    input.audience?.cohortIds,
+  const aggregateReportFilter = await resolveCohortFilters(
+    input.cohortFilters,
     input.projectId,
     normalized.endDate
   );
-  // Report-level cohort FILTER (ids OR-combined) composed with the legacy
-  // audience (ids ANDed). Both narrow every series.
-  const aggregateReportFilter = await resolveCohortFilter(
-    input.cohortFilter,
-    input.projectId,
-    normalized.endDate
-  );
-  const reportPredicate =
-    [aggregateAudience.render(null), aggregateReportFilter.render(null)]
-      .filter(Boolean)
-      .join(' AND ') || null;
+  const reportPredicate = aggregateReportFilter.predicate(null);
 
   // Cohort breakdown on the aggregate (bar/pie/metric/table) path. Without
   // this the field is accepted and silently ignored here, so a bar chart shows
@@ -203,17 +199,9 @@ export async function executeAggregateChart(
           ? (definition as IChartEventItem & { type: 'event' }).firstTimeFilter
           : undefined;
 
-    // INLINE cohort filter for THIS metric, ANDed onto the report predicate.
-    // Read structurally: formula definitions carry no cohortFilter.
-    const inlineFilter = await resolveCohortFilter(
-      (definition as { cohortFilter?: ICohortFilter }).cohortFilter,
-      normalized.projectId,
-      normalized.endDate
-    );
-    const audiencePredicate =
-      [reportPredicate, inlineFilter.render(null)]
-        .filter(Boolean)
-        .join(' AND ') || null;
+    // One predicate for every series: the report's filter rows (§3.2 — the
+    // same instant for current and previous period).
+    const audiencePredicate = reportPredicate;
 
     // Build query input
     const queryInput = {
@@ -439,19 +427,9 @@ export async function executeAggregateChart(
                 .firstTimeFilter
             : undefined;
 
-      // Inline filter for the PREVIOUS period, resolved at the same membership
-      // instant as the current one (normalized.endDate, not the previous
-      // period's end): comparing two halves with different populations would
-      // conflate membership change with behaviour change.
-      const prevInlineFilter = await resolveCohortFilter(
-        (definition as { cohortFilter?: ICohortFilter }).cohortFilter,
-        normalized.projectId,
-        normalized.endDate
-      );
-      const audiencePredicate =
-        [reportPredicate, prevInlineFilter.render(null)]
-          .filter(Boolean)
-          .join(' AND ') || null;
+      // One predicate for every series: the report's filter rows (§3.2 — the
+      // same instant for current and previous period).
+      const audiencePredicate = reportPredicate;
 
       const queryInput = {
         event: {
@@ -610,7 +588,12 @@ export async function executeAggregateChart(
     normalized.limit
   );
 
-  return { ...response, queries: allQueries, timezone };
+  return {
+    ...response,
+    queries: allQueries,
+    timezone,
+    membershipAsOf: normalized.endDate,
+  };
 }
 
 // Export as ChartEngine for backward compatibility

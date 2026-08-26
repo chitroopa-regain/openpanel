@@ -150,36 +150,29 @@ describe('multi-event slot leaving retention', () => {
   });
 });
 
-describe('cohort filters are cleared on every rejecting target', () => {
-  it.each(['funnel', 'funnel_metric', 'retention', 'sankey', 'conversion'])(
-    'clears on %s',
+describe('the cohort filter follows the chart type that can apply it', () => {
+  it.each(['sankey', 'conversion'])('clears on %s', (target) => {
+    let s = withSeries([ev('A')], 'linear');
+    s = reportSlice.reducer(
+      { ...s, cohortFilters: [{ operator: 'in', cohortIds: ['c1'] }] } as any,
+      changeChartType(target as any),
+    );
+    // These paths never apply the predicate and the query guard rejects it, so
+    // carrying it over would break the report rather than merely widen it.
+    expect(s.cohortFilters).toBeUndefined();
+  });
+
+  it.each(['funnel', 'funnel_metric', 'retention', 'bar'])(
+    'keeps it on %s',
     (target) => {
-      let s = withSeries(
-        [ev('A', { cohortFilter: { operator: 'in', cohortIds: ['c1'] } })],
-        'linear',
-      );
+      let s = withSeries([ev('A')], 'linear');
       s = reportSlice.reducer(
-        { ...s, cohortFilter: { operator: 'in', cohortIds: ['c1'] } } as any,
+        { ...s, cohortFilters: [{ operator: 'in', cohortIds: ['c1'] }] } as any,
         changeChartType(target as any),
       );
-      expect(s.cohortFilter).toBeUndefined();
-      for (const serie of s.series as any[]) {
-        expect(serie.cohortFilter).toBeUndefined();
-      }
+      expect(s.cohortFilters).toEqual([{ operator: 'in', cohortIds: ['c1'] }]);
     },
   );
-
-  it('preserves them on a supported target', () => {
-    let s = withSeries(
-      [ev('A', { cohortFilter: { operator: 'in', cohortIds: ['c1'] } })],
-      'linear',
-    );
-    s = reportSlice.reducer(s, changeChartType('bar'));
-    expect((s.series as any[])[0].cohortFilter).toEqual({
-      operator: 'in',
-      cohortIds: ['c1'],
-    });
-  });
 });
 
 describe('the notice states the real reason', () => {

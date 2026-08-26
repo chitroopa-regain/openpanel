@@ -13,7 +13,7 @@ import { TRPCAccessError } from '../errors';
 import { createTRPCRouter, protectedProcedure } from '../trpc';
 
 /**
- * Mirror `report.audience.cohortIds` into custom_cohort_references.
+ * Mirror the report's referenced cohort ids into custom_cohort_references.
  *
  * The reference table is what powers "used by N reports" and the DB-level
  * delete protection (onDelete: Restrict), so it must track every save — a JSON
@@ -22,7 +22,8 @@ import { createTRPCRouter, protectedProcedure } from '../trpc';
 /**
  * A cohort id from ANOTHER project satisfies the foreign key (it points at
  * custom_cohorts, not at the project), so the write would commit and only fail
- * later in resolveAudience — leaving a saved report with an unusable audience.
+ * later when the filter is compiled — leaving a saved report with an unusable
+ * cohort filter.
  * Ownership is therefore checked as part of the same transaction as the write.
  */
 // `db` is an extended Prisma client, so Prisma.TransactionClient does not
@@ -33,13 +34,14 @@ type CohortTx = Omit<
 >;
 
 /** Chart types whose query path ignores a cohort breakdown. */
-const COHORT_BREAKDOWN_UNSUPPORTED = new Set([
-  'funnel',
-  'funnel_metric',
-  'retention',
-  'sankey',
-  'conversion',
-]);
+const COHORT_BREAKDOWN_UNSUPPORTED = new Set(['sankey', 'conversion']);
+
+/**
+ * Chart types whose query path ignores a cohort FILTER — a shorter list. Funnel
+ * and retention apply it, so persisting one there is correct; only the paths
+ * that would silently drop it reject it.
+ */
+const COHORT_FILTER_UNSUPPORTED = new Set(['sankey', 'conversion']);
 
 /**
  * Reject rather than silently store. A report persisted with a cohort breakdown
@@ -48,65 +50,65 @@ const COHORT_BREAKDOWN_UNSUPPORTED = new Set([
  */
 function assertCohortBreakdownSupported(report: {
   chartType: string;
-  cohortFilter?: { cohortIds?: string[] } | null;
+  cohortFilters?: Array<{ cohortIds?: string[] }> | null;
   cohortBreakdown?: { cohortIds?: string[] } | null;
-  // A discriminated union: formula entries have no cohortFilter at all, so this
-  // is read structurally rather than requiring the property on every member.
-  series?: readonly unknown[] | null;
+  breakdowns?: readonly unknown[] | null;
 }) {
-  if (!COHORT_BREAKDOWN_UNSUPPORTED.has(report.chartType)) return;
-  if ((report.cohortBreakdown?.cohortIds?.length ?? 0) > 0) {
+  // Property breakdown and cohort breakdown cannot coexist on ANY chart type:
+  // each cohort bucket runs its own query, so a property breakdown alongside it
+  // is still truncated to that bucket's own top-N values and the report means
+  // something nobody asked for. Rejected rather than silently dropping one.
+  if (
+    (report.cohortBreakdown?.cohortIds?.length ?? 0) > 0 &&
+    (report.breakdowns?.length ?? 0) > 0
+  ) {
+    throw new Error(
+      'A cohort breakdown cannot be combined with a property breakdown. Remove one of them.',
+    );
+  }
+  if (
+    COHORT_BREAKDOWN_UNSUPPORTED.has(report.chartType) &&
+    (report.cohortBreakdown?.cohortIds?.length ?? 0) > 0
+  ) {
     throw new Error(
       `A cohort breakdown is not supported on ${report.chartType} reports.`,
     );
   }
-  // Same reasoning for filters: those chart types never apply the predicate,
-  // so storing one would claim a filter that does nothing.
-  if ((report.cohortFilter?.cohortIds?.length ?? 0) > 0) {
+  // Same reasoning for filters, on the shorter list: storing one where the query
+  // path never applies it would claim a filter that does nothing.
+  if (
+    COHORT_FILTER_UNSUPPORTED.has(report.chartType) &&
+    cohortFilterIds(report.cohortFilters).length > 0
+  ) {
     throw new Error(
       `A cohort filter is not supported on ${report.chartType} reports.`,
     );
   }
-  if (
-    (report.series ?? []).some((s) => seriesCohortIds(s).length > 0)
-  ) {
-    throw new Error(
-      `A per-metric cohort filter is not supported on ${report.chartType} reports.`,
-    );
-  }
 }
 
-/** Cohort ids on one series' inline filter; [] for formulas and malformed entries. */
-function seriesCohortIds(serie: unknown): string[] {
-  const filter = (serie as { cohortFilter?: { cohortIds?: string[] } } | null)
-    ?.cohortFilter;
-  return filter?.cohortIds ?? [];
+/** Flat union of the ids referenced by the report's filter rows. */
+function cohortFilterIds(
+  rows: Array<{ cohortIds?: string[] }> | null | undefined,
+): string[] {
+  return (rows ?? []).flatMap((row) => row?.cohortIds ?? []);
 }
 
 /**
- * Every cohort a report references, from ALL FOUR places one can appear:
- * the legacy audience, the report-level filter, the breakdown, and each
- * series' inline filter.
+ * Every cohort a report references: the filter rows and the breakdown.
  *
- * Missing any one of them is not cosmetic. This list drives project-ownership
+ * Missing either is not cosmetic. This list drives project-ownership
  * validation, the `custom_cohort_references` rows, and delete-protection — so
  * an id that escapes it can point at another project's cohort, and its cohort
  * stays deletable while a report still depends on it.
  */
 function referencedCohortIds(report: {
-  audience?: { cohortIds?: string[] } | null;
-  cohortFilter?: { cohortIds?: string[] } | null;
+  cohortFilters?: Array<{ cohortIds?: string[] }> | null;
   cohortBreakdown?: { cohortIds?: string[] } | null;
-  // A discriminated union: formula entries have no cohortFilter at all, so this
-  // is read structurally rather than requiring the property on every member.
-  series?: readonly unknown[] | null;
 }): string[] {
   return [
     ...new Set([
-      ...(report.audience?.cohortIds ?? []),
-      ...(report.cohortFilter?.cohortIds ?? []),
+      ...cohortFilterIds(report.cohortFilters),
       ...(report.cohortBreakdown?.cohortIds ?? []),
-      ...(report.series ?? []).flatMap(seriesCohortIds),
     ]),
   ];
 }
@@ -200,9 +202,8 @@ export const reportRouter = createTRPCRouter({
           metric: report.metric === 'count' ? 'sum' : report.metric,
           options: report.options,
           dateConfig: (report as any).dateConfig ?? null,
-          audience: report.audience ?? Prisma.DbNull,
           cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
-          cohortFilter: report.cohortFilter ?? Prisma.DbNull,
+          cohortFilters: report.cohortFilters ?? Prisma.DbNull,
         },
         });
 
@@ -267,9 +268,8 @@ export const reportRouter = createTRPCRouter({
           metric: report.metric === 'count' ? 'sum' : report.metric,
           options: report.options,
           dateConfig: (report as any).dateConfig ?? null,
-          audience: report.audience ?? Prisma.DbNull,
           cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
-          cohortFilter: report.cohortFilter ?? Prisma.DbNull,
+          cohortFilters: report.cohortFilters ?? Prisma.DbNull,
         },
         });
 
@@ -345,7 +345,27 @@ export const reportRouter = createTRPCRouter({
       // Copy the source's layout to the new report so it sorts next to
       // the source (see getReportsByDashboardId order). The dashboard's
       // responsive repack then renders the duplicate right after source.
-      return db.report.create({
+      //
+      // Duplicating rebuilds the row field by field, so every cohort field must
+      // be named here AND go through the same reference/ownership path as
+      // create and update. Before this, a duplicate silently came back
+      // UNFILTERED — a copy of a cohort report that quietly meant something
+      // else — and its cohort had no reference row, so it was deletable while
+      // the copy still depended on it.
+      const cohortSource = {
+        cohortFilters: report.cohortFilters as
+          | Array<{ cohortIds?: string[] }>
+          | null,
+        cohortBreakdown: report.cohortBreakdown as {
+          cohortIds?: string[];
+        } | null,
+      };
+      const referenced = referencedCohortIds(cohortSource);
+
+      return db.$transaction(async (tx) => {
+        await assertCohortsBelongToProject(tx, report.projectId, referenced);
+
+        const row = await tx.report.create({
         data: {
           projectId: report.projectId,
           dashboardId: report.dashboardId,
@@ -362,6 +382,8 @@ export const reportRouter = createTRPCRouter({
           metric: report.metric,
           options: report.options,
           dateConfig: (report as any).dateConfig ?? undefined,
+          cohortFilters: report.cohortFilters ?? Prisma.DbNull,
+          cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
           ...(report.layout && {
             layout: {
               create: {
@@ -377,6 +399,14 @@ export const reportRouter = createTRPCRouter({
             },
           }),
         },
+        });
+
+        if (referenced.length) {
+          await tx.customCohortReference.createMany({
+            data: referenced.map((cohortId) => ({ cohortId, reportId: row.id })),
+          });
+        }
+        return row;
       });
     }),
   get: protectedProcedure
