@@ -93,23 +93,78 @@ describe('buildChangedReportEvent', () => {
   });
 
   it('keeps multiple regular retention events as a wildcard event selection', () => {
-    expect(
-      buildChangedReportEvent({
-        currentEvent: baseEvent,
-        value: ['FT: Session Completed', 'Active User Event New'],
-        eventNames: [],
-      })
-    ).toMatchObject({
+    const result = buildChangedReportEvent({
+      currentEvent: baseEvent,
+      value: ['FT: Session Completed', 'Active User Event New'],
+      eventNames: [],
+    });
+    expect(result).toMatchObject({
       type: 'event',
       name: '*',
-      filters: [
+    });
+    // The reserved name filter is REPLACED; the user's own filters survive.
+    // This previously asserted `filters` was exactly the name filter, pinning a
+    // bug: changing a retention event silently discarded every real filter.
+    expect(result.type !== 'formula' && result.filters).toEqual([
+      {
+        name: 'name',
+        operator: 'is',
+        value: ['FT: Session Completed', 'Active User Event New'],
+      },
+      baseEvent.filters[0],
+    ]);
+  });
+
+  it('preserves metadata when switching a metric to a custom event', () => {
+    // Every field here was silently dropped before: the branch rebuilt the
+    // object instead of spreading, so changing a metric to a custom event
+    // discarded its cohort filter, first-time filter, hidden state and property.
+    const withMetadata = {
+      ...baseEvent,
+      hidden: true,
+      property: 'value_inr',
+      cohortFilter: { operator: 'in' as const, cohortIds: ['cohort-a'] },
+    };
+    const result = buildChangedReportEvent({
+      currentEvent: withMetadata,
+      value: 'OB Setup Completed Regain',
+      eventNames: [
         {
-          name: 'name',
-          operator: 'is',
-          value: ['FT: Session Completed', 'Active User Event New'],
+          name: 'OB Setup Completed Regain',
+          isCustomEvent: true,
+          customEventId: 'ob-setup-custom-event-id',
         },
       ],
+    }) as Record<string, unknown>;
+
+    expect(result.type).toBe('custom_event');
+    expect(result.firstTimeFilter).toBe(true);
+    expect(result.hidden).toBe(true);
+    expect(result.property).toBe('value_inr');
+    expect(result.cohortFilter).toEqual({ operator: 'in', cohortIds: ['cohort-a'] });
+    // `name` has no meaning on a custom event and must not linger.
+    expect(result.name).toBeUndefined();
+  });
+
+  it('preserves metadata when changing a multi-event retention selection', () => {
+    const withMetadata = {
+      ...baseEvent,
+      hidden: true,
+      cohortFilter: { operator: 'not_in' as const, cohortIds: ['cohort-b'] },
+    };
+    const result = buildChangedReportEvent({
+      currentEvent: withMetadata,
+      value: ['FT: Session Completed', 'FT: Bubble Enabled'],
+      eventNames: [],
+    }) as Record<string, unknown>;
+
+    expect(result.firstTimeFilter).toBe(true);
+    expect(result.hidden).toBe(true);
+    expect(result.cohortFilter).toEqual({
+      operator: 'not_in',
+      cohortIds: ['cohort-b'],
     });
+    expect(result.displayName).toBe('Activation start');
   });
 
   it('does not resolve empty or multi-value selections as custom events', () => {

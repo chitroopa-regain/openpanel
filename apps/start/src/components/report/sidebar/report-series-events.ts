@@ -42,7 +42,19 @@ export function buildChangedReportEvent({
   const selectedItem = findSelectedCustomEvent(value, eventNames);
 
   if (selectedItem) {
+    // Spread first. Building this object field-by-field silently discarded
+    // everything not named here — firstTimeFilter, hidden, property and the
+    // metric's cohortFilter — every time a metric was changed to a custom
+    // event, on every chart type.
+    // `name` belongs to the ordinary-event shape and `formula` to formulas;
+    // neither exists on a custom event, so they are dropped rather than spread
+    // through. Everything else carries over.
+    const { name: _name, formula: _formula, ...carried } = currentEvent as {
+      name?: string;
+      formula?: string;
+    } & Record<string, unknown>;
     return {
+      ...carried,
       id: currentEvent.id,
       type: 'custom_event',
       customEventId: selectedItem.customEventId,
@@ -58,7 +70,20 @@ export function buildChangedReportEvent({
   }
 
   if (Array.isArray(value)) {
+    // Same fix, plus: the reserved `name` filter is REPLACED while every other
+    // filter is kept. Rebuilding `filters` from scratch threw away the user's
+    // real filters (country, plan, …) on every retention event change.
+    const preservedFilters =
+      'filters' in currentEvent
+        ? (currentEvent.filters ?? []).filter((filter) => filter.name !== 'name')
+        : [];
+    // `formula` and `customEventId` do not exist on an ordinary event.
+    const { formula: _f, customEventId: _c, ...carried } = currentEvent as {
+      formula?: string;
+      customEventId?: string;
+    } & Record<string, unknown>;
     return {
+      ...carried,
       id: currentEvent.id,
       type: 'event',
       segment: 'user',
@@ -68,9 +93,10 @@ export function buildChangedReportEvent({
           operator: 'is',
           value,
         },
+        ...preservedFilters,
       ],
       name: '*',
-    };
+    } as IChartEventItem;
   }
 
   return {
