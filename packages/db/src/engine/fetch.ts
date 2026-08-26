@@ -3,6 +3,7 @@ import { groupByLabels } from '@openpanel/common';
 import { alphabetIds } from '@openpanel/constants';
 import type {
   IChartCustomEvent,
+  ICohortFilter,
   ICustomEventComponent,
   IGetChartDataInput,
 } from '@openpanel/validation';
@@ -10,7 +11,10 @@ import { chQuery } from '../clickhouse/client';
 import { db } from '../prisma-client';
 import { getChartSql } from '../services/chart.service';
 import {
+  cohortBucketLabel,
+  cohortBucketPredicate,
   resolveAudience,
+  resolveCohortFilter,
   resolveCohortsForBreakdown,
 } from '../services/custom-cohort.service';
 import type { ConcreteSeries, Plan } from './types';
@@ -34,9 +38,20 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
   const audience = await resolveAudience(
     plan.input.audience?.cohortIds,
     plan.input.projectId,
-    plan.membershipAsOf ?? plan.input.endDate,
+    plan.membershipAsOf ?? plan.input.endDate
   );
-  const audiencePredicate = audience.render(null);
+  // The report-level cohort FILTER is separate from the legacy audience: its
+  // ids are OR-combined, the audience's are ANDed. Both narrow every series,
+  // so they compose by AND.
+  const reportFilter = await resolveCohortFilter(
+    plan.input.cohortFilter,
+    plan.input.projectId,
+    plan.membershipAsOf ?? plan.input.endDate
+  );
+  const reportPredicate =
+    [audience.render(null), reportFilter.render(null)]
+      .filter(Boolean)
+      .join(' AND ') || null;
 
   // Breakdown by cohort: one series per cohort, resolved once in the REQUESTED
   // order. Kept separate from the audience — the audience narrows the
@@ -45,7 +60,7 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
   const breakdownCohorts = await resolveCohortsForBreakdown(
     plan.input.cohortBreakdown?.cohortIds,
     plan.input.projectId,
-    plan.membershipAsOf ?? plan.input.endDate,
+    plan.membershipAsOf ?? plan.input.endDate
   );
 
   // Cohorts OVERLAP: a profile can belong to several. A GROUP BY would assign
@@ -56,15 +71,18 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
   const runWithLimit = async <T>(
     items: T[],
     limit: number,
-    fn: (item: T, index: number) => Promise<void>,
+    fn: (item: T, index: number) => Promise<void>
   ) => {
     let cursor = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (cursor < items.length) {
-        const index = cursor++;
-        await fn(items[index]!, index);
+    const workers = Array.from(
+      { length: Math.min(limit, items.length) },
+      async () => {
+        while (cursor < items.length) {
+          const index = cursor++;
+          await fn(items[index]!, index);
+        }
       }
-    });
+    );
     await Promise.all(workers);
   };
 
@@ -127,8 +145,23 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
       definition.type === 'custom_event'
         ? (definition as IChartCustomEvent).firstTimeFilter
         : definition.type === 'event'
-          ? (definition as typeof definition & { type: 'event' }).firstTimeFilter
+          ? (definition as typeof definition & { type: 'event' })
+              .firstTimeFilter
           : undefined;
+
+    // INLINE cohort filter — scoped to THIS metric only, unlike the report-level
+    // one. Resolved per definition and ANDed onto the report predicate, so the
+    // metric is computed over a narrower population than its siblings.
+    // Read structurally: formula definitions carry no cohortFilter.
+    const inlineFilter = await resolveCohortFilter(
+      (definition as { cohortFilter?: ICohortFilter }).cohortFilter,
+      plan.input.projectId,
+      plan.membershipAsOf ?? plan.input.endDate
+    );
+    const audiencePredicate =
+      [reportPredicate, inlineFilter.render(null)]
+        .filter(Boolean)
+        .join(' AND ') || null;
 
     // Build query input
     const queryInput: IGetChartDataInput = {
@@ -163,42 +196,66 @@ export async function fetch(plan: Plan): Promise<FetchResult> {
     // than vanishing — the bucket domain comes from the same WITH FILL the
     // ordinary path uses, so it cannot drift from it on timezone or DST edges.
     if (breakdownCohorts.length > 0) {
-      const perCohort: ConcreteSeries[] = new Array(breakdownCohorts.length);
-      await runWithLimit(breakdownCohorts, 4, async (cohort, cohortIndex) => {
-        const cohortSql = getChartSql({
-          ...queryInput,
-          timezone: plan.timezone,
-          customEventComponents,
-          audiencePredicate: [audiencePredicate, cohort.render(null)]
-            .filter(Boolean)
-            .join(' AND '),
-        });
-        queries.push(cohortSql);
-        const rows = await chQuery<ISerieDataItem>(cohortSql, {
-          session_timezone: plan.timezone,
-        });
-        perCohort[cohortIndex] = {
-          // Structural identity: derived from (definition, cohort), not from
-          // the label, so two cohorts sharing a NAME stay distinct and a
-          // rename relabels without moving data.
-          id: `${placeholder.id}-cohort-${cohort.cohortId}`,
-          definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
-          definitionIndex: i,
-          name: [eventDisplayName ?? eventName, cohort.name],
-          context: {
-            event: eventName,
-            filters: eventFilters,
-            cohortId: cohort.cohortId,
-          },
-          data: rows.map((item) => ({
-            date: item.date,
-            count: Number(item.count ?? 0),
-            total_count: item.total_count ? Number(item.total_count) : undefined,
-            label: item.label_0,
-          })),
-          definition,
-        } as ConcreteSeries;
-      });
+      // Mixpanel emits BOTH polarities per cohort: `In 'X'` and `Not In 'X'`.
+      // Ordered so each cohort's pair stays adjacent in the legend.
+      const buckets = breakdownCohorts.flatMap((cohort) =>
+        (['in', 'not_in'] as const).map((membership) => ({
+          cohort,
+          membership,
+        }))
+      );
+      const perCohort: ConcreteSeries[] = new Array(buckets.length);
+      await runWithLimit(
+        buckets,
+        4,
+        async ({ cohort, membership }, bucketIndex) => {
+          const cohortPredicate = cohortBucketPredicate(
+            cohort,
+            membership,
+            null
+          );
+          const cohortSql = getChartSql({
+            ...queryInput,
+            timezone: plan.timezone,
+            customEventComponents,
+            audiencePredicate: [audiencePredicate, cohortPredicate]
+              .filter(Boolean)
+              .join(' AND '),
+          });
+          queries.push(cohortSql);
+          const rows = await chQuery<ISerieDataItem>(cohortSql, {
+            session_timezone: plan.timezone,
+          });
+          perCohort[bucketIndex] = {
+            // Structural identity: derived from (definition, cohort, polarity),
+            // not from the label, so two cohorts sharing a NAME stay distinct, a
+            // rename relabels without moving data, and the two polarities of one
+            // cohort never collapse into each other.
+            id: `${placeholder.id}-cohort-${cohort.cohortId}-${membership}`,
+            definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
+            definitionIndex: i,
+            name: [
+              eventDisplayName ?? eventName,
+              cohortBucketLabel(cohort.name, membership),
+            ],
+            context: {
+              event: eventName,
+              filters: eventFilters,
+              cohortId: cohort.cohortId,
+              cohortMembership: membership,
+            },
+            data: rows.map((item) => ({
+              date: item.date,
+              count: Number(item.count ?? 0),
+              total_count: item.total_count
+                ? Number(item.total_count)
+                : undefined,
+              label: item.label_0,
+            })),
+            definition,
+          } as ConcreteSeries;
+        }
+      );
       results.push(...perCohort);
       continue;
     }

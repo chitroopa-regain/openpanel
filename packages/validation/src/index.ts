@@ -34,6 +34,25 @@ export const zChartEventSegment = z
   .default('event')
   .describe('Defines how the event data should be segmented or aggregated');
 
+/**
+ * A cohort filter, used at two scopes: report-level (every series) and inline
+ * (one metric). Cohort ids inside ONE filter are OR-combined — Mixpanel's
+ * semantics, where adding a cohort WIDENS the population. Composition across
+ * scopes is AND: global filter AND inline filter AND breakdown bucket.
+ *
+ * NOT the same shape as the legacy `audience`, whose ids are AND-combined.
+ * That contract is preserved rather than reinterpreted; see resolveAudience.
+ */
+export const zCohortFilter = z.object({
+  operator: z.enum(['in', 'not_in']).default('in'),
+  cohortIds: z
+    .array(z.string())
+    .min(1)
+    .max(5)
+    .refine((ids) => new Set(ids).size === ids.length, 'Duplicate cohort ids'),
+});
+export type ICohortFilter = z.infer<typeof zCohortFilter>;
+
 export const zChartEvent = z.object({
   id: z
     .string()
@@ -64,6 +83,11 @@ export const zChartEvent = z.object({
     .optional()
     .describe(
       'When true, only match this event if it is the users absolute first-ever occurrence'
+    ),
+  cohortFilter: zCohortFilter
+    .optional()
+    .describe(
+      'Inline cohort filter: restricts THIS metric to cohort members. Applied before the query, so it changes the dataset this metric is computed over. Composes with the report-level filter by AND.'
     ),
 });
 
@@ -117,6 +141,11 @@ export const zChartCustomEvent = z.object({
     .optional()
     .describe(
       'When true, only match this custom event if it is the users absolute first-ever occurrence'
+    ),
+  cohortFilter: zCohortFilter
+    .optional()
+    .describe(
+      'Inline cohort filter: restricts THIS metric to cohort members. Applied before the query. Composes with the report-level filter by AND.'
     ),
 });
 
@@ -506,6 +535,11 @@ export const zReportInput = z.object({
     .optional()
     .describe(
       'Report-level audience: custom cohort ids, AND-combined, applied to the base population'
+    ),
+  cohortFilter: zCohortFilter
+    .optional()
+    .describe(
+      'Report-level cohort filter: restricts EVERY series to cohort members. Ids inside it are OR-combined, unlike the legacy AND-combined `audience`.'
     ),
   cohortBreakdown: zCohortBreakdown
     .optional()

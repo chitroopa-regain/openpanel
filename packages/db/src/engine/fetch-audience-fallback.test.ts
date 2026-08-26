@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   chQuery: vi.fn(),
   getChartSql: vi.fn(),
   resolveAudience: vi.fn(),
+  resolveCohortFilter: vi.fn(),
   resolveCohortsForBreakdown: vi.fn(),
 }));
 
@@ -27,6 +28,7 @@ vi.mock('../prisma-client', () => ({ db: {} }));
 vi.mock('../services/chart.service', () => ({ getChartSql: mocks.getChartSql }));
 vi.mock('../services/custom-cohort.service', () => ({
   resolveAudience: mocks.resolveAudience,
+  resolveCohortFilter: mocks.resolveCohortFilter,
   resolveCohortsForBreakdown: mocks.resolveCohortsForBreakdown,
 }));
 
@@ -60,6 +62,8 @@ describe('fetch() empty-result fallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveAudience.mockResolvedValue({ render: () => AUDIENCE_SQL });
+    // No cohort filter in this scenario — only the legacy audience.
+    mocks.resolveCohortFilter.mockResolvedValue({ render: () => null });
     mocks.resolveCohortsForBreakdown.mockResolvedValue([]);
     mocks.getChartSql.mockImplementation(() => 'SELECT 1');
     // First query (with breakdowns) returns nothing -> triggers the fallback.

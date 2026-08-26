@@ -24,9 +24,12 @@ import {
   getTraitBreakdownDescriptor,
   type IClickhouseProfile,
   type IServiceProfile,
+  cohortBucketPredicate,
   onlyReportEvents,
   qualifyFunnelCondition,
   resolveAudience,
+  resolveCohortFilter,
+  resolveCohortsForBreakdown,
   resolveSeriesForFunnel,
   sankeyService,
   TABLE_NAMES,
@@ -42,6 +45,7 @@ import {
   zChartSeries,
   zCriteria,
   zCohortBreakdown,
+  zCohortFilter,
   zDateConfig,
   zReportAudience,
   zRange,
@@ -117,15 +121,19 @@ function utc(date: string | Date) {
 const guardNoCohortBreakdown =
   (path: string) =>
   async ({ ctx, next, getRawInput }: any) => {
-    const rawInput = (await getRawInput()) as
-      | { cohortBreakdown?: { cohortIds?: string[] } | null }
-      | undefined;
+    const rawInput = (await getRawInput()) as CohortBearing | undefined;
     assertNoCohortBreakdown([rawInput, ctx?.report], path);
     return next();
   };
 
+type CohortBearing = {
+  cohortBreakdown?: { cohortIds?: string[] } | null;
+  cohortFilter?: { cohortIds?: string[] } | null;
+  series?: readonly unknown[] | null;
+};
+
 function assertNoCohortBreakdown(
-  sources: Array<{ cohortBreakdown?: { cohortIds?: string[] } | null } | null | undefined>,
+  sources: Array<CohortBearing | null | undefined>,
   path: string,
 ) {
   // Check the EFFECTIVE report, not just the raw input. These handlers can load
@@ -133,9 +141,27 @@ function assertNoCohortBreakdown(
   // report that already carries a cohortBreakdown (one created before the write
   // path started rejecting the combination) would otherwise get an unsplit
   // series with no error.
+  //
+  // This runs BEFORE the cache middleware on purpose: a warm entry would
+  // otherwise serve a response for input that should have been refused.
   for (const source of sources) {
     if ((source?.cohortBreakdown?.cohortIds?.length ?? 0) > 0) {
       throw new Error(`A cohort breakdown is not supported on ${path} reports.`);
+    }
+    // Both filter scopes too. These chart types never apply the predicate, so
+    // accepting one would compute an unfiltered result while the caller
+    // believes a filter is in force — the same silent-wrong-number shape.
+    if ((source?.cohortFilter?.cohortIds?.length ?? 0) > 0) {
+      throw new Error(`A cohort filter is not supported on ${path} reports.`);
+    }
+    for (const serie of source?.series ?? []) {
+      const inline = (serie as { cohortFilter?: { cohortIds?: string[] } } | null)
+        ?.cohortFilter;
+      if ((inline?.cohortIds?.length ?? 0) > 0) {
+        throw new Error(
+          `A per-metric cohort filter is not supported on ${path} reports.`,
+        );
+      }
     }
   }
 }
@@ -1106,10 +1132,11 @@ export const chartRouter = createTRPCRouter({
         id: z.string().optional(),
         bypassCache: z.boolean().optional(),
         audience: zReportAudience.optional(),
-        // Declared ONLY so the guard below can reject it. Retention builds its
+        // Declared ONLY so the guard below can reject them. Retention builds its
         // own input schema, so an undeclared key is silently stripped by zod
         // and the request succeeds while the caller's breakdown vanishes.
         cohortBreakdown: zCohortBreakdown.optional(),
+        cohortFilter: zCohortFilter.optional(),
       })
     )
     .query(async ({ input, ctx }) => {
@@ -1728,6 +1755,22 @@ export const chartRouter = createTRPCRouter({
         interval: zTimeInterval.default('day'),
         series: zChartSeries,
         breakdowns: z.record(z.string(), z.string()).optional(),
+        // Cohort restrictions must travel with the drill-down. Without them a
+        // cohort-filtered chart's "View Users" returns the UNFILTERED
+        // population — the numbers on screen and the people behind them would
+        // disagree, silently.
+        audience: zReportAudience.optional(),
+        cohortFilter: zCohortFilter.optional(),
+        serieCohortFilter: zCohortFilter.optional(),
+        cohortId: z.string().optional(),
+        cohortMembership: z.enum(['in', 'not_in']).optional(),
+        // The instant cohort membership is evaluated at. MUST be the report's
+        // endDate — the same instant the chart used — not the clicked bucket's
+        // date. Resolving at the bucket date would evaluate membership as of
+        // some historical day, so for any cohort whose membership changed since
+        // then the displayed count and the listed profiles are different
+        // populations.
+        membershipAsOf: z.string().optional(),
       })
     )
     .query(async ({ input }) => {
@@ -1785,6 +1828,49 @@ export const chartRouter = createTRPCRouter({
             `${propertyKey} = ${sqlstring.escape(value)}`;
         });
       }
+
+      // Re-apply every cohort restriction the chart itself applied, resolved at
+      // the same instant (the drilled-into bucket's date) so the drill-down
+      // population matches the number that was clicked:
+      //   report audience (legacy, AND) AND report filter (OR)
+      //   AND this metric's inline filter AND the breakdown bucket's polarity.
+      // Falls back to the bucket date only when the caller sends nothing, which
+      // keeps older clients working; every in-repo caller sends the report's
+      // endDate so the two populations agree.
+      const cohortAsOf =
+        input.membershipAsOf ?? formatClickhouseDate(dateObj).slice(0, 10);
+      const [drillAudience, drillReportFilter, drillSerieFilter] =
+        await Promise.all([
+          resolveAudience(input.audience?.cohortIds, projectId, cohortAsOf),
+          resolveCohortFilter(input.cohortFilter, projectId, cohortAsOf),
+          resolveCohortFilter(input.serieCohortFilter, projectId, cohortAsOf),
+        ]);
+      const cohortPredicates = [
+        drillAudience.render(null),
+        drillReportFilter.render(null),
+        drillSerieFilter.render(null),
+      ].filter(Boolean) as string[];
+
+      if (input.cohortId) {
+        const bucket = await resolveCohortsForBreakdown(
+          [input.cohortId],
+          projectId,
+          cohortAsOf,
+        );
+        if (bucket[0]) {
+          cohortPredicates.push(
+            cohortBucketPredicate(
+              bucket[0],
+              input.cohortMembership ?? 'in',
+              null,
+            ),
+          );
+        }
+      }
+
+      cohortPredicates.forEach((predicate, index) => {
+        sb.where[`cohort_${index}`] = predicate;
+      });
 
       // Get unique profile IDs
       const profileIds = await chQuery<{ profile_id: string }>(getSql());

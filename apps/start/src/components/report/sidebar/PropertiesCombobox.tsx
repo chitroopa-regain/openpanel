@@ -31,6 +31,13 @@ interface PropertiesComboboxProps {
   /** When provided, a "Custom cohort" entry is offered alongside the property
    *  sources. Omitted where cohort breakdown is not supported. */
   onSelectCohort?: () => void;
+  /**
+   * When set, the Custom cohort entry renders DISABLED with this text instead
+   * of vanishing. Hiding an unsupported option makes a deliberate limitation
+   * indistinguishable from a broken feature — which is exactly how it was
+   * reported: the entry silently absent on funnel/retention reports.
+   */
+  cohortDisabledReason?: string;
 }
 
 function SearchHeader({
@@ -61,6 +68,7 @@ function SearchHeader({
 
 export function PropertiesCombobox({
   onSelectCohort,
+  cohortDisabledReason,
   event,
   customEventId,
   children,
@@ -166,8 +174,11 @@ export function PropertiesCombobox({
           <DropdownMenuItem
             className="group justify-between gap-2"
             data-testid="breakdown-custom-cohort"
+            disabled={!!cohortDisabledReason}
+            title={cohortDisabledReason}
             onClick={(e) => {
               e.preventDefault();
+              if (cohortDisabledReason) return;
               setOpen(false);
               // Defer: Radix closes the dropdown asynchronously and its closing
               // pointer event would otherwise land on the freshly-opened dialog
@@ -175,8 +186,15 @@ export function PropertiesCombobox({
               setTimeout(() => onSelectCohort(), 0);
             }}
           >
-            Custom cohort
-            <TargetIcon className="size-4 group-hover:text-violet-500 group-hover:scale-125 transition-all group-hover:rotate-12" />
+            <span className="min-w-0 truncate">
+              Custom cohort
+              {cohortDisabledReason ? (
+                <span className="block text-muted-foreground text-xs">
+                  {cohortDisabledReason}
+                </span>
+              ) : null}
+            </span>
+            <TargetIcon className="size-4 shrink-0 group-hover:text-violet-500 group-hover:scale-125 transition-all group-hover:rotate-12" />
           </DropdownMenuItem>
         ) : null}
       </DropdownMenuGroup>

@@ -6,10 +6,14 @@ import type {
 } from '@openpanel/validation';
 import {
   ClockIcon,
+  TargetIcon,
   DatabaseIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { ReportSegment } from '../ReportSegment';
+import { useAppParams } from '@/hooks/use-app-params';
+import { useTRPC } from '@/integrations/trpc/react';
+import { useQuery } from '@tanstack/react-query';
 import { changeEvent } from '../reportSlice';
 import { FiltersList } from './filters/FiltersList';
 import { PropertiesCombobox } from './PropertiesCombobox';
@@ -37,6 +41,10 @@ export function ReportSeriesItem({
   ...props
 }: ReportSeriesItemProps) {
   const dispatch = useDispatch();
+  const { projectId } = useAppParams();
+  const trpc = useTRPC();
+  const cohorts =
+    useQuery(trpc.customCohort.list.queryOptions({ projectId })).data ?? [];
 
   // Normalize event to have type field
   const normalizedEvent: IChartEventItem =
@@ -72,6 +80,34 @@ export function ReportSeriesItem({
           <span>First time ever</span>
         </div>
       )}
+
+      {/* Cohort filter badge. On the ROW, not only inside the overflow menu —
+          a filtered metric that looks unfiltered while the menu is closed is
+          exactly the silent-filter problem this feature exists to avoid. */}
+      {(() => {
+        const cohortFilter = (chartEvent ?? customEvent) as
+          | { cohortFilter?: { operator?: 'in' | 'not_in'; cohortIds?: string[] } }
+          | undefined;
+        const ids = cohortFilter?.cohortFilter?.cohortIds ?? [];
+        if (ids.length === 0) return null;
+        const names = ids.map(
+          (id) => cohorts.find((c) => c.id === id)?.name ?? id,
+        );
+        return (
+          <div
+            className="flex items-center gap-1 px-2 pb-1 text-muted-foreground text-xs"
+            data-testid="series-cohort-filter-badge"
+          >
+            <TargetIcon className="h-3 w-3 shrink-0 text-violet-500" />
+            <span className="min-w-0 truncate">
+              {cohortFilter?.cohortFilter?.operator === 'not_in'
+                ? 'Not in'
+                : 'In'}{' '}
+              {names.join(' or ')}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Segment and Property picker - only for events */}
       {chartEvent && showSegment && (

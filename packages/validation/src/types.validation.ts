@@ -94,6 +94,14 @@ export type IChartSerie = {
     id?: string;
     name: string;
     breakdowns?: Record<string, string>;
+    /**
+     * Cohort restrictions that produced this series, carried to the client so
+     * a drill-down ("View Users") can reproduce the SAME population. Omitting
+     * them lists people outside the number that was clicked.
+     */
+    cohortId?: string;
+    cohortMembership?: 'in' | 'not_in';
+    cohortFilter?: { operator?: 'in' | 'not_in'; cohortIds: string[] };
   };
   metrics: Metrics;
   serieType?: 'event' | 'formula' | 'custom_event';

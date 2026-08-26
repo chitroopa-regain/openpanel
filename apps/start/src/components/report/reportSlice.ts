@@ -8,6 +8,7 @@ import {
 import type {
   IChartBreakdown,
   IChartEventItem,
+  ICohortFilter,
   IChartLineType,
   IChartRange,
   IChartType,
@@ -50,12 +51,31 @@ export const COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES = new Set<string>([
  * unsupported chart type and a cohortBreakdown still set, and its query path
  * would ignore the field and render an unsplit series without complaint.
  */
-function normalizeCohortBreakdown<T extends { chartType: string; cohortBreakdown?: unknown }>(
-  report: T,
-): T {
-  return COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(report.chartType)
-    ? { ...report, cohortBreakdown: undefined }
-    : report;
+function normalizeCohortBreakdown<
+  T extends {
+    chartType: string;
+    cohortBreakdown?: unknown;
+    cohortFilter?: unknown;
+    series?: unknown[];
+  },
+>(report: T): T {
+  if (!COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(report.chartType)) {
+    return report;
+  }
+  // Strip ALL THREE cohort surfaces, not just the breakdown: a report created
+  // before this rule, or straight through the API, can arrive with a report-level
+  // or inline filter that this chart type's query path never applies. Leaving it
+  // set would show an active filter in the sidebar over unfiltered numbers.
+  return {
+    ...report,
+    cohortBreakdown: undefined,
+    cohortFilter: undefined,
+    series: report.series?.map((serie) =>
+      serie && typeof serie === 'object' && 'cohortFilter' in serie
+        ? { ...serie, cohortFilter: undefined }
+        : serie,
+    ),
+  };
 }
 
 // First approach: define the initial state using that type
@@ -195,6 +215,36 @@ export const reportSlice = createSlice({
         return event.id !== action.payload.id;
       });
     },
+    /**
+     * Set or clear ONE series' inline cohort filter.
+     *
+     * A dedicated action rather than reusing `changeEvent`, which replaces the
+     * whole series object: callers that built their payload before the filter
+     * existed would silently wipe it. This touches only `cohortFilter`.
+     */
+    changeSeriesCohortFilter: (
+      state,
+      action: PayloadAction<{ seriesId: string; filter?: ICohortFilter }>,
+    ) => {
+      state.dirty = true;
+      state.series = state.series.map((serie) => {
+        if (serie.id !== action.payload.seriesId) return serie;
+        // Formulas have no population of their own to filter — they evaluate
+        // over operands that are already filtered.
+        if (serie.type === 'formula') return serie;
+        return { ...serie, cohortFilter: action.payload.filter } as IChartEventItem;
+      });
+    },
+
+    /** Report-level cohort filter: narrows every series. */
+    changeReportCohortFilter: (
+      state,
+      action: PayloadAction<ICohortFilter | undefined>,
+    ) => {
+      state.dirty = true;
+      state.cohortFilter = action.payload;
+    },
+
     changeEvent: (state, action: PayloadAction<IChartEventItem>) => {
       state.dirty = true;
       state.series = state.series.map((event) => {
@@ -311,11 +361,18 @@ export const reportSlice = createSlice({
       // it onto funnel/retention/sankey/conversion would leave a field set that
       // those paths ignore, so the report would quietly render unsplit while
       // still claiming a breakdown. Drop it on the transition instead.
-      if (
-        COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(action.payload) &&
-        state.cohortBreakdown
-      ) {
+      if (COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(action.payload)) {
         state.cohortBreakdown = undefined;
+        // The filters must go too, for the same reason and with worse
+        // consequences: a stale cohortFilter is REJECTED by the query guard, so
+        // switching an existing report to funnel would break it outright rather
+        // than merely rendering unsplit.
+        state.cohortFilter = undefined;
+        state.series = state.series.map((serie) =>
+          serie.type === 'formula'
+            ? serie
+            : ({ ...serie, cohortFilter: undefined } as typeof serie),
+        );
       }
 
       // Initialize sankey options if switching to sankey
@@ -753,6 +810,8 @@ export const {
   removeEvent,
   duplicateEvent,
   changeEvent,
+  changeSeriesCohortFilter,
+  changeReportCohortFilter,
   addBreakdown,
   removeBreakdown,
   changeBreakdown,

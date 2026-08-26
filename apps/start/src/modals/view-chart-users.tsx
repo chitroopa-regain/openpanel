@@ -163,15 +163,33 @@ interface ChartUsersViewProps {
   chartData: IChartData;
   report: IReportInput;
   date: string;
+  serieId?: string;
 }
 
-function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
+function ChartUsersView({
+  chartData,
+  report,
+  date,
+  serieId,
+}: ChartUsersViewProps) {
   const trpc = useTRPC();
+  // Seeded from the clicked series' OWN metric, not blindly from the first one.
+  // Seeding only the bucket while leaving this at series[0] made a click on a
+  // bucket belonging to metric B look up that bucket among metric A's series,
+  // miss, and silently fall back to A's first bucket — the wrong metric AND the
+  // wrong bucket.
   const [selectedSerieId, setSelectedSerieId] = useState<string | null>(
-    report.series[0]?.id || null
+    (serieId
+      ? chartData?.series.find((s) => s.id === serieId)?.event.id
+      : undefined) ??
+      report.series[0]?.id ??
+      null
   );
+  // Seeded from the clicked series. Leaving it null would run the first query
+  // across EVERY cohort bucket, so a click on `Not In 'X'` would list members
+  // and non-members together until the user manually picked a series.
   const [selectedBreakdownId, setSelectedBreakdownId] = useState<string | null>(
-    null
+    serieId ?? null
   );
 
   const selectedReportSerie = useMemo(
@@ -186,8 +204,14 @@ function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
   }, [chartData?.series, selectedSerieId]);
 
   const selectedBreakdown = useMemo(() => {
-    if (!selectedBreakdownId) return null;
-    return matchingChartSeries.find((s) => s.id === selectedBreakdownId);
+    const chosen = selectedBreakdownId
+      ? matchingChartSeries.find((s) => s.id === selectedBreakdownId)
+      : undefined;
+    if (chosen) return chosen;
+    // Cohort buckets overlap or partition the population, so "all of them at
+    // once" is not a population any number on the chart represents. Default to
+    // the first bucket instead of querying unrestricted.
+    return matchingChartSeries.find((s) => s.event.cohortId) ?? null;
   }, [matchingChartSeries, selectedBreakdownId]);
 
   // Reset breakdown selection when serie changes
@@ -207,6 +231,28 @@ function ChartUsersView({ chartData, report, date }: ChartUsersViewProps) {
             : [],
         breakdowns: selectedBreakdown?.event.breakdowns,
         interval: report.interval,
+        // Forward every cohort restriction the chart applied. Omitting any of
+        // them lists people outside the population whose number was clicked.
+        audience: report.audience,
+        cohortFilter: report.cohortFilter,
+        serieCohortFilter:
+          selectedReportSerie && selectedReportSerie.type === 'event'
+            ? (
+                selectedReportSerie as {
+                  cohortFilter?: {
+                    operator?: 'in' | 'not_in';
+                    cohortIds: string[];
+                  };
+                }
+              ).cohortFilter
+            : undefined,
+        // Breakdown bucket identity, so `Not In 'X'` drills into non-members
+        // rather than members.
+        cohortId: selectedBreakdown?.event.cohortId,
+        cohortMembership: selectedBreakdown?.event.cohortMembership,
+        // Same instant the chart resolved membership at, so the count on screen
+        // and the people listed are the same population.
+        membershipAsOf: report.endDate ?? undefined,
       },
       {
         enabled: !!selectedReportSerie && selectedReportSerie.type === 'event',
@@ -445,6 +491,8 @@ type ViewChartUsersProps =
       chartData: IChartData;
       report: IReportInput;
       date: string;
+      /** The chart series the user actually clicked, when the chart knows it. */
+      serieId?: string;
     }
   | {
       type: 'funnel';
@@ -472,6 +520,7 @@ export default function ViewChartUsers(props: ViewChartUsersProps) {
       chartData={props.chartData}
       report={props.report}
       date={props.date}
+      serieId={props.serieId}
     />
   );
 }

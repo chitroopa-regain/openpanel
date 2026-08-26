@@ -46,8 +46,10 @@ export function compute(
       // Cohort series are keyed by cohort ID, not by their display name: names
       // are user-editable and not unique, so two cohorts sharing a name would
       // collapse into one group here and overwrite each other's formula inputs.
+      // Polarity is part of the key: without it `In 'X'` and `Not In 'X'`
+      // group together and their values are summed into one bogus series.
       const breakdownSignature = serie.context.cohortId
-        ? `cohort:::${serie.context.cohortId}`
+        ? `cohort:::${serie.context.cohortId}:::${serie.context.cohortMembership ?? 'in'}`
         : serie.name.length > 1
           ? serie.name.slice(1).join(':::')
           : '';
@@ -214,6 +216,7 @@ export function compute(
           // two same-named cohorts would collapse, and previous-period matching
           // would compare against the wrong cohort.
           cohortId: templateSerie.context.cohortId,
+          cohortMembership: templateSerie.context.cohortMembership,
         },
         data: formulaData,
         definition: formula,

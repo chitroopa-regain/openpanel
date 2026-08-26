@@ -6,6 +6,7 @@ import type {
   IChartCustomEvent,
   IChartEventFilter,
   IChartEventItem,
+  ICohortFilter,
   ICustomEventComponent,
   IReportInput,
 } from '@openpanel/validation';
@@ -16,7 +17,10 @@ import {
   getChartPrevStartEndDate,
 } from '../services/chart.service';
 import {
+  cohortBucketLabel,
+  cohortBucketPredicate,
   resolveAudience,
+  resolveCohortFilter,
   resolveCohortsForBreakdown,
 } from '../services/custom-cohort.service';
 import {
@@ -119,9 +123,19 @@ export async function executeAggregateChart(
   const aggregateAudience = await resolveAudience(
     input.audience?.cohortIds,
     input.projectId,
-    normalized.endDate,
+    normalized.endDate
   );
-  const audiencePredicate = aggregateAudience.render(null);
+  // Report-level cohort FILTER (ids OR-combined) composed with the legacy
+  // audience (ids ANDed). Both narrow every series.
+  const aggregateReportFilter = await resolveCohortFilter(
+    input.cohortFilter,
+    input.projectId,
+    normalized.endDate
+  );
+  const reportPredicate =
+    [aggregateAudience.render(null), aggregateReportFilter.render(null)]
+      .filter(Boolean)
+      .join(' AND ') || null;
 
   // Cohort breakdown on the aggregate (bar/pie/metric/table) path. Without
   // this the field is accepted and silently ignored here, so a bar chart shows
@@ -129,7 +143,7 @@ export async function executeAggregateChart(
   const aggregateBreakdownCohorts = await resolveCohortsForBreakdown(
     input.cohortBreakdown?.cohortIds,
     input.projectId,
-    normalized.endDate,
+    normalized.endDate
   );
 
   const { timezone } = await getSettingsForProject(normalized.projectId);
@@ -189,6 +203,18 @@ export async function executeAggregateChart(
           ? (definition as IChartEventItem & { type: 'event' }).firstTimeFilter
           : undefined;
 
+    // INLINE cohort filter for THIS metric, ANDed onto the report predicate.
+    // Read structurally: formula definitions carry no cohortFilter.
+    const inlineFilter = await resolveCohortFilter(
+      (definition as { cohortFilter?: ICohortFilter }).cohortFilter,
+      normalized.projectId,
+      normalized.endDate
+    );
+    const audiencePredicate =
+      [reportPredicate, inlineFilter.render(null)]
+        .filter(Boolean)
+        .join(' AND ') || null;
+
     // Build query input
     const queryInput = {
       event: {
@@ -216,37 +242,47 @@ export async function executeAggregateChart(
     // so a GROUP BY would drop overlapping members from all but one series.
     if (aggregateBreakdownCohorts.length > 0) {
       for (const cohort of aggregateBreakdownCohorts) {
-        const cohortSql = getAggregateChartSql({
-          ...queryInput,
-          audiencePredicate: [audiencePredicate, cohort.render(null)]
-            .filter(Boolean)
-            .join(' AND '),
-        });
-        allQueries.push(cohortSql);
-        const rows = await chQuery<ISerieDataItem>(cohortSql, {
-          session_timezone: timezone,
-        });
-        const grouped = groupByLabels(rows);
-        fetchedSeries.push({
-          // Structural identity from (definition, cohort), never the label.
-          id: `${eventName}-cohort-${cohort.cohortId}-${i}`,
-          definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
-          definitionIndex: i,
-          name: [eventDisplayName ?? eventName, cohort.name],
-          context: {
-            event: eventName,
-            filters: eventFilters,
-            cohortId: cohort.cohortId,
-          },
-          data: (grouped[0]?.data ?? [{ date: normalized.endDate, count: 0 }]).map(
-            (item: any) => ({
+        for (const membership of ['in', 'not_in'] as const) {
+          const cohortSql = getAggregateChartSql({
+            ...queryInput,
+            audiencePredicate: [
+              audiencePredicate,
+              cohortBucketPredicate(cohort, membership, null),
+            ]
+              .filter(Boolean)
+              .join(' AND '),
+          });
+          allQueries.push(cohortSql);
+          const rows = await chQuery<ISerieDataItem>(cohortSql, {
+            session_timezone: timezone,
+          });
+          const grouped = groupByLabels(rows);
+          fetchedSeries.push({
+            // Structural identity from (definition, cohort, polarity), never the
+            // label — the two polarities must not collapse into one series.
+            id: `${eventName}-cohort-${cohort.cohortId}-${membership}-${i}`,
+            definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
+            definitionIndex: i,
+            name: [
+              eventDisplayName ?? eventName,
+              cohortBucketLabel(cohort.name, membership),
+            ],
+            context: {
+              event: eventName,
+              filters: eventFilters,
+              cohortId: cohort.cohortId,
+              cohortMembership: membership,
+            },
+            data: (
+              grouped[0]?.data ?? [{ date: normalized.endDate, count: 0 }]
+            ).map((item: any) => ({
               date: item.date,
               count: Number(item.count ?? 0),
               label: item.label_0,
-            }),
-          ),
-          definition,
-        } as ConcreteSeries);
+            })),
+            definition,
+          } as ConcreteSeries);
+        }
       }
       continue;
     }
@@ -399,8 +435,23 @@ export async function executeAggregateChart(
         definition.type === 'custom_event'
           ? (definition as IChartCustomEvent).firstTimeFilter
           : definition.type === 'event'
-            ? (definition as IChartEventItem & { type: 'event' }).firstTimeFilter
+            ? (definition as IChartEventItem & { type: 'event' })
+                .firstTimeFilter
             : undefined;
+
+      // Inline filter for the PREVIOUS period, resolved at the same membership
+      // instant as the current one (normalized.endDate, not the previous
+      // period's end): comparing two halves with different populations would
+      // conflate membership change with behaviour change.
+      const prevInlineFilter = await resolveCohortFilter(
+        (definition as { cohortFilter?: ICohortFilter }).cohortFilter,
+        normalized.projectId,
+        normalized.endDate
+      );
+      const audiencePredicate =
+        [reportPredicate, prevInlineFilter.render(null)]
+          .filter(Boolean)
+          .join(' AND ') || null;
 
       const queryInput = {
         event: {
@@ -430,35 +481,46 @@ export async function executeAggregateChart(
       // disappears — the chart shows cohort series with no "vs previous".
       if (aggregateBreakdownCohorts.length > 0) {
         for (const cohort of aggregateBreakdownCohorts) {
-          const cohortPrevSql = getAggregateChartSql({
-            ...queryInput,
-            audiencePredicate: [audiencePredicate, cohort.render(null)]
-              .filter(Boolean)
-              .join(' AND '),
-          });
-          const rows = await chQuery<ISerieDataItem>(cohortPrevSql, {
-            session_timezone: timezone,
-          });
-          const grouped = groupByLabels(rows);
-          previousFetchedSeries.push({
-            id: `${prevEventName}-cohort-${cohort.cohortId}-${i}`,
-            definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
-            definitionIndex: i,
-            name: [prevEventDisplayName ?? prevEventName, cohort.name],
-            context: {
-              event: prevEventName,
-              filters: prevEventFilters,
-              cohortId: cohort.cohortId,
-            },
-            data: (
-              grouped[0]?.data ?? [{ date: previousPeriod.endDate, count: 0 }]
-            ).map((item: any) => ({
-              date: item.date,
-              count: Number(item.count ?? 0),
-              label: item.label_0,
-            })),
-            definition,
-          } as ConcreteSeries);
+          // Both polarities here too, or format() matches `In 'X'` current
+          // against nothing and every comparison silently vanishes.
+          for (const membership of ['in', 'not_in'] as const) {
+            const cohortPrevSql = getAggregateChartSql({
+              ...queryInput,
+              audiencePredicate: [
+                audiencePredicate,
+                cohortBucketPredicate(cohort, membership, null),
+              ]
+                .filter(Boolean)
+                .join(' AND '),
+            });
+            const rows = await chQuery<ISerieDataItem>(cohortPrevSql, {
+              session_timezone: timezone,
+            });
+            const grouped = groupByLabels(rows);
+            previousFetchedSeries.push({
+              id: `${prevEventName}-cohort-${cohort.cohortId}-${membership}-${i}`,
+              definitionId: definition.id ?? alphabetIds[i] ?? `series-${i}`,
+              definitionIndex: i,
+              name: [
+                prevEventDisplayName ?? prevEventName,
+                cohortBucketLabel(cohort.name, membership),
+              ],
+              context: {
+                event: prevEventName,
+                filters: prevEventFilters,
+                cohortId: cohort.cohortId,
+                cohortMembership: membership,
+              },
+              data: (
+                grouped[0]?.data ?? [{ date: previousPeriod.endDate, count: 0 }]
+              ).map((item: any) => ({
+                date: item.date,
+                count: Number(item.count ?? 0),
+                label: item.label_0,
+              })),
+              definition,
+            } as ConcreteSeries);
+          }
         }
         continue;
       }

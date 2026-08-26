@@ -6,6 +6,7 @@ import {
 } from '@openpanel/constants';
 import type {
   ICohortBreakdown,
+  ICohortFilter,
   IReportAudience,
   IChartBreakdown,
   IChartEventFilter,
@@ -119,6 +120,7 @@ export function transformReport(
     audience: ((report as any).audience as IReportAudience) ?? undefined,
     cohortBreakdown:
       ((report as any).cohortBreakdown as ICohortBreakdown) ?? undefined,
+    cohortFilter: ((report as any).cohortFilter as ICohortFilter) ?? undefined,
   };
 }
 

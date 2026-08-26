@@ -59,6 +59,8 @@ export function Chart({ data }: Props) {
       lineType,
       series: reportSeries,
       breakdowns,
+      audience,
+      cohortFilter,
     },
     isEditMode,
     options: { hideXAxis, hideYAxis, maxDomain },
@@ -188,6 +190,10 @@ export function Chart({ data }: Props) {
                 projectId,
                 series: reportSeries,
                 breakdowns: breakdowns || [],
+                // Without these the drill-down lists the UNFILTERED population
+                // while the chart shows a cohort-filtered number.
+                audience,
+                cohortFilter,
                 interval,
                 startDate,
                 endDate,
@@ -197,6 +203,9 @@ export function Chart({ data }: Props) {
                 metric: 'sum',
               },
               date: clickedData.date,
+              // The series actually clicked, so a cohort-broken-down chart
+              // drills into THAT bucket rather than all of them.
+              serieId,
             });
           },
         });
@@ -220,6 +229,11 @@ export function Chart({ data }: Props) {
       data,
       reportSeries,
       breakdowns,
+      // Without these the handler keeps a STALE closure: changing the cohort
+      // filter without touching the series would leave View Users querying the
+      // previous (or unfiltered) population while the chart shows the new one.
+      audience,
+      cohortFilter,
       interval,
       startDate,
       endDate,

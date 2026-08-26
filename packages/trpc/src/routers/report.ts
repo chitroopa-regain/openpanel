@@ -48,27 +48,65 @@ const COHORT_BREAKDOWN_UNSUPPORTED = new Set([
  */
 function assertCohortBreakdownSupported(report: {
   chartType: string;
+  cohortFilter?: { cohortIds?: string[] } | null;
   cohortBreakdown?: { cohortIds?: string[] } | null;
+  // A discriminated union: formula entries have no cohortFilter at all, so this
+  // is read structurally rather than requiring the property on every member.
+  series?: readonly unknown[] | null;
 }) {
-  if (
-    (report.cohortBreakdown?.cohortIds?.length ?? 0) > 0 &&
-    COHORT_BREAKDOWN_UNSUPPORTED.has(report.chartType)
-  ) {
+  if (!COHORT_BREAKDOWN_UNSUPPORTED.has(report.chartType)) return;
+  if ((report.cohortBreakdown?.cohortIds?.length ?? 0) > 0) {
     throw new Error(
       `A cohort breakdown is not supported on ${report.chartType} reports.`,
     );
   }
+  // Same reasoning for filters: those chart types never apply the predicate,
+  // so storing one would claim a filter that does nothing.
+  if ((report.cohortFilter?.cohortIds?.length ?? 0) > 0) {
+    throw new Error(
+      `A cohort filter is not supported on ${report.chartType} reports.`,
+    );
+  }
+  if (
+    (report.series ?? []).some((s) => seriesCohortIds(s).length > 0)
+  ) {
+    throw new Error(
+      `A per-metric cohort filter is not supported on ${report.chartType} reports.`,
+    );
+  }
 }
 
-/** Every cohort a report references, whether as an audience or a breakdown. */
+/** Cohort ids on one series' inline filter; [] for formulas and malformed entries. */
+function seriesCohortIds(serie: unknown): string[] {
+  const filter = (serie as { cohortFilter?: { cohortIds?: string[] } } | null)
+    ?.cohortFilter;
+  return filter?.cohortIds ?? [];
+}
+
+/**
+ * Every cohort a report references, from ALL FOUR places one can appear:
+ * the legacy audience, the report-level filter, the breakdown, and each
+ * series' inline filter.
+ *
+ * Missing any one of them is not cosmetic. This list drives project-ownership
+ * validation, the `custom_cohort_references` rows, and delete-protection — so
+ * an id that escapes it can point at another project's cohort, and its cohort
+ * stays deletable while a report still depends on it.
+ */
 function referencedCohortIds(report: {
   audience?: { cohortIds?: string[] } | null;
+  cohortFilter?: { cohortIds?: string[] } | null;
   cohortBreakdown?: { cohortIds?: string[] } | null;
+  // A discriminated union: formula entries have no cohortFilter at all, so this
+  // is read structurally rather than requiring the property on every member.
+  series?: readonly unknown[] | null;
 }): string[] {
   return [
     ...new Set([
       ...(report.audience?.cohortIds ?? []),
+      ...(report.cohortFilter?.cohortIds ?? []),
       ...(report.cohortBreakdown?.cohortIds ?? []),
+      ...(report.series ?? []).flatMap(seriesCohortIds),
     ]),
   ];
 }
@@ -164,6 +202,7 @@ export const reportRouter = createTRPCRouter({
           dateConfig: (report as any).dateConfig ?? null,
           audience: report.audience ?? Prisma.DbNull,
           cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
+          cohortFilter: report.cohortFilter ?? Prisma.DbNull,
         },
         });
 
@@ -230,6 +269,7 @@ export const reportRouter = createTRPCRouter({
           dateConfig: (report as any).dateConfig ?? null,
           audience: report.audience ?? Prisma.DbNull,
           cohortBreakdown: report.cohortBreakdown ?? Prisma.DbNull,
+          cohortFilter: report.cohortFilter ?? Prisma.DbNull,
         },
         });
 

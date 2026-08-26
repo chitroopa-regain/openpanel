@@ -60,6 +60,8 @@ export function Chart({ data }: Props) {
       lineType,
       series: reportSeries,
       breakdowns,
+      audience,
+      cohortFilter,
     },
     isEditMode,
     options: { hideXAxis, hideYAxis },
@@ -162,6 +164,19 @@ export function Chart({ data }: Props) {
         return items;
       }
 
+      // Which concrete chart series was clicked. Recharts puts it in the
+      // payload's dataKey. Without it the drill-down falls back to the FIRST
+      // metric, so clicking metric B (or one of its cohort buckets) would
+      // silently query metric A.
+      const validPayload = e.activePayload?.find(
+        (p: any) =>
+          p.dataKey &&
+          p.dataKey !== 'calcStrokeDasharray' &&
+          typeof p.dataKey === 'string' &&
+          p.dataKey.includes(':count'),
+      );
+      const serieId = validPayload?.dataKey?.toString().replace(':count', '');
+
       // View Users - only show if we have projectId
       if (projectId) {
         items.push({
@@ -175,6 +190,10 @@ export function Chart({ data }: Props) {
                 projectId,
                 series: reportSeries,
                 breakdowns: breakdowns || [],
+                // Without these the drill-down lists the UNFILTERED population
+                // while the chart shows a cohort-filtered number.
+                audience,
+                cohortFilter,
                 interval,
                 startDate,
                 endDate,
@@ -184,6 +203,7 @@ export function Chart({ data }: Props) {
                 metric: 'sum',
               },
               date: clickedData.date,
+              serieId,
             });
           },
         });
@@ -207,6 +227,11 @@ export function Chart({ data }: Props) {
       data,
       reportSeries,
       breakdowns,
+      // Without these the handler keeps a STALE closure: changing the cohort
+      // filter without touching the series would leave View Users querying the
+      // previous (or unfiltered) population while the chart shows the new one.
+      audience,
+      cohortFilter,
       interval,
       startDate,
       endDate,

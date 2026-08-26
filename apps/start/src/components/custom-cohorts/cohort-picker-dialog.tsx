@@ -28,11 +28,18 @@ export function CohortPickerDialog({
   onOpenChange,
   value,
   onConfirm,
+  title,
+  operator,
+  onOperatorChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   value: string[];
   onConfirm: (cohortIds: string[]) => void;
+  title?: string;
+  /** Present only for FILTER use; the breakdown has no polarity to choose. */
+  operator?: 'in' | 'not_in';
+  onOperatorChange?: (operator: 'in' | 'not_in') => void;
 }) {
   const { organizationId, projectId } = useAppParams();
   const trpc = useTRPC();
@@ -62,13 +69,39 @@ export function CohortPickerDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Break down by custom cohort</DialogTitle>
+          <DialogTitle>{title ?? 'Break down by custom cohort'}</DialogTitle>
         </DialogHeader>
 
-        <p className="text-muted-foreground text-sm">
-          One series per cohort. A user who belongs to several cohorts is counted
-          in each of them, so the series will not add up to your total.
-        </p>
+        {operator ? (
+          <>
+            <div className="flex gap-2" data-testid="cohort-operator">
+              {(['in', 'not_in'] as const).map((op) => (
+                <Button
+                  key={op}
+                  data-testid={`cohort-operator-${op}`}
+                  onClick={() => onOperatorChange?.(op)}
+                  size="sm"
+                  variant={operator === op ? 'default' : 'outline'}
+                >
+                  {op === 'in' ? 'In cohort' : 'Not in cohort'}
+                </Button>
+              ))}
+            </div>
+            <p className="text-muted-foreground text-sm">
+              {operator === 'in'
+                ? 'Only users in these cohorts are counted.'
+                : 'Users in these cohorts are excluded.'}{' '}
+              Picking several cohorts matches anyone in <strong>any</strong> of
+              them, so adding one widens the group rather than narrowing it.
+            </p>
+          </>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            Two series per cohort — in it and not in it. A user in several
+            cohorts is counted in each, so the series will not add up to your
+            total.
+          </p>
+        )}
 
         {cohorts.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-muted-foreground text-sm">

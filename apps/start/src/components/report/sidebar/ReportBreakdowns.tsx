@@ -17,6 +17,7 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Tooltiper } from '@/components/ui/tooltip';
 import {
+  COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES,
   addBreakdown,
   changeBreakdown,
   changeCohortBreakdown,
@@ -45,6 +46,12 @@ export function ReportBreakdowns() {
 
   // Cohort breakdown is only applied on the chart/aggregate query paths.
   // Offering it elsewhere would accept a selection that silently does nothing.
+  const cohortDisabledReason = COHORT_BREAKDOWN_UNSUPPORTED_CHART_TYPES.has(
+    chartType,
+  )
+    ? `Not available on ${chartType.replace('_', ' ')} charts`
+    : undefined;
+
   const cohortBreakdownSupported =
     chartType !== 'funnel' &&
     chartType !== 'funnel_metric' &&
@@ -135,6 +142,8 @@ export function ReportBreakdowns() {
                       })
                     );
                   }}
+                  onSelectCohort={() => setCohortPickerOpen(true)}
+                  cohortDisabledReason={cohortDisabledReason}
                 >
                   {(setOpen) => (
                     <Button
@@ -178,11 +187,8 @@ export function ReportBreakdowns() {
               })
             );
           }}
-          onSelectCohort={
-            cohortBreakdownSupported
-              ? () => setCohortPickerOpen(true)
-              : undefined
-          }
+          onSelectCohort={() => setCohortPickerOpen(true)}
+          cohortDisabledReason={cohortDisabledReason}
         >
           {(setOpen) => (
             <Button

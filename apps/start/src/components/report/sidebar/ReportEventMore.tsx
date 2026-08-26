@@ -6,6 +6,7 @@ import {
   EyeOffIcon,
   MoreHorizontal,
   PencilIcon,
+  TargetIcon,
   TrashIcon,
 } from 'lucide-react';
 import * as React from 'react';
@@ -30,9 +31,15 @@ export interface ReportEventMoreProps {
       | 'firstTimeFilter'
       | 'editCustomEvent'
       | 'toggleHidden'
+      | 'cohortFilter'
   ) => void;
   firstTimeFilter?: boolean;
   hideFirstTimeFilter?: boolean;
+  /** Number of cohorts on this metric's inline filter; 0 when none. */
+  cohortFilterCount?: number;
+  /** When set, the cohort filter entry is disabled and shows this reason. */
+  cohortFilterDisabledReason?: string;
+  hideCohortFilter?: boolean;
   displayName?: string;
   displayNamePlaceholder?: string;
   onDisplayNameChange?: (value: string) => void;
@@ -51,13 +58,21 @@ export function ReportEventMore({
   showEditCustomEvent,
   triggerClassName,
   hidden,
+  cohortFilterCount,
+  cohortFilterDisabledReason,
+  hideCohortFilter,
 }: ReportEventMoreProps) {
   const [open, setOpen] = React.useState(false);
 
   return (
     <DropdownMenu onOpenChange={setOpen} open={open}>
       <DropdownMenuTrigger asChild>
-        <Button className={triggerClassName} size="sm" variant="ghost">
+        <Button
+          className={triggerClassName}
+          data-testid="metric-more-trigger"
+          size="sm"
+          variant="ghost"
+        >
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
@@ -92,9 +107,36 @@ export function ReportEventMore({
                   </DropdownMenuShortcut>
                 )}
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
             </>
           )}
+          {!hideCohortFilter && (
+            <DropdownMenuItem
+              data-testid="metric-cohort-filter"
+              disabled={!!cohortFilterDisabledReason}
+              title={cohortFilterDisabledReason}
+              onClick={(e) => {
+                if (cohortFilterDisabledReason) {
+                  e.preventDefault();
+                  return;
+                }
+                onClick('cohortFilter');
+              }}
+            >
+              <TargetIcon className="mr-2 h-4 w-4" />
+              <span className="min-w-0">
+                Cohort Filter
+                {cohortFilterDisabledReason ? (
+                  <span className="block text-muted-foreground text-xs">
+                    {cohortFilterDisabledReason}
+                  </span>
+                ) : null}
+              </span>
+              {!cohortFilterDisabledReason && (cohortFilterCount ?? 0) > 0 && (
+                <DropdownMenuShortcut>{cohortFilterCount}</DropdownMenuShortcut>
+              )}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => onClick('duplicate')}>
             <CopyIcon className="mr-2 h-4 w-4" />
             Duplicate

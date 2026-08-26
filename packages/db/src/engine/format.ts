@@ -69,13 +69,16 @@ export function format(
         : definition?.name || cs.context.event || 'unknown';
 
     // Find matching previous series
-    // Match on cohort ID for cohort series — matching on the display name would
-    // hand one cohort another cohort's comparison values when two share a name.
+    // Match on (cohort ID, polarity) for cohort series — matching on the display
+    // name would hand one cohort another cohort's comparison values when two
+    // share a name, and matching on cohortId ALONE would pair `In 'X'` with
+    // `Not In 'X'`, silently comparing a cohort against its own complement.
     const previousSerie = previousSeries?.find((ps) =>
       ps.definitionIndex !== cs.definitionIndex
         ? false
         : cs.context.cohortId || ps.context.cohortId
-          ? ps.context.cohortId === cs.context.cohortId
+          ? ps.context.cohortId === cs.context.cohortId &&
+            ps.context.cohortMembership === cs.context.cohortMembership
           : ps.name.slice(1).join(':::') === cs.name.slice(1).join(':::'),
     );
 
@@ -87,6 +90,24 @@ export function format(
         id: definition?.id,
         name: eventName,
         breakdowns: cs.context.breakdowns,
+        // Cohort identity is carried out to the client so any drill-down can
+        // reproduce the series' actual population. Today the only drill-down
+        // is on funnels, where cohort filters are rejected server-side, so
+        // nothing can currently list users outside the shown population — but
+        // a drill-down added to a supported chart type would silently do so
+        // unless the restriction travels with the series.
+        cohortId: cs.context.cohortId,
+        cohortMembership: cs.context.cohortMembership,
+        cohortFilter: (
+          cs.definition as
+            | {
+                cohortFilter?: {
+                  operator?: 'in' | 'not_in';
+                  cohortIds: string[];
+                };
+              }
+            | undefined
+        )?.cohortFilter,
       },
       serieType: definition?.type ?? 'event',
       metrics: {

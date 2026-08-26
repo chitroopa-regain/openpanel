@@ -23,6 +23,12 @@ export interface CompiledCohort {
   name: string;
   version: number;
   render: (alias: CohortAlias) => string;
+  /**
+   * The raw membership subqueries, before being wrapped into `x IN (...)`.
+   * Exposed so a filter can re-wrap them with its own guard rather than
+   * string-splicing the rendered predicate. Treat each as opaque SQL.
+   */
+  sets: string[];
 }
 
 /**
@@ -52,6 +58,102 @@ export interface ResolvedAudience {
   render: (alias: CohortAlias) => string | null;
   /** Max cohort version — folded into cache keys so an edit invalidates. */
   effectiveVersion: number;
+}
+
+/**
+ * Compile a cohort FILTER (report-level or inline) into a predicate.
+ *
+ * Differs from `resolveAudience` in two ways that matter:
+ *
+ *  1. Ids are **OR-combined**, per Mixpanel: "filter by cohort A OR cohort B",
+ *     so adding a cohort widens the population. `resolveAudience` ANDs them and
+ *     is left untouched — reinterpreting a saved multi-cohort audience as OR
+ *     would silently change existing reports.
+ *
+ *  2. Membership sets are guarded against the empty profile_id. `profile_id` is
+ *     a non-nullable ClickHouse String, so `''` is this schema's null-like
+ *     value: anonymous rows. Letting `''` into the set would put anonymous
+ *     traffic INSIDE the cohort on `in`, and exclude it from `not_in` — the
+ *     opposite of the rule that unidentified rows are provably not members.
+ *     The guard makes both polarities agree, and is what keeps
+ *     `In + Not In` a true partition of the rows.
+ *
+ * `not_in` negates the whole OR group. Each cohort's own predicate can itself
+ * be an AND chain, so every cohort is parenthesised before combining — without
+ * that, operator precedence would silently reassociate the expression.
+ */
+export function combineCohortPredicates(
+  cohorts: CompiledCohort[],
+  operator: 'in' | 'not_in',
+  alias: CohortAlias,
+): string | null {
+  if (!cohorts.length) return null;
+  const guarded = (cohort: CompiledCohort) =>
+    cohort.sets
+      .map(
+        (set) =>
+          `${qualify(alias)} IN (SELECT profile_id FROM (${set}) WHERE profile_id != '')`,
+      )
+      .join(' AND ');
+  const union = cohorts.map((c) => `(${guarded(c)})`).join(' OR ');
+  const grouped = cohorts.length > 1 ? `(${union})` : union;
+  return operator === 'not_in' ? `NOT ${grouped}` : grouped;
+}
+
+/**
+ * The predicate for ONE breakdown bucket: `In 'X'` or `Not In 'X'`.
+ *
+ * Routed through the same guarded combiner as filters, so the negation gets the
+ * empty-profile_id guard rather than a hand-rolled `NOT (...)`. That guard is
+ * what makes `In` and `Not In` a true partition: without it anonymous rows sit
+ * inside the cohort on `in` AND outside it on `not_in`, so the two buckets
+ * would double-count them and no longer sum to the total.
+ */
+export function cohortBucketPredicate(
+  cohort: CompiledCohort,
+  membership: 'in' | 'not_in',
+  alias: CohortAlias,
+): string {
+  return combineCohortPredicates([cohort], membership, alias)!;
+}
+
+/** Legend label for a breakdown bucket. Mirrors Mixpanel's wording. */
+export function cohortBucketLabel(
+  cohortName: string,
+  membership: 'in' | 'not_in',
+): string {
+  return membership === 'in' ? `In '${cohortName}'` : `Not In '${cohortName}'`;
+}
+
+export interface ResolvedCohortFilter {
+  cohorts: CompiledCohort[];
+  render: (alias: CohortAlias) => string | null;
+  effectiveVersion: number;
+}
+
+/** Resolve a cohort filter into an OR-combined, optionally negated predicate. */
+export async function resolveCohortFilter(
+  filter: { operator?: 'in' | 'not_in'; cohortIds?: string[] } | null | undefined,
+  projectId: string,
+  asOf: string,
+): Promise<ResolvedCohortFilter> {
+  const empty: ResolvedCohortFilter = {
+    cohorts: [],
+    render: () => null,
+    effectiveVersion: 0,
+  };
+  if (!filter?.cohortIds?.length) return empty;
+  // Reuses resolveAudience purely as the loader: it performs the not-found and
+  // cross-project assertions and compiles each cohort. Only its AND-combining
+  // `render` is discarded here.
+  const resolved = await resolveAudience(filter.cohortIds, projectId, asOf);
+  const operator = filter.operator ?? 'in';
+  return {
+    cohorts: resolved.cohorts,
+    effectiveVersion: resolved.effectiveVersion,
+    render: (alias: CohortAlias) =>
+      combineCohortPredicates(resolved.cohorts, operator, alias),
+  };
 }
 
 function qualify(alias: CohortAlias, column = 'profile_id') {
@@ -416,6 +518,7 @@ export async function resolveAudience(
       cohortId: row.id,
       name: row.name,
       version: row.version,
+      sets,
       render: (alias: CohortAlias) =>
         sets.map((set) => `${qualify(alias)} IN (${set})`).join(' AND '),
     };

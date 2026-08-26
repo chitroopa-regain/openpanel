@@ -50,11 +50,15 @@ export function ReportAudience() {
   const cohorts = cohortsQuery.data ?? [];
   const selected = audience?.cohortIds ?? [];
 
-  // The Audience section is retired in favour of cohort breakdown. It is hidden
-  // for reports that do not have one — but a report that DOES carry an audience
-  // keeps filtering, so hiding it outright would show filtered numbers with no
-  // indication anywhere that a filter is applied. Those reports get a read-only
-  // notice and a Clear action instead.
+  // Nothing to render unless this report carries the LEGACY audience. There is
+  // deliberately no report-level cohort filter in the UI: a cohort filter
+  // belongs on the metric it applies to (the ••• menu, under First Time
+  // Filter). A second one out here was confusing about which population was in
+  // force.
+  //
+  // A report that DOES carry an audience keeps filtering, so hiding it outright
+  // would show filtered numbers with nothing on screen saying a filter applies.
+  // Those get this read-only notice and a remove control.
   if (selected.length === 0) {
     return null;
   }
@@ -73,38 +77,36 @@ export function ReportAudience() {
   return (
     <div>
       <h3 className="mb-2 font-medium">Audience</h3>
+
       <p className="mb-2 text-muted-foreground text-xs">
-        This report was built with the older Audience filter. It still filters
-        the results.
+        This report carries the older <strong>Audience</strong> filter, which
+        matches users in <strong>all</strong> of these cohorts and still applies
+        to every metric. Remove it to filter per metric instead.
       </p>
 
-      {selected.length > 0 && (
-        <div className="mb-2 flex flex-col gap-1" data-testid="audience-selected">
-          {selected.map((id) => {
-            const cohort = cohorts.find((c) => c.id === id);
-            return (
-              <div
-                className="flex items-center gap-2 rounded-md border p-2 text-sm"
-                key={id}
+      <div className="mb-2 flex flex-col gap-1" data-testid="audience-selected">
+        {selected.map((id) => {
+          const cohort = cohorts.find((c) => c.id === id);
+          return (
+            <div
+              className="flex items-center gap-2 rounded-md border p-2 text-sm"
+              key={id}
+            >
+              <TargetIcon className="h-4 w-4 shrink-0 text-violet-500" />
+              <span className="flex-1 truncate">{cohort?.name ?? id}</span>
+              <Button
+                onClick={() =>
+                  dispatch(changeAudience(selected.filter((s) => s !== id)))
+                }
+                size="icon"
+                variant="ghost"
               >
-                <TargetIcon className="h-4 w-4 shrink-0 text-violet-500" />
-                <span className="flex-1 truncate">{cohort?.name ?? id}</span>
-                <Button
-                  onClick={() =>
-                    dispatch(changeAudience(selected.filter((s) => s !== id)))
-                  }
-                  size="icon"
-                  variant="ghost"
-                >
-                  <XIcon className="h-3 w-3" />
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-
+                <XIcon className="h-3 w-3" />
+              </Button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

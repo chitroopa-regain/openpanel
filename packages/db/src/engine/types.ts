@@ -38,6 +38,14 @@ export type ConcreteSeries = {
      * and could collide in chart/React keys.
      */
     cohortId?: string;
+    /**
+     * Which side of the cohort this series is. Mixpanel's breakdown emits BOTH
+     * `In 'X'` and `Not In 'X'`, so cohortId alone is NOT a unique identity —
+     * the two polarities would collide in compute()'s grouping, format()'s
+     * previous-period matching, and React keys. Identity is (cohortId,
+     * cohortMembership).
+     */
+    cohortMembership?: 'in' | 'not_in';
   };
 
   // Data points for this series
