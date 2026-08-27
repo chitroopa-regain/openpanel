@@ -145,10 +145,33 @@ function CustomCohortsSettings() {
         </div>
       ) : (
         <div className="flex flex-col gap-2" data-testid="cohort-list">
-          {cohorts.map((cohort) => (
+          {cohorts.map((cohort) => {
+            const openEditor = () => {
+              setEditing({
+                id: cohort.id,
+                name: cohort.name,
+                definition:
+                  cohort.definition as unknown as ICustomCohortDefinition,
+              });
+              setDialogOpen(true);
+            };
+            return (
             <div
-              className="flex items-center justify-between rounded-lg border p-4"
+              className="flex cursor-pointer items-center justify-between rounded-lg border p-4 transition-colors hover:bg-accent"
+              data-testid="cohort-card"
               key={cohort.id}
+              // The whole row opens the editor. Keyboard users get the same
+              // affordance — a clickable div with no role or key handler is
+              // reachable by mouse only.
+              onClick={openEditor}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  openEditor();
+                }
+              }}
+              role="button"
+              tabIndex={0}
             >
               <div className="flex items-center gap-3">
                 <TargetIcon className="h-5 w-5 text-violet-500" />
@@ -165,22 +188,13 @@ function CustomCohortsSettings() {
               </div>
               <div className="flex gap-2">
                 <Button
-                  onClick={() => {
-                    setEditing({
-                      id: cohort.id,
-                      name: cohort.name,
-                      definition:
-                        cohort.definition as unknown as ICustomCohortDefinition,
-                    });
-                    setDialogOpen(true);
+                  aria-label={`Delete ${cohort.name}`}
+                  // Stop the row's own handler: without this, deleting also
+                  // opens the editor for the cohort being removed.
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteMutation.mutate({ id: cohort.id });
                   }}
-                  size="sm"
-                  variant="outline"
-                >
-                  Edit
-                </Button>
-                <Button
-                  onClick={() => deleteMutation.mutate({ id: cohort.id })}
                   size="sm"
                   variant="outline"
                 >
@@ -188,7 +202,8 @@ function CustomCohortsSettings() {
                 </Button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
