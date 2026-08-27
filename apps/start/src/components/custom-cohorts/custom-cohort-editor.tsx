@@ -295,7 +295,7 @@ export function CustomCohortEditor({
                         {format(parseISO(criterion.window.end), 'MMM d, yyyy')}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent align="start" className="w-auto p-0">
+                    <PopoverContent align="start" className="w-auto p-0" portal>
                       <Calendar
                         captionLayout="dropdown"
                         defaultMonth={parseISO(criterion.window.start)}
