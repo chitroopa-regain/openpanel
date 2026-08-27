@@ -1,6 +1,20 @@
-import { ComboboxEvents } from '@/components/ui/combobox-events';
+import type {
+  ICustomCohortCriterion,
+  ICustomCohortDefinition,
+} from '@openpanel/validation';
+import { useQuery } from '@tanstack/react-query';
+import { format, parseISO, subDays } from 'date-fns';
+import { CalendarIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { useMemo } from 'react';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import { ComboboxEvents } from '@/components/ui/combobox-events';
 import { Input } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -10,13 +24,6 @@ import {
 } from '@/components/ui/select';
 import { useAppParams } from '@/hooks/use-app-params';
 import { useTRPC } from '@/integrations/trpc/react';
-import type {
-  ICustomCohortCriterion,
-  ICustomCohortDefinition,
-} from '@openpanel/validation';
-import { useQuery } from '@tanstack/react-query';
-import { PlusIcon, Trash2Icon } from 'lucide-react';
-import { useMemo } from 'react';
 
 export interface CustomCohortForm {
   id?: string;
@@ -58,9 +65,9 @@ export function CustomCohortEditor({
   const isComplete = useMemo(
     () =>
       value.definition.groups.every((g) =>
-        g.criteria.every((c) => typeof c.event === 'string' && c.event !== ''),
+        g.criteria.every((c) => typeof c.event === 'string' && c.event !== '')
       ),
-    [value.definition],
+    [value.definition]
   );
 
   const previewQuery = useQuery({
@@ -74,7 +81,7 @@ export function CustomCohortEditor({
   const setCriterion = (
     groupIndex: number,
     criterionIndex: number,
-    next: Partial<ICustomCohortCriterion>,
+    next: Partial<ICustomCohortCriterion>
   ) => {
     const groups = value.definition.groups.map((g, gi) =>
       gi !== groupIndex
@@ -82,16 +89,18 @@ export function CustomCohortEditor({
         : {
             ...g,
             criteria: g.criteria.map((c, ci) =>
-              ci !== criterionIndex ? c : { ...c, ...next },
+              ci !== criterionIndex ? c : { ...c, ...next }
             ),
-          },
+          }
     );
     onChange({ ...value, definition: { ...value.definition, groups } });
   };
 
   const addCriterion = (groupIndex: number) => {
     const groups = value.definition.groups.map((g, gi) =>
-      gi !== groupIndex ? g : { ...g, criteria: [...g.criteria, emptyCriterion] },
+      gi !== groupIndex
+        ? g
+        : { ...g, criteria: [...g.criteria, emptyCriterion] }
     );
     onChange({ ...value, definition: { ...value.definition, groups } });
   };
@@ -101,7 +110,10 @@ export function CustomCohortEditor({
       .map((g, gi) =>
         gi !== groupIndex
           ? g
-          : { ...g, criteria: g.criteria.filter((_, ci) => ci !== criterionIndex) },
+          : {
+              ...g,
+              criteria: g.criteria.filter((_, ci) => ci !== criterionIndex),
+            }
       )
       .filter((g) => g.criteria.length > 0);
     onChange({
@@ -129,7 +141,7 @@ export function CustomCohortEditor({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <label className="mb-1 block text-sm font-medium" htmlFor="cohort-name">
+        <label className="mb-1 block font-medium text-sm" htmlFor="cohort-name">
           Name
         </label>
         <Input
@@ -141,11 +153,8 @@ export function CustomCohortEditor({
       </div>
 
       {value.definition.groups.map((group, groupIndex) => (
-        <div
-          className="rounded-lg border p-3"
-          key={`group-${groupIndex}`}
-        >
-          <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+        <div className="rounded-lg border p-3" key={`group-${groupIndex}`}>
+          <div className="mb-2 font-medium text-muted-foreground text-xs uppercase">
             Identified users who
           </div>
 
@@ -238,17 +247,28 @@ export function CustomCohortEditor({
                       window:
                         amount === 'ever'
                           ? { type: 'ever' }
-                          : {
-                              type: 'last',
-                              amount: Number(amount),
-                              unit: 'day',
-                            },
+                          : amount === 'custom'
+                            ? {
+                                type: 'fixed',
+                                start: format(
+                                  subDays(new Date(), 29),
+                                  'yyyy-MM-dd'
+                                ),
+                                end: format(new Date(), 'yyyy-MM-dd'),
+                              }
+                            : {
+                                type: 'last',
+                                amount: Number(amount),
+                                unit: 'day',
+                              },
                     })
                   }
                   value={
                     criterion.window.type === 'last'
                       ? String(criterion.window.amount)
-                      : 'ever'
+                      : criterion.window.type === 'fixed'
+                        ? 'custom'
+                        : 'ever'
                   }
                 >
                   <SelectTrigger className="w-[140px]">
@@ -259,8 +279,53 @@ export function CustomCohortEditor({
                     <SelectItem value="30">last 30 days</SelectItem>
                     <SelectItem value="90">last 90 days</SelectItem>
                     <SelectItem value="ever">ever</SelectItem>
+                    <SelectItem value="custom">custom range</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {criterion.window.type === 'fixed' && (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button icon={CalendarIcon} variant="outline">
+                        {format(
+                          parseISO(criterion.window.start),
+                          'MMM d, yyyy'
+                        )}
+                        {' – '}
+                        {format(parseISO(criterion.window.end), 'MMM d, yyyy')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-auto p-0">
+                      <Calendar
+                        captionLayout="dropdown"
+                        defaultMonth={parseISO(criterion.window.start)}
+                        fixedWeeks
+                        initialFocus
+                        mode="range"
+                        numberOfMonths={2}
+                        onSelect={(range) => {
+                          if (!range?.from) {
+                            return;
+                          }
+                          const start = format(range.from, 'yyyy-MM-dd');
+                          const end = format(
+                            range.to ?? range.from,
+                            'yyyy-MM-dd'
+                          );
+                          setCriterion(groupIndex, criterionIndex, {
+                            window: { type: 'fixed', start, end },
+                          });
+                        }}
+                        selected={{
+                          from: parseISO(criterion.window.start),
+                          to: parseISO(criterion.window.end),
+                        }}
+                        showOutsideDays={false}
+                        toDate={new Date()}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                )}
 
                 <Button
                   onClick={() => removeCriterion(groupIndex, criterionIndex)}
@@ -285,15 +350,22 @@ export function CustomCohortEditor({
         </div>
       ))}
 
-      <Button className="self-start" onClick={addGroup} size="sm" variant="ghost">
+      <Button
+        className="self-start"
+        onClick={addGroup}
+        size="sm"
+        variant="ghost"
+      >
         <PlusIcon className="mr-1 h-4 w-4" />
         Group
       </Button>
 
-      <div className="text-sm text-muted-foreground" data-testid="cohort-preview">
-        {!isComplete
-          ? 'Select an event to see the cohort size'
-          : previewQuery.isFetching
+      <div
+        className="text-muted-foreground text-sm"
+        data-testid="cohort-preview"
+      >
+        {isComplete
+          ? previewQuery.isFetching
             ? 'Counting…'
             : previewQuery.data?.status === 'timeout'
               ? 'Too large to preview — save and it will be evaluated in the background'
@@ -301,7 +373,8 @@ export function CustomCohortEditor({
                 ? `Preview failed: ${previewQuery.data.message ?? 'unknown error'}`
                 : previewQuery.data
                   ? `${previewQuery.data.matched.toLocaleString()} of ${previewQuery.data.universe.toLocaleString()} identified users · as of ${previewQuery.data.asOf}`
-                  : ''}
+                  : ''
+          : 'Select an event to see the cohort size'}
       </div>
     </div>
   );
