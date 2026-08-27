@@ -6,7 +6,13 @@ const VERSION = 1;
 export type ReportEditorDraft = {
   version: number;
   reportId: string;
-  report: IReport;
+  /**
+   * `dashboardId` is not part of `IReport` — it is report *placement*, not
+   * report definition — but the draft has to carry it, or a reload loses which
+   * board the report belongs to and "Save As New" defaults the copy to a stale
+   * one.
+   */
+  report: IReport & { dashboardId?: string };
   updatedAt: string;
 };
 

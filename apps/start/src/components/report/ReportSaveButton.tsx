@@ -4,7 +4,7 @@ import { useAppParams } from '@/hooks/use-app-params';
 import { handleError } from '@/integrations/trpc/react';
 import { pushModal } from '@/modals';
 import { useDispatch, useSelector } from '@/redux';
-import { SaveIcon } from 'lucide-react';
+import { CopyIcon, SaveIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useTRPC } from '@/integrations/trpc/react';
@@ -131,20 +131,70 @@ export function ReportSaveButton({ className }: ReportSaveButtonProps) {
 
   if (reportId && organizationId && projectId) {
     return (
-      <Button
-        className={className}
-        disabled={!report.dirty}
-        loading={update.isPending || isLoading}
-        onClick={() => {
-          update.mutate({
-            reportId: reportId,
-            report,
-          });
-        }}
-        icon={SaveIcon}
-      >
-        Update
-      </Button>
+      <div className="flex items-center gap-2">
+        {/* "Save As New" — same name and placement as Mixpanel: secondary,
+            immediately left of the primary action. Keeps the original
+            untouched and stores the current editor state as a NEW report.
+            Deliberately NOT gated on `dirty` — branching from an unmodified
+            report is a normal thing to want, and Update already covers the
+            modify-in-place case. */}
+        <Button
+          className={className}
+          data-testid="save-as-report"
+          icon={CopyIcon}
+          loading={create.isPending}
+          onClick={() => {
+            // `report.create` writes `dateConfig`, never the top-level
+            // startDate/endDate, and rewrites `range: 'custom'` to '30d' when
+            // no dateConfig is present. Legacy or draft-hydrated state can be
+            // in exactly that shape, so the copy would silently show a
+            // different period than the screen it was made from. Reconstruct
+            // the dateConfig instead of letting the range be substituted.
+            const needsFixedDates =
+              report.range === 'custom' &&
+              !report.dateConfig &&
+              Boolean(report.startDate && report.endDate);
+            pushModal('SaveReport', {
+              report: needsFixedDates
+                ? {
+                    ...report,
+                    dateConfig: {
+                      dateMode: 'fixed' as const,
+                      fixedStartDate: report.startDate,
+                      fixedEndDate: report.endDate,
+                    },
+                  }
+                : report,
+              // Same default a brand-new report gets, not "Copy of <name>":
+              // this creates a NEW report, and the name is editable in the
+              // dialog. Inheriting the original's name would leave two
+              // identically-named reports in the list.
+              defaultName: 'Untitled report',
+              // The dashboard the ORIGINAL lives on, so the copy lands beside
+              // it. Route search is the wrong source — absent on a direct
+              // link, and wrong when a stale `?dashboardId=` points elsewhere.
+              defaultDashboardId: report.dashboardId ?? search?.dashboardId,
+            });
+          }}
+          variant="outline"
+        >
+          Save As New
+        </Button>
+        <Button
+          className={className}
+          disabled={!report.dirty}
+          loading={update.isPending || isLoading}
+          onClick={() => {
+            update.mutate({
+              reportId: reportId,
+              report,
+            });
+          }}
+          icon={SaveIcon}
+        >
+          Update
+        </Button>
+      </div>
     );
   }
   return (

@@ -395,47 +395,6 @@ export default function ReportEditor({
     })
   );
 
-  const updateReportName = useMutation(
-    trpc.report.update.mutationOptions({
-      onSuccess(res) {
-        if (search?.draft && reportId && organizationId && projectId) {
-          clearReportDraft(search.draft);
-          router
-            .navigate({
-              to: '/$organizationId/$projectId/reports/$reportId',
-              params: {
-                organizationId,
-                projectId,
-                reportId,
-              },
-              search: {
-                ...(search ?? {}),
-                draft: undefined,
-              },
-              replace: true,
-            })
-            .catch(handleError);
-        }
-        dispatch(resetDirty());
-        toast('Success', {
-          description: 'Report renamed.',
-        });
-        queryClient.invalidateQueries(
-          trpc.report.list.queryFilter({
-            dashboardId: res.dashboardId,
-            projectId: res.projectId,
-          })
-        );
-        queryClient.invalidateQueries(
-          trpc.report.get.queryFilter({
-            reportId,
-          })
-        );
-      },
-      onError: handleError,
-    })
-  );
-
   const handleReportNameSubmit = useCallback(
     (name: string) => {
       if (!(organizationId && projectId && report.ready)) {
@@ -457,13 +416,16 @@ export default function ReportEditor({
         return;
       }
 
-      updateReportName.mutate({
-        reportId,
-        report: {
-          ...report,
-          name,
-        },
-      });
+      // A saved report's rename stays in the editor until Update. It used to
+      // call report.update with `{...report, name}` — the WHOLE editor state —
+      // so renaming a report you were experimenting on silently committed the
+      // added breakdown, the swapped events and the deleted metric to the
+      // original, with no Update click. That made "Save As New leaves the
+      // original alone" false in the most likely path, since renaming before
+      // saving-as is the natural instinct.
+      //
+      // `EditReportName` has already dispatched setName, so the new title is on
+      // screen and the report is dirty; Update persists it like any other edit.
     },
     [
       createReportFromName,
@@ -473,7 +435,6 @@ export default function ReportEditor({
       report.ready,
       reportId,
       search?.dashboardId,
-      updateReportName,
     ]
   );
 
@@ -552,6 +513,11 @@ export default function ReportEditor({
       reportId,
       report: {
         projectId: report.projectId,
+        // Carried so a draft reload still knows which dashboard the report
+        // belongs to. Without it, hydrateDraftReport keeps whatever stale
+        // dashboardId happened to be in Redux and "Save As New" can land the
+        // copy on the wrong board.
+        dashboardId: report.dashboardId,
         name: report.name,
         chartType: report.chartType,
         lineType: report.lineType,
@@ -568,6 +534,12 @@ export default function ReportEditor({
         limit: report.limit,
         options: report.options,
         dateConfig: report.dateConfig,
+        // Enumerated by hand, so anything not named here is silently lost on a
+        // draft round-trip. These two were missing: a draft reload dropped the
+        // report's cohort filter and breakdown while the sidebar still showed
+        // them.
+        cohortFilters: report.cohortFilters,
+        cohortBreakdown: report.cohortBreakdown,
       },
       updatedAt: new Date().toISOString(),
     });

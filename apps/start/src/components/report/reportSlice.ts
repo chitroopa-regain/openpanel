@@ -44,6 +44,15 @@ type InitialState = IReport & {
    * Editor-only: never persisted, cleared at the start of every transition.
    */
   lastTransitionNotice?: string;
+  /**
+   * The dashboard this report belongs to. Present at runtime because
+   * `setReport` spreads the transformed database report; declared here so
+   * consumers can read it without casting. "Save As New" needs it to default
+   * the copy to the dashboard the original lives on — route search params are
+   * the wrong source, being absent on a direct link and stale when a leftover
+   * `?dashboardId=` points elsewhere.
+   */
+  dashboardId?: string;
 };
 
 /** Chart types whose query path does not apply a cohort breakdown. */

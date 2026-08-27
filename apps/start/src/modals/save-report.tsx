@@ -23,6 +23,16 @@ import { ModalContent, ModalHeader } from './Modal/Container';
 type SaveReportProps = {
   report: IReport;
   disableRedirect?: boolean;
+  /**
+   * Prefilled name. Used by "Save as" so a copy does not silently take the
+   * original's name and leave two identical entries in the list.
+   */
+  defaultName?: string;
+  /**
+   * Prefilled dashboard. A DEFAULT, not a lock — "Save as" should land the
+   * copy beside the original by default while still letting it go elsewhere.
+   */
+  defaultDashboardId?: string;
 };
 
 const validator = z.object({
@@ -35,6 +45,8 @@ type IForm = z.infer<typeof validator>;
 export default function SaveReport({
   report,
   disableRedirect,
+  defaultName,
+  defaultDashboardId,
 }: SaveReportProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -92,8 +104,8 @@ export default function SaveReport({
     useForm<IForm>({
       resolver: zodResolver(validator),
       defaultValues: {
-        name: report.name,
-        dashboardId,
+        name: defaultName ?? report.name,
+        dashboardId: dashboardId ?? defaultDashboardId,
       },
     });
 
@@ -116,7 +128,6 @@ export default function SaveReport({
           label="Report name"
           placeholder="Name"
           {...register('name')}
-          defaultValue={report.name}
         />
         {dashboardLocked ? (
           <LockedDashboardContext
@@ -147,7 +158,16 @@ export default function SaveReport({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={!formState.isValid} size="default">
+          {/* Guard the submit while the mutation is in flight: without this a
+              double-click creates two reports, and the button gives no sign
+              anything is happening. */}
+          <Button
+            data-testid="save-report-submit"
+            disabled={!formState.isValid || save.isPending}
+            loading={save.isPending}
+            size="default"
+            type="submit"
+          >
             Save
           </Button>
         </ButtonContainer>
