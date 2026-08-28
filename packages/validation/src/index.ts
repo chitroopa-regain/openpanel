@@ -924,3 +924,4 @@ export * from './event-blocklist';
 export * from './track.validation';
 export * from './types.insights';
 export * from './retention-series';
+export * from './presentational-options';

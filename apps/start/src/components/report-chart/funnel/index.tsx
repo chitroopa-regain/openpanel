@@ -14,6 +14,7 @@ import { useReportRevalidation } from '../use-report-revalidation';
 import { BreakdownList } from './breakdown-list';
 import { Chart, Summary } from './chart';
 import { useVisibleFunnelBreakdowns } from '@/hooks/use-visible-funnel-breakdowns';
+import { stripPresentationalReportOptions } from '@openpanel/validation';
 import { useTRPC } from '@/integrations/trpc/react';
 import { pushModal } from '@/modals';
 import { parseCohortSerieId } from '../cohort-serie-id';
@@ -24,9 +25,15 @@ export function ReportFunnelChart() {
     useReportChartContext();
   const { showChart, showTable } = useReportDisplayVisibility();
   const trpc = useTRPC();
+  // Hiding a breakdown row or changing topN only affects what is DRAWN, but
+  // both live in `report.options`, and this spread puts them in the React Query
+  // key. Unchecking a country therefore refetched a funnel that takes ~90s on
+  // regain-app, to redraw data the client already had. Strip them here; the
+  // server strips the same keys from its cache key in canonicalKey.
+  const queryInput = stripPresentationalReportOptions(report);
   const queryOptions = trpc.chart.funnel.queryOptions(
     {
-      ...report,
+      ...queryInput,
       shareId,
     },
     {
@@ -35,7 +42,11 @@ export function ReportFunnelChart() {
   );
   const res = useQuery(queryOptions);
   useReportRevalidation(res, queryOptions.queryKey, () =>
-    trpc.chart.funnel.queryOptions({ ...report, shareId, bypassCache: true })
+    trpc.chart.funnel.queryOptions({
+      ...queryInput,
+      shareId,
+      bypassCache: true,
+    })
   );
 
   const funnelOptions =

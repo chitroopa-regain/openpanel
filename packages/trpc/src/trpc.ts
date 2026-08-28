@@ -3,6 +3,7 @@ import { runWithAlsSession } from '@openpanel/db';
 import { getAudienceEpoch } from '@openpanel/db';
 import { getRedisCache } from '@openpanel/redis';
 import type { ISetCookie } from '@openpanel/validation';
+import { stripPresentationalOptions } from '@openpanel/validation';
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
 import {
@@ -271,10 +272,12 @@ function canonicalKey(input: Record<string, unknown>): string {
       continue;
     }
     if (k === 'options' && v && typeof v === 'object' && !Array.isArray(v)) {
-      const { displayMode: _displayMode, ...queryOptions } = v as Record<
-        string,
-        unknown
-      >;
+      // Presentational keys must not reach the cache key: a value that only
+      // affects rendering would otherwise mint a fresh Redis entry and force a
+      // full recompute for byte-identical data. See stripPresentationalOptions.
+      const queryOptions = stripPresentationalOptions(
+        v as Record<string, unknown>,
+      );
       if (queryOptions.type !== 'generic') {
         filtered[k] = queryOptions;
       }
