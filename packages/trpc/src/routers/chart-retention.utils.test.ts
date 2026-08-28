@@ -158,6 +158,57 @@ describe('chart retention utils', () => {
     ]);
   });
 
+  it('reports the TOTAL cohort size on the summary row, not the mean', () => {
+    // Regression: the summary row divided the total by the cohort-day count,
+    // so a column headed "Total profiles" showed an average — while every
+    // cohort row beneath it showed a real total. Same column, two meanings.
+    const result = processCohortData(
+      [
+        {
+          cohort_interval: '2026-07-01',
+          total_first_event_count: 10,
+          interval_0_user_count: 5,
+        },
+        {
+          cohort_interval: '2026-07-02',
+          total_first_event_count: 30,
+          interval_0_user_count: 6,
+        },
+      ],
+      0
+    );
+
+    const [summary, ...cohorts] = result;
+    expect(summary?.cohort_interval).toBe('Weighted Average');
+    expect(summary?.sum).toBe(40); // was 20, the mean of 10 and 30
+    // The invariant that makes the header honest.
+    expect(summary?.sum).toBe(cohorts.reduce((acc, row) => acc + row.sum, 0));
+  });
+
+  it('still weights the day cells rather than summing them', () => {
+    // The other half of the fix: cohort sizes add, rates do not. If this ever
+    // starts returning 11 (5 + 6) the summary row has become incoherent.
+    const result = processCohortData(
+      [
+        {
+          cohort_interval: '2026-07-01',
+          total_first_event_count: 10,
+          interval_0_user_count: 5,
+        },
+        {
+          cohort_interval: '2026-07-02',
+          total_first_event_count: 30,
+          interval_0_user_count: 6,
+        },
+      ],
+      0
+    );
+
+    // Weighted by cohort size: (5*10 + 6*30) / 40 = 5.75 -> 6 at 0 decimals.
+    expect(result[0]?.values).toEqual([6]);
+    expect(result[0]?.percentages).toEqual([0.275]);
+  });
+
   it('keeps zero-retention cohorts in the weighted-average denominator', () => {
     const result = processCohortData(
       [

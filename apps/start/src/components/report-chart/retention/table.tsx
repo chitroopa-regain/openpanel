@@ -117,9 +117,23 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
     .filter((value): value is number => value !== null);
   const highestValue = observedValues.length > 0 ? max(observedValues) : 0;
   const lowestValue = observedValues.length > 0 ? min(observedValues) : 0;
-  const rowWithHigestSum = data.find(
-    (row) => row.sum === max(data.map((row) => row.sum))
+  // The 'Weighted Average' rows now carry the TOTAL cohort size, so comparing
+  // them against individual cohort rows would hand the rocket to a summary row
+  // unconditionally. Compare like with like: when broken down, the collapsed
+  // summaries compete with each other; otherwise the real cohort rows do.
+  const summaryRows = data.filter(
+    (row) => row.cohort_interval === 'Weighted Average'
   );
+  const cohortRows = data.filter(
+    (row) => row.cohort_interval !== 'Weighted Average'
+  );
+  const rocketCandidates = hasBreakdowns ? summaryRows : cohortRows;
+  const rowWithHigestSum =
+    rocketCandidates.length > 0
+      ? rocketCandidates.find(
+          (row) => row.sum === max(rocketCandidates.map((r) => r.sum))
+        )
+      : undefined;
 
   useEffect(() => {
     setExpandedGroups(new Set());

@@ -2646,12 +2646,10 @@ function processCohortGroupData(
   };
 
   // Aggregate data for weighted averages, excluding zero-sum rows (synthetic gap-fill rows)
-  let nonZeroRowCount = 0;
   processed.forEach((row) => {
     if (row.sum === 0) {
       return; // skip synthetic zero rows
     }
-    nonZeroRowCount++;
     averageData.totalSum += row.sum;
     row.values.forEach((value, index) => {
       if (value === null) {
@@ -2679,10 +2677,12 @@ function processCohortGroupData(
       : 0;
   const averageRow = {
     cohort_interval: 'Weighted Average',
-    sum:
-      nonZeroRowCount > 0
-        ? round(averageData.totalSum / nonZeroRowCount, 0)
-        : 0,
+    // The table renders this under a "Total profiles" header and every cohort
+    // row beneath it is a real total, so a mean here made one column mean two
+    // different things depending on which row you read. Cohort sizes add up.
+    // The day cells below stay weighted averages: a rate or an ARPU cannot be
+    // summed across cohorts, but the number of profiles in them can.
+    sum: averageData.totalSum,
     percentages: averageData.percentages.map(({ sum, weightedSum }) =>
       sum > 0 ? round(weightedSum / sum, 4) : null
     ),
