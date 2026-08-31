@@ -647,7 +647,10 @@ export function getChartSql({
   }
 
   const getLimit = () => (sb.limit ? `LIMIT ${sb.limit}` : '');
-  const sql = `${getWith()}${getSelect()} ${getFrom()} ${getJoins()} ${getWhere()} ${getGroupBy()} ${getOrderBy()} ${getLimit()} ${getFill()}`;
+  // WITH FILL belongs to the ORDER BY clause and must precede LIMIT in
+  // ClickHouse. Breakdown queries set a limit, so rendering LIMIT first makes
+  // every time-series breakdown fail with a SYNTAX_ERROR at WITH FILL.
+  const sql = `${getWith()}${getSelect()} ${getFrom()} ${getJoins()} ${getWhere()} ${getGroupBy()} ${getOrderBy()} ${getFill()} ${getLimit()}`;
   console.log('-- Report --');
   console.log(sql.replaceAll(/[\n\r]/g, ' '));
   console.log('-- End --');

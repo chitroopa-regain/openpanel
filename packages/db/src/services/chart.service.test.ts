@@ -717,6 +717,32 @@ describe('getChartSql', () => {
   // ── Trait breakdowns ───────────────────────────────────────
 
   describe('trait breakdowns', () => {
+    it('places WITH FILL before LIMIT for property sums broken down by a user property', () => {
+      const sql = normalizeSql(
+        getChartSql(
+          makeTimeSeriesInput({
+            eventName: 'Server: Purchase',
+            segment: 'property_sum',
+            property: 'properties.value_inr',
+            breakdowns: [
+              { name: 'profile.properties.install_referrer_utm_source' },
+            ],
+            limit: 500,
+          })
+        )
+      );
+
+      expect(sql).toContain(
+        "sum(toFloat64OrNull(properties['value_inr'])) as count"
+      );
+      expect(sql).toContain(
+        'trait_install_referrer_utm_source.value as label_1'
+      );
+      expect(sql).toContain('ORDER BY date ASC WITH FILL FROM');
+      expect(sql).toContain('STEP toIntervalDay(1) LIMIT 500');
+      expect(sql.indexOf('WITH FILL')).toBeLessThan(sql.indexOf('LIMIT 500'));
+    });
+
     it('creates trait CTE with JOIN', () => {
       const sql = normalizeSql(
         getChartSql(
