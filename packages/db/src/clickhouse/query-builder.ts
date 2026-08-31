@@ -65,6 +65,10 @@ export class Query<T = any> {
     condition: string;
     alias?: string;
   }[] = [];
+  private _arrayJoins: {
+    expression: string | Expression;
+    alias?: string;
+  }[] = [];
   private _skipNext = false;
   private _fill?: {
     from: string | Date;
@@ -329,6 +333,12 @@ export class Query<T = any> {
     return this.joinWithType('CROSS', table, '', alias);
   }
 
+  arrayJoin(expression: string | Expression, alias?: string): this {
+    if (this._skipNext) return this;
+    this._arrayJoins.push({ expression, alias });
+    return this;
+  }
+
   private joinWithType(
     type: JoinType,
     table: string | Expression | Query,
@@ -413,6 +423,15 @@ export class Query<T = any> {
         parts.push(
           `${join.type} JOIN ${join.table instanceof Query ? `(${join.table.toSQL()})` : join.table instanceof Expression ? `(${join.table.toString()})` : join.table}${aliasClause}${conditionStr}`,
         );
+      });
+
+      this._arrayJoins.forEach((join) => {
+        const aliasClause = join.alias ? ` AS ${join.alias}` : '';
+        const expression =
+          join.expression instanceof Expression
+            ? join.expression.toString()
+            : this.escapeDate(join.expression);
+        parts.push(`ARRAY JOIN ${expression}${aliasClause}`);
       });
     }
 

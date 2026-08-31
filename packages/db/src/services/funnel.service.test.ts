@@ -42,7 +42,11 @@ vi.mock('../prisma-client', () => ({
   db: {},
 }));
 
-import { FunnelService, qualifyFunnelCondition } from './funnel.service';
+import {
+  FunnelService,
+  funnelStepsShareEventName,
+  qualifyFunnelCondition,
+} from './funnel.service';
 
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
@@ -92,6 +96,90 @@ const prodFunnelMetricReport = {
 };
 
 const eventPropertyBreakdowns = [{ name: 'properties.step_bucket' }];
+
+describe('FunnelService repeated event steps', () => {
+  const repeatedEventSeries = [
+    {
+      id: 'install',
+      name: 'Application Installed',
+      type: 'event' as const,
+      filters: [],
+      segment: 'event' as const,
+    },
+    {
+      id: 'created-1',
+      name: 'FM: Created',
+      type: 'event' as const,
+      filters: [],
+      segment: 'event' as const,
+    },
+    {
+      id: 'created-2',
+      name: 'FM: Created',
+      type: 'event' as const,
+      filters: [],
+      segment: 'event' as const,
+    },
+  ];
+
+  it('detects overlap between custom-event components and regular steps', () => {
+    expect(
+      funnelStepsShareEventName([
+        {
+          ...repeatedEventSeries[0]!,
+          name: 'Created or Updated',
+          customEventComponents: [
+            { eventName: 'FM: Created', filters: [] },
+            { eventName: 'FM: Updated', filters: [] },
+          ],
+        },
+        repeatedEventSeries[1]!,
+      ])
+    ).toBe(true);
+  });
+
+  it('uses one-event-per-step matching when a raw event name is repeated', () => {
+    const service = new FunnelService({} as any);
+    const { query } = service.buildFunnelCte({
+      projectId: 'regain-app',
+      startDate: '2026-07-26 00:00:00',
+      endDate: '2026-08-25 23:59:59',
+      eventSeries: repeatedEventSeries,
+      funnelWindowMilliseconds: 30 * 24 * 60 * 60 * 1000,
+      timezone: 'UTC',
+      groupBy: 'profile_id',
+    });
+
+    const sql = normalizeSql(query.toSQL());
+    expect(sql).toContain('ARRAY JOIN arrayFilter(');
+    expect(sql).toContain('AS funnel_step');
+    expect(sql).toContain('funnel_step = 3');
+    expect(sql).toContain("windowFunnel(10368000000, 'strict_increase')");
+    expect(sql).toContain("name = 'FM: Created'");
+    expect(sql).toContain('windowFunnel(');
+    expect(sql).not.toContain('groupArray(');
+    expect(sql).not.toContain("toDateTime(''");
+  });
+
+  it('keeps the windowFunnel fast path when step event names do not overlap', () => {
+    const service = new FunnelService({} as any);
+    const { query } = service.buildFunnelCte({
+      projectId: 'regain-app',
+      startDate: '2026-07-26 00:00:00',
+      endDate: '2026-08-25 23:59:59',
+      eventSeries: repeatedEventSeries.map((step, index) =>
+        index === 2 ? { ...step, name: 'Subscription: Purchase Success' } : step
+      ),
+      funnelWindowMilliseconds: 30 * 24 * 60 * 60 * 1000,
+      timezone: 'UTC',
+      groupBy: 'profile_id',
+    });
+
+    const sql = normalizeSql(query.toSQL());
+    expect(sql).toContain('windowFunnel(');
+    expect(sql).not.toContain('ARRAY JOIN');
+  });
+});
 
 describe('FunnelService.getFunnelPropertySums', () => {
   beforeEach(() => {
@@ -1508,6 +1596,19 @@ describe('FunnelService.isMvEligibleFunnel', () => {
       await s.isMvEligibleFunnel({
         ...simpleFunnel,
         groupBy: 'session_id' as const,
+      })
+    ).toBe(false);
+  });
+
+  it('rejects repeated event names because the MV loses physical occurrences', async () => {
+    const s = new FunnelService({} as any);
+    expect(
+      await s.isMvEligibleFunnel({
+        ...simpleFunnel,
+        eventSeries: [
+          ...simpleFunnel.eventSeries,
+          { name: 'Counter Bubble: Shown', filters: [], segment: 'event' },
+        ],
       })
     ).toBe(false);
   });

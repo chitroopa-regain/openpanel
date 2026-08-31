@@ -150,6 +150,33 @@ export type ResolvedFunnelStep = IChartEvent & {
 };
 
 /**
+ * ClickHouse windowFunnel cannot advance through two conditions that can match
+ * the same raw event name: the row is consumed by the earliest matching step,
+ * so a funnel such as A -> B -> B always reports zero at step 3. Custom events
+ * can create the same overlap when their component event-name sets intersect.
+ */
+export function funnelStepsShareEventName(
+  eventSeries: ResolvedFunnelStep[]
+): boolean {
+  const seen = new Set<string>();
+
+  for (const step of eventSeries) {
+    const stepNames = new Set(
+      step.customEventComponents
+        ? step.customEventComponents.map((component) => component.eventName)
+        : [step.name]
+    );
+
+    for (const name of stepNames) {
+      if (seen.has(name)) return true;
+    }
+    for (const name of stepNames) seen.add(name);
+  }
+
+  return false;
+}
+
+/**
  * Resolves a series array (which may contain custom events) into
  * ResolvedFunnelStep[] that the funnel query builder can consume.
  */
@@ -319,6 +346,11 @@ export class FunnelService {
 
     // MV is per profile_id — no session mode.
     if (params.groupBy !== 'profile_id') return false;
+
+    // The MV keeps only min/max timestamps per event/day. Repeated or
+    // overlapping event names need every physical occurrence so that one row
+    // can advance at most one funnel step; force the raw-events fallback.
+    if (funnelStepsShareEventName(params.eventSeries)) return false;
 
     // Filters/breakdowns on this whitelist of top-level event columns are
     // supported because they are stored directly in the MV grain
@@ -656,7 +688,7 @@ export class FunnelService {
       )
     );
 
-    // Wrap the windowFunnel expression in clix.exp() so clix's select
+    // Wrap the aggregate expression in clix.exp() so clix's select
     // serializer (which regex-escapes any embedded date-like substring
     // in plain strings via escapeDate → sqlstring.escape) leaves the
     // raw SQL alone. Since the Mixpanel-parity fix now embeds
@@ -665,19 +697,32 @@ export class FunnelService {
     // `toDateTime(''YYYY-MM-DD ...'')` — which CH rejects with a
     // syntax error at the empty-string literal. See query-builder.ts
     // escapeDate + the comment on the SELECT serializer branch.
-    const windowFunnelExpr = clix.exp(
-      `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(toUInt64(toUnixTimestamp64Milli(${col('created_at')})), ${funnels.join(', ')}) AS level`
-    );
+    const eventTimestamp = `toUInt64(toUnixTimestamp64Milli(${col('created_at')}))`;
+    const hasOverlappingSteps = funnelStepsShareEventName(eventSeries);
+    // windowFunnel assigns an overlapping row to the earliest matching step.
+    // Expand each physical event into the step numbers it matches, ordering
+    // later steps before earlier ones within the same millisecond. The same row
+    // therefore cannot satisfy two consecutive steps, while native
+    // windowFunnel retains its bounded aggregation state and restart/window
+    // semantics. Scaling keeps physical milliseconds strictly ordered.
+    const timestampScale = funnels.length + 1;
+    const funnelLevelSql = hasOverlappingSteps
+      ? `windowFunnel(${funnelWindowMilliseconds * timestampScale}, 'strict_increase')(
+          toUInt64(${eventTimestamp} * ${timestampScale} + (${funnels.length} - funnel_step)),
+          ${funnels.map((_, index) => `funnel_step = ${index + 1}`).join(', ')}
+        ) AS level`
+      : `windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(${eventTimestamp}, ${funnels.join(', ')}) AS level`;
+    const funnelLevelExpr = clix.exp(funnelLevelSql);
     const selects =
       groupBy === 'profile_id'
         ? [
             `${col('profile_id')} AS profile_id`,
-            windowFunnelExpr,
+            funnelLevelExpr,
             ...additionalSelects,
           ]
         : [
             `${col('session_id')} AS session_id`,
-            windowFunnelExpr,
+            funnelLevelExpr,
             `argMax(${col('profile_id')}, ${col('created_at')}) AS profile_id`,
             ...additionalSelects,
           ];
@@ -711,6 +756,16 @@ export class FunnelService {
           : groupBy,
         ...additionalGroupBy,
       ]);
+
+    if (hasOverlappingSteps) {
+      query.arrayJoin(
+        clix.exp(`arrayFilter(
+          step -> [${funnels.map((condition) => `(${condition})`).join(', ')}][step],
+          range(1, ${funnels.length + 1})
+        )`),
+        'funnel_step'
+      );
+    }
 
     // Add first-time LEFT JOINs (CTEs are returned separately for the outer query)
     for (let i = 0; i < firstTimeCteAliases.length; i++) {
