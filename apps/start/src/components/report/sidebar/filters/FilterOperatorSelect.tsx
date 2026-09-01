@@ -8,16 +8,26 @@ interface FilterOperatorSelectProps {
   value: IChartEventFilterOperator;
   onChange: (operator: IChartEventFilterOperator) => void;
   children?: React.ReactNode;
+  items?: Array<{ value: IChartEventFilterOperator; label: string }>;
 }
 
 export function FilterOperatorSelect({
   value,
   onChange,
   children,
+  items,
 }: FilterOperatorSelectProps) {
+  const operatorItems =
+    items ??
+    mapKeys(operators).map((key) => ({
+      value: key,
+      label: operators[key],
+    }));
+  const selectedLabel =
+    operatorItems.find((item) => item.value === value)?.label ?? operators[value];
   const trigger = children ?? (
     <Button className="whitespace-nowrap" variant="outline">
-      {operators[value]}
+      {selectedLabel}
     </Button>
   );
 
@@ -27,10 +37,7 @@ export function FilterOperatorSelect({
         collisionPadding: 8,
         side: 'bottom',
       }}
-      items={mapKeys(operators).map((key) => ({
-        value: key,
-        label: operators[key],
-      }))}
+      items={operatorItems}
       label="Operator"
       onChange={onChange}
     >

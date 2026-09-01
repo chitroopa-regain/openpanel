@@ -14,9 +14,27 @@ import type {
   IChartEventFilterOperator,
   IChartEventFilterValue,
 } from '@openpanel/validation';
-
 import { SlidersHorizontal, Trash } from 'lucide-react';
+import { useEffect } from 'react';
 import { changeEvent } from '../../reportSlice';
+import {
+  defaultEpochDateOperator,
+  inferEpochUnit,
+  isEpochDateComparisonOperator,
+} from './epoch-date-filter.utils';
+import { EpochDateFilterValue } from './epoch-date-filter-value';
+
+const DATE_OPERATOR_ITEMS: Array<{
+  value: IChartEventFilterOperator;
+  label: string;
+}> = [
+  { value: 'gte', label: 'On or after' },
+  { value: 'gt', label: 'After' },
+  { value: 'lte', label: 'On or before' },
+  { value: 'lt', label: 'Before' },
+  { value: 'isNotNull', label: 'Is set' },
+  { value: 'isNull', label: 'Is not set' },
+];
 
 interface FilterProps {
   event: IChartEvent | IChartCustomEvent;
@@ -150,6 +168,12 @@ export function PureFilterItem({
       value: item,
       label: item,
     })) ?? [];
+  const epochUnit = inferEpochUnit(filter.name, [
+    ...potentialValues,
+    ...filter.value,
+  ]);
+  const operatorNeedsNoValue =
+    filter.operator === 'isNull' || filter.operator === 'isNotNull';
 
   const removeFilter = () => {
     onRemove(filter);
@@ -162,6 +186,51 @@ export function PureFilterItem({
   const changeFilterOperator = (operator: IChartEventFilterOperator) => {
     onChangeOperator(operator, filter);
   };
+
+  useEffect(() => {
+    // A newly-added property filter starts as `is` with no value. Once its
+    // sampled values prove that it is an epoch timestamp, move it to a useful
+    // date comparison instead of offering exact millisecond equality.
+    const nextOperator = defaultEpochDateOperator(
+      epochUnit,
+      filter.operator,
+      filter.value.length,
+    );
+    if (nextOperator) {
+      changeFilterOperator(nextOperator);
+    }
+  }, [epochUnit, filter.operator, filter.value.length]);
+
+  let filterValueControl: React.ReactNode = null;
+  if (!operatorNeedsNoValue) {
+    if (epochUnit && isEpochDateComparisonOperator(filter.operator)) {
+      filterValueControl = (
+        <EpochDateFilterValue
+          value={filter.value[0]}
+          unit={epochUnit}
+          onChange={(value) => changeFilterValue([value])}
+        />
+      );
+    } else if (filter.operator === 'is' || filter.operator === 'isNot') {
+      filterValueControl = (
+        <ComboboxAdvanced
+          items={valuesCombobox}
+          value={filter.value}
+          className="min-w-0 flex-1"
+          onChange={changeFilterValue}
+          placeholder="Select..."
+        />
+      );
+    } else {
+      filterValueControl = (
+        <InputEnter
+          value={filter.value[0] ? String(filter.value[0]) : ''}
+          onChangeValue={(value) => changeFilterValue([value])}
+          immediate={immediateInput}
+        />
+      );
+    }
+  }
 
   return (
     <div className={className}>
@@ -180,22 +249,9 @@ export function PureFilterItem({
         <FilterOperatorSelect
           value={filter.operator}
           onChange={changeFilterOperator}
+          items={epochUnit ? DATE_OPERATOR_ITEMS : undefined}
         />
-        {filter.operator === 'is' || filter.operator === 'isNot' ? (
-          <ComboboxAdvanced
-            items={valuesCombobox}
-            value={filter.value}
-            className="min-w-0 flex-1"
-            onChange={changeFilterValue}
-            placeholder="Select..."
-          />
-        ) : (
-          <InputEnter
-            value={filter.value[0] ? String(filter.value[0]) : ''}
-            onChangeValue={(value) => changeFilterValue([value])}
-            immediate={immediateInput}
-          />
-        )}
+        {filterValueControl}
       </div>
     </div>
   );
