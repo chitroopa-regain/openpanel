@@ -88,7 +88,6 @@ export function ComboboxAdvanced({
           e.stopPropagation();
         }}
         onSelect={() => {
-          setInputValue('');
           onChange(
             value.includes(desanitize(item.value))
               ? value.filter((s) => s !== desanitize(item.value))
