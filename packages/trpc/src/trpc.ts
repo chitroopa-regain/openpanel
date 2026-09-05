@@ -208,10 +208,9 @@ function isEnvelope(value: unknown): value is CacheEnvelope {
 // report endpoints all return objects); primitives/arrays pass through as-is.
 //
 // NOTE: a top-level ARRAY payload gets no `_cache`, so the client never sees
-// `stale` and SWR auto-revalidation is silently disabled for it. All currently
-// cached endpoints return objects, so this is fine today — but wrap array
-// payloads (e.g. `{ d: data, _cache }`) before adding a new array-returning
-// report to this middleware, or it won't refresh.
+// `stale` and cannot drive revalidation. The middleware compensates by
+// recomputing array payloads inline once they age past the freshness window
+// (see the normal-read path below), so they behave as a plain TTL cache.
 function attachCacheMeta(data: unknown, cachedAt: number, stale: boolean) {
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     return {
@@ -408,15 +407,23 @@ export const cacheMiddleware = (
 
     // Normal read: serve the cached value instantly, flagged stale when it has
     // aged past its freshness window so the client knows to revalidate.
+    //
+    // Array payloads (e.g. chart.properties) cannot carry `_cache`, so the
+    // client never learns they are stale and never revalidates — a stale list
+    // would otherwise be served until the hard TTL (>= 1 day) expires. New
+    // event / profile properties then stay invisible in the pickers for a day.
+    // For those, recompute inline once the freshness window has passed.
     const env = await read();
     if (env) {
       const stale = Date.now() - env.t > freshness * 1000;
-      return {
-        ok: true,
-        data: attachCacheMeta(env.d, env.t, stale),
-        ctx,
-        marker: middlewareMarker,
-      };
+      if (!stale || !Array.isArray(env.d)) {
+        return {
+          ok: true,
+          data: attachCacheMeta(env.d, env.t, stale),
+          ctx,
+          marker: middlewareMarker,
+        };
+      }
     }
 
     // Cold cache: compute, store, return fresh.
