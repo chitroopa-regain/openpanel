@@ -91,6 +91,7 @@ import {
   getConcreteEventNameWhereClause,
   getRetentionElapsedIntervalExpression,
   getRetentionIntervalMaturityExpression,
+  getRetentionMaturedIntervalsExpression,
   getRetentionMeasurePropertyExpression,
   getRetentionReturnEventWhereClause,
   getRetentionTimeUnitConfig,
@@ -1546,6 +1547,13 @@ export const chartRouter = createTRPCRouter({
           })
         )
         .join(',\n');
+      // Same clock and same unit as the per-interval maturity flags above, so
+      // a group's horizon and its cells can never disagree.
+      const maturedIntervalsSelect = getRetentionMaturedIntervalsExpression({
+        unit: retentionUnit,
+        cohortExpression: 'cs.cohort_interval',
+        asOfExpression: `toDate(now('${timezone}'))`,
+      });
       const propertyAverageDenominatorSelect =
         retentionMetric === 'property_average' &&
         retentionPropertyExpr &&
@@ -1891,6 +1899,7 @@ export const chartRouter = createTRPCRouter({
           cs.display_interval,
           cs.cohort_interval,
           cs.total_first_event_count,
+          ${maturedIntervalsSelect} AS matured_intervals,
           ${breakdownColumnsFromCohortSizes.replace(/^, /, '')}${breakdownColumnsFromCohortSizes ? ',' : ''}
           ${countsSelect}
           ${propertyAverageDenominatorSelect}
@@ -2551,6 +2560,7 @@ function processCohortGroupData(
     values: Array<number | null>;
     valueWeights?: number[];
     percentages: Array<number | null>;
+    maturedIntervals?: number;
   }> = data.map((row) => {
     const sum = row.total_first_event_count;
     const values = range(0, diffInterval + 1).map((index) => {
@@ -2569,6 +2579,10 @@ function processCohortGroupData(
       sum,
       values,
       valueWeights,
+      maturedIntervals:
+        row.matured_intervals === null || row.matured_intervals === undefined
+          ? undefined
+          : Number(row.matured_intervals),
       percentages: values.map((value) =>
         value === null ? null : sum > 0 ? round(value / sum, 4) : 0
       ),

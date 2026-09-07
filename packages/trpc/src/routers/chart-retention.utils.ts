@@ -16,6 +16,8 @@ export interface ProcessedRetentionCohortRow {
   values: Array<number | null>;
   valueWeights?: number[];
   percentages: Array<number | null>;
+  /** Intervals of history this cohort has; see getRetentionMaturedIntervalsExpression. */
+  maturedIntervals?: number;
 }
 
 export interface RawRetentionCohortRow {
@@ -82,7 +84,7 @@ export function aggregateRetentionRowsByDisplayInterval(
       values: number[];
       weightedValues: number[];
       valueWeights: number[];
-      hasValues: boolean[];
+      maturedIntervals: number;
     }
   >();
 
@@ -93,16 +95,26 @@ export function aggregateRetentionRowsByDisplayInterval(
       values: new Array(row.values.length).fill(0) as number[],
       weightedValues: new Array(row.values.length).fill(0) as number[],
       valueWeights: new Array(row.values.length).fill(0) as number[],
-      hasValues: new Array(row.values.length).fill(false) as boolean[],
+      maturedIntervals: Number.POSITIVE_INFINITY,
     };
 
     group.sum += row.sum;
+    // The group can only be shown as far as its YOUNGEST member reaches. A
+    // display row is read left to right, so every cell in it has to come from
+    // the same population; letting a young member drop out column by column
+    // silently shrinks the denominator and can make a cumulative row rise.
+    group.maturedIntervals = Math.min(
+      group.maturedIntervals,
+      row.maturedIntervals ?? Number.POSITIVE_INFINITY
+    );
     row.values.forEach((value, index) => {
+      // A null inside the horizon is not missing history — it is a cohort with
+      // no denominator at this index (a per-converter average with nobody to
+      // average). Its weight is zero, so skipping it is a no-op, not a drop.
       if (value === null) {
         return;
       }
       const weight = row.valueWeights?.[index] ?? row.sum;
-      group.hasValues[index] = true;
       group.values[index] = (group.values[index] ?? 0) + value;
       group.valueWeights[index] = (group.valueWeights[index] ?? 0) + weight;
       group.weightedValues[index] =
@@ -113,18 +125,19 @@ export function aggregateRetentionRowsByDisplayInterval(
 
   return Array.from(groups.entries())
     .map(([cohort_interval, group]) => {
+      const isMature = (index: number) => index <= group.maturedIntervals;
       const values =
         valueMode === 'weighted_average'
           ? group.weightedValues.map((value, index) => {
-              if (!group.hasValues[index]) {
+              if (!isMature(index)) {
                 return null;
               }
               const weight = group.valueWeights[index] ?? 0;
-              return weight > 0 ? Math.round((value / weight) * 100) / 100 : 0;
+              return weight > 0
+                ? Math.round((value / weight) * 100) / 100
+                : null;
             })
-          : group.values.map((value, index) =>
-              group.hasValues[index] ? value : null
-            );
+          : group.values.map((value, index) => (isMature(index) ? value : null));
 
       return {
         cohort_interval,
@@ -195,6 +208,37 @@ export function getRetentionIntervalMaturityExpression({
     month: 'addMonths',
   }[unit];
   return `${addFunction}(${cohortExpression}, ${index}) <= ${asOfExpression}`;
+}
+
+/**
+ * How many intervals of history a cohort actually has — the largest `index`
+ * for which getRetentionIntervalMaturityExpression is true. Kept adjacent to
+ * that function because the two must agree exactly; the rollup uses this to
+ * find a display group's common horizon, and an off-by-one here would show a
+ * column built from a different population than the one beside it.
+ */
+export function getRetentionMaturedIntervalsExpression({
+  unit,
+  cohortExpression,
+  asOfExpression,
+}: {
+  unit: RetentionTimeUnit;
+  cohortExpression: string;
+  asOfExpression: string;
+}) {
+  const days = `dateDiff('day', ${cohortExpression}, ${asOfExpression})`;
+  if (unit === 'day') {
+    return days;
+  }
+  // addWeeks adds a fixed 7 days, so the horizon is exact arithmetic.
+  if (unit === 'week') {
+    return `intDiv(${days}, 7)`;
+  }
+  // addMonths is calendar-aware and clamps day-of-month, so dateDiff('month')
+  // — which compares month indices and ignores the day — overshoots by one
+  // whenever the cohort's day-of-month has not yet come round. Step back once.
+  const months = `dateDiff('month', ${cohortExpression}, ${asOfExpression})`;
+  return `if(addMonths(${cohortExpression}, ${months}) <= ${asOfExpression}, ${months}, ${months} - 1)`;
 }
 
 export function isWildcardEventSelection(events: string[]) {
@@ -271,9 +315,13 @@ export function buildRetentionMeasureIntervalSelect({
       propertyAverageDenominatorStep > 0
         ? `uniqExactIf(r.profile_id, ${predicate})`
         : 'any(cs.total_first_event_count)';
-    aggregateExpression = `round(sumIf(r.retention_property_value, ${predicate}) / nullIf(${denominator}, 0), 2)`;
+    // ifNull, because retention_property_value is Nullable and ClickHouse's
+    // sum over an empty/all-NULL set returns NULL rather than 0. A cohort that
+    // simply earned nothing in this tail must read 0, not "no data" — as NULL
+    // it dropped out of the weekly rollup's denominator and pushed the row up.
+    aggregateExpression = `round(sumIf(ifNull(r.retention_property_value, 0), ${predicate}) / nullIf(${denominator}, 0), 2)`;
   } else if (measure === 'property_sum' && propertyExpression) {
-    aggregateExpression = `round(sumIf(r.retention_property_value, ${predicate}), 2)`;
+    aggregateExpression = `round(sumIf(ifNull(r.retention_property_value, 0), ${predicate}), 2)`;
   } else {
     aggregateExpression = `uniqExactIf(r.profile_id, ${predicate})`;
   }
