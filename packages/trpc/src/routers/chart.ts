@@ -981,6 +981,8 @@ export const chartRouter = createTRPCRouter({
             // one: a funnel_metric whose property sums covered the whole
             // population while its funnel was filtered would contradict itself.
             cohortPredicate: current.cohortPredicate,
+            // Same steps ⇒ same MV eligibility decision as the funnel itself.
+            eventSeries,
           }),
           previous
             ? funnelService.getFunnelPropertyStats({
@@ -997,6 +999,7 @@ export const chartRouter = createTRPCRouter({
                 timezone,
                 // Previous period, same membership instant, same predicate.
                 cohortPredicate: previous.cohortPredicate,
+                eventSeries,
               })
             : Promise.resolve(null),
         ]);

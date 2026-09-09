@@ -1862,7 +1862,7 @@ describe('FunnelService.buildFunnelCteFromMv', () => {
     );
     // Day partition prune
     expect(normalized).toContain(
-      "day BETWEEN toDate('2026-06-15 00:00:00') AND addDays(toDate('2026-07-16 00:00:00'), 2)"
+      "day BETWEEN addDays(toDate('2026-06-15 00:00:00'), -1) AND addDays(toDate('2026-07-16 00:00:00'), 2)"
     );
     // MV zero-sentinel filter (unidentified rows have min_..._identified = 0)
     expect(normalized).toContain(
@@ -2145,7 +2145,7 @@ describe('FunnelService MV path with profile-trait breakdowns', () => {
     expect(flat).toContain('argMaxIf(trait_pomodoro_first_variant_v1.value, mv.ts,');
     expect(flat).not.toContain('created_at,');
     // Attribution tail: 7-day window ⇒ day pre-filter reaches end + 8 days.
-    expect(flat).toContain("addDays(toDate('2026-09-10 00:00:00'), 8)");
+    expect(flat).toContain("day BETWEEN addDays(toDate('2026-08-10 00:00:00'), -1) AND addDays(toDate('2026-09-10 00:00:00'), 8)");
     expect(traitCtes).toEqual([
       {
         name: 'trait_pomodoro_first_variant_v1',
@@ -2217,5 +2217,106 @@ describe('FunnelService MV path with profile-trait breakdowns', () => {
     const sql = normalizeSql(mocks.chQuery.mock.calls[0]![0]);
     expect(sql).not.toContain('timing_bd');
     expect(sql).toContain("addDays(toDate('2026-09-10 00:00:00'), 2)");
+  });
+});
+
+describe('FunnelService.getFunnelPropertyStats MV path', () => {
+  const traitDescriptor = {
+    key: 'c66_pricing_assignment_v1',
+    cteName: 'trait_c66_pricing_assignment_v1',
+    column: 'trait_c66_pricing_assignment_v1.value',
+  };
+  const steps = [
+    {
+      id: 's1',
+      name: 'Application Installed',
+      type: 'event' as const,
+      filters: [
+        { id: 'f1', name: 'app_version', operator: 'regex' as const, value: ['^66\\.'] },
+      ],
+      segment: 'event' as const,
+    },
+    { id: 's2', name: 'Subscription: Paywall Viewed', type: 'event' as const, filters: [], segment: 'event' as const },
+    { id: 's3', name: 'Server: Purchase', type: 'event' as const, filters: [], segment: 'event' as const },
+  ];
+  const base = {
+    projectId: 'regain-app',
+    startDate: '2026-08-10 00:00:00',
+    endDate: '2026-09-10 00:00:00',
+    funnelWindowSeconds: 7 * 24 * 60 * 60,
+    groupBy: 'profile_id' as const,
+    allEventNames: steps.map((s) => s.name),
+    propertyKey: 'properties.value_inr',
+    timezone: 'Asia/Calcutta',
+  };
+  const coverage = () =>
+    mocks.chQuery
+      .mockResolvedValueOnce([{ project_id: 'regain-app', min_day: '2026-03-05' }])
+      .mockResolvedValueOnce([
+        { project_id: 'regain-app', max_day: '2026-09-09', staleness_hours: 0 },
+      ]);
+
+  beforeEach(() => {
+    mocks.chQuery.mockReset();
+  });
+
+  it('reads the property only for last-step converters at the chained timestamp', async () => {
+    const service = new FunnelService({} as any);
+    coverage();
+    mocks.chQuery.mockResolvedValueOnce([
+      { b_0: 'arm_a', total_sum: 1500.5, property_average: 300.1, property_count: 5 },
+      { b_0: null, total_sum: 99, property_average: 99, property_count: 1 },
+    ]);
+    const result = await service.getFunnelPropertyStats({
+      ...base,
+      stepConditions: service.getFunnelConditions(steps, 'regain-app'),
+      breakdowns: [{ name: 'profile.properties.c66_pricing_assignment_v1' }],
+      breakdownStep: 0,
+      eventSeries: steps,
+    });
+    expect(result.get('arm_a')).toEqual({ sum: 1500.5, average: 300.1, count: 5 });
+    expect(result.get('Not set')?.count).toBe(1);
+    const sql = normalizeSql(mocks.chQuery.mock.calls[2]![0]);
+    expect(sql).toContain('mv_events AS (');
+    expect(sql).toContain('completed AS ( SELECT profile_id, step_3_ts AS last_step_ts FROM chain WHERE step_3_ts != toDateTime64(0, 3) )');
+    expect(sql).toContain(`JOIN ${mocks.tables.events} e ON e.profile_id = c.profile_id`);
+    expect(sql).toContain("e.name IN ('Server: Purchase')");
+    expect(sql).toContain("e.created_at = c.last_step_ts AND (e.name = 'Server: Purchase')");
+    expect(sql).toContain('LEFT JOIN timing_bd bd ON pv.profile_id = bd.profile_id GROUP BY bd.b_0');
+    expect(sql).toContain(`${traitDescriptor.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value`);
+    // The raw ladder must be gone.
+    expect(sql).not.toContain('step_2 AS (');
+    expect(sql).not.toContain('prop_bd');
+  });
+
+  it('keeps the raw ladder when a step carries an event-property filter', async () => {
+    const service = new FunnelService({} as any);
+    coverage();
+    mocks.chQuery.mockResolvedValueOnce([{ total_sum: 1, property_average: 1, property_count: 1 }]);
+    const filtered = steps.map((s, i) =>
+      i === 1
+        ? { ...s, filters: [{ id: 'x', name: 'properties.source', operator: 'is' as const, value: ['onboarding'] }] }
+        : s,
+    );
+    await service.getFunnelPropertyStats({
+      ...base,
+      stepConditions: service.getFunnelConditions(filtered, 'regain-app'),
+      eventSeries: filtered,
+    });
+    // Eligibility rejected before any coverage read; the single call is the ladder.
+    const sql = normalizeSql(mocks.chQuery.mock.calls[0]![0]);
+    expect(sql).toContain('step_2 AS (');
+    expect(sql).toContain('prop_vals AS (');
+    expect(sql).not.toContain('mv_events');
+  });
+
+  it('keeps the raw ladder when eventSeries is not supplied', async () => {
+    const service = new FunnelService({} as any);
+    mocks.chQuery.mockResolvedValueOnce([{ total_sum: 0, property_average: 0, property_count: 0 }]);
+    await service.getFunnelPropertyStats({
+      ...base,
+      stepConditions: service.getFunnelConditions(steps, 'regain-app'),
+    });
+    expect(normalizeSql(mocks.chQuery.mock.calls[0]![0])).toContain('step_2 AS (');
   });
 });

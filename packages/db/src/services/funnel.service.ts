@@ -34,6 +34,13 @@ export const EMPTY_BREAKDOWN_LABEL = 'Not set';
  * any closed range with a multi-day window (invisible on ranges that end
  * today, which is why the byte-identical comparisons never caught it).
  */
+//
+// The LOWER bound is `toDate(start) - 1` for the mirror-image reason: `day` is
+// the event's calendar day in the SERVER timezone (UTC), while `start` is a
+// wall-clock instant in the project timezone. For Asia/Calcutta the first
+// 5h30 of the range's first day live on the previous UTC day, and a
+// pre-filter starting at `toDate(start)` silently dropped them — measured
+// 226,514 vs 226,194 step-1 users on a 30-day unfiltered funnel.
 export function mvDayRangeTail(funnelWindowSeconds: number): number {
   return Math.ceil(Math.max(0, funnelWindowSeconds) / 86_400) + 1;
 }
@@ -654,7 +661,7 @@ export class FunnelService {
         FROM ${TABLE_NAMES.event_profile_firsts}
         WHERE project_id = ${escapedProject}
           AND name IN (${escapedNames})
-          AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
+          AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
           AND min_created_at_identified > toDateTime64('1970-01-02', 3)
       )${hasTraitJoins ? ' AS mv' : ''}
       ${traitJoins}
@@ -1805,7 +1812,19 @@ export class FunnelService {
    * condition, so one event can satisfy several steps (custom events
    * whose components overlap) exactly as the ladder allowed.
    */
-  private async getFunnelTimingStatsFromMv({
+  /**
+   * Shared MV-side skeleton for the per-profile step chain: `mv_events`
+   * (the (min,max)-per-day timestamp stream), `step_1` (anchored to the
+   * report range), `per_profile` (sorted (ts, stepMask) array per step-1
+   * entrant), and `chain` (step_k_ts walked with arrayFirst; ZERO_TS means
+   * "did not reach"). Timing stats and property stats both consume it, so
+   * the two can never disagree about who converted and when.
+   *
+   * Optional `breakdowns` adds a `timing_bd` CTE with the same argMaxIf /
+   * GROUP BY semantics as the raw path's breakdown CTE, plus any trait CTEs
+   * it needs (returned first so they precede their references).
+   */
+  private buildMvFunnelChainCtes({
     projectId,
     startDate,
     endDate,
@@ -1815,7 +1834,6 @@ export class FunnelService {
     breakdowns = [],
     breakdownStep,
     traitDescriptors = new Map<string, TraitBreakdown>(),
-    timezone,
   }: {
     projectId: string;
     startDate: string;
@@ -1823,20 +1841,10 @@ export class FunnelService {
     stepConditions: string[];
     funnelWindowSeconds: number;
     allEventNames: string[];
-    /**
-     * Same contract as getFunnelTimingStats: with breakdowns the result is
-     * keyed by the normalized breakdown values joined with `|`, otherwise by
-     * `'none'`. Previously the MV path always returned `'none'`, so every
-     * breakdown series on an MV-eligible funnel lost its time-to-convert.
-     */
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     traitDescriptors?: Map<string, TraitBreakdown>;
-    timezone: string;
-  }): Promise<Map<string, Record<string, number | null>>> {
-    const result = new Map<string, Record<string, number | null>>();
-    if (stepConditions.length < 2) return result;
-
+  }): { ctes: string[]; hasBreakdowns: boolean; zeroTs: string } {
     const nameList = allEventNames
       .map((n) => sqlstring.escape(n))
       .join(', ');
@@ -1852,19 +1860,73 @@ export class FunnelService {
     const toMvCondition = (cond: string) =>
       cond.replace(/\bcreated_at\b/g, 'ts');
 
-    // Base CTE: unpack (min, max) as ts stream — same as buildFunnelCteFromMv.
     const mvEventsCte = `mv_events AS (
       SELECT project_id, name, profile_id, app_version, country,
         arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
       FROM ${TABLE_NAMES.event_profile_firsts}
       WHERE project_id = ${escapedProject}
         AND name IN (${nameList})
-        AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
+        AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
         AND min_created_at_identified > toDateTime64('1970-01-02', 3)
     )`;
 
+    // Step 1: anchored to [startDate, endDate].
+    const step1Cte = `step_1 AS (
+      SELECT profile_id, min(ts) as step_1_ts
+      FROM mv_events
+      WHERE ts >= toDateTime64(${escapedStart}, 3)
+        AND ts <= toDateTime64(${escapedEnd}, 3)
+        AND (${toMvCondition(stepConditions[0]!)})
+      GROUP BY profile_id
+    )`;
+
+    // Steps 2..N as a bitmask per event. Bit i ↔ step i+1.
+    const maskExpr = stepConditions
+      .slice(1)
+      .map((cond, idx) => `toUInt64(${toMvCondition(cond)}) * ${1 << (idx + 1)}`)
+      .join(' + ');
+
+    // Only step-1 entrants' events are folded; drop events that cannot
+    // participate (no step bit, at/before step 1, outside the window).
+    const perProfileCte = `per_profile AS (
+      SELECT s1.profile_id AS profile_id,
+        any(s1.step_1_ts) AS step_1_ts,
+        arraySort(x -> x.1, groupArrayIf(
+          (e.ts, e.mask),
+          e.mask != 0
+            AND e.ts > s1.step_1_ts
+            AND dateDiff('second', s1.step_1_ts, e.ts) <= ${funnelWindowSeconds}
+        )) AS arr
+      FROM (
+        SELECT profile_id, ts, ${maskExpr || '0'} AS mask
+        FROM mv_events
+        WHERE profile_id IN (SELECT profile_id FROM step_1)
+      ) e
+      JOIN step_1 s1 ON e.profile_id = s1.profile_id
+      GROUP BY s1.profile_id
+    )`;
+
+    // Walk the chain: step_k_ts = first event with bit k-1 set strictly
+    // after step_{k-1}_ts; ZERO_TS (arrayFirst's default) means "did not
+    // reach", and short-circuits every later step.
+    const chainSelects: string[] = [];
+    for (let i = 1; i < stepConditions.length; i++) {
+      const prevTs = i === 1 ? 'step_1_ts' : `step_${i}_ts`;
+      const bit = 1 << i;
+      const first = `arrayFirst(x -> bitAnd(x.2, ${bit}) != 0 AND x.1 > ${prevTs}, arr).1`;
+      chainSelects.push(
+        i === 1
+          ? `${first} AS step_2_ts`
+          : `if(${prevTs} = ${ZERO_TS}, ${ZERO_TS}, ${first}) AS step_${i + 1}_ts`,
+      );
+    }
+    const chainCte = `chain AS (
+      SELECT profile_id, step_1_ts${chainSelects.length ? `,\n        ${chainSelects.join(',\n        ')}` : ''}
+      FROM per_profile
+    )`;
+
     // Breakdown values per step-1 entrant, mirroring the raw path's
-    // `timing_bd` CTE (same argMaxIf-on-breakdown-step semantics, same
+    // breakdown CTE (same argMaxIf-on-breakdown-step semantics, same
     // trait CTE join, same known limitation when breakdownStep is unset).
     const hasBreakdowns = breakdowns.length > 0;
     const traitCteSqls = Array.from(traitDescriptors.values()).map(
@@ -1912,68 +1974,80 @@ export class FunnelService {
       )`;
     }
 
-    // Step 1: anchored to [startDate, endDate].
-    const step1Cte = `step_1 AS (
-      SELECT profile_id, min(ts) as step_1_ts
-      FROM mv_events
-      WHERE ts >= toDateTime64(${escapedStart}, 3)
-        AND ts <= toDateTime64(${escapedEnd}, 3)
-        AND (${toMvCondition(stepConditions[0]!)})
-      GROUP BY profile_id
-    )`;
+    return {
+      ctes: [
+        ...traitCteSqls,
+        mvEventsCte,
+        step1Cte,
+        perProfileCte,
+        chainCte,
+        timingBdCte,
+      ].filter(Boolean),
+      hasBreakdowns,
+      zeroTs: ZERO_TS,
+    };
+  }
 
-    // Steps 2..N as a bitmask per event. Bit i ↔ step i+1.
-    const maskExpr = stepConditions
-      .slice(1)
-      .map((cond, idx) => `toUInt64(${toMvCondition(cond)}) * ${1 << (idx + 1)}`)
-      .join(' + ');
+  /**
+   * MV-backed drop-in for getFunnelTimingStats, sourced from
+   * `event_profile_firsts_local` via an mv_events CTE that unpacks each
+   * profile/day (min, max) pair into a timestamp stream. Only reachable
+   * when isMvEligibleFunnel() has already accepted the funnel.
+   *
+   * Single pass over mv_events (see buildMvFunnelChainCtes) instead of the
+   * chained step_N JOIN ladder the raw path uses — measured 1.5-2.8 s vs
+   * 81-178 s on regain-app.
+   */
+  private async getFunnelTimingStatsFromMv({
+    projectId,
+    startDate,
+    endDate,
+    stepConditions,
+    funnelWindowSeconds,
+    allEventNames,
+    breakdowns = [],
+    breakdownStep,
+    traitDescriptors = new Map<string, TraitBreakdown>(),
+    timezone,
+  }: {
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    stepConditions: string[];
+    funnelWindowSeconds: number;
+    allEventNames: string[];
+    /**
+     * Same contract as getFunnelTimingStats: with breakdowns the result is
+     * keyed by the normalized breakdown values joined with `|`, otherwise by
+     * `'none'`. Previously the MV path always returned `'none'`, so every
+     * breakdown series on an MV-eligible funnel lost its time-to-convert.
+     */
+    breakdowns?: { name: string }[];
+    breakdownStep?: number;
+    traitDescriptors?: Map<string, TraitBreakdown>;
+    timezone: string;
+  }): Promise<Map<string, Record<string, number | null>>> {
+    const result = new Map<string, Record<string, number | null>>();
+    if (stepConditions.length < 2) return result;
 
-    // Only step-1 entrants' events are folded; drop events that cannot
-    // participate (no step bit, at/before step 1, outside the window).
-    const perProfileCte = `per_profile AS (
-      SELECT s1.profile_id AS profile_id,
-        any(s1.step_1_ts) AS step_1_ts,
-        arraySort(x -> x.1, groupArrayIf(
-          (e.ts, e.mask),
-          e.mask != 0
-            AND e.ts > s1.step_1_ts
-            AND dateDiff('second', s1.step_1_ts, e.ts) <= ${funnelWindowSeconds}
-        )) AS arr
-      FROM (
-        SELECT profile_id, ts, ${maskExpr} AS mask
-        FROM mv_events
-        WHERE profile_id IN (SELECT profile_id FROM step_1)
-      ) e
-      JOIN step_1 s1 ON e.profile_id = s1.profile_id
-      GROUP BY s1.profile_id
-    )`;
-
-    // Walk the chain: step_k_ts = first event with bit k-1 set strictly
-    // after step_{k-1}_ts; ZERO_TS (arrayFirst's default) means "did not
-    // reach", and short-circuits every later step.
-    const chainSelects: string[] = [];
-    for (let i = 1; i < stepConditions.length; i++) {
-      const prevTs = i === 1 ? 'step_1_ts' : `step_${i}_ts`;
-      const bit = 1 << i;
-      const first = `arrayFirst(x -> bitAnd(x.2, ${bit}) != 0 AND x.1 > ${prevTs}, arr).1`;
-      chainSelects.push(
-        i === 1
-          ? `${first} AS step_2_ts`
-          : `if(${prevTs} = ${ZERO_TS}, ${ZERO_TS}, ${first}) AS step_${i + 1}_ts`,
-      );
-    }
-    const chainCte = `chain AS (
-      SELECT profile_id, step_1_ts,
-        ${chainSelects.join(',\n        ')}
-      FROM per_profile
-    )`;
+    const { ctes, hasBreakdowns, zeroTs } = this.buildMvFunnelChainCtes({
+      projectId,
+      startDate,
+      endDate,
+      stepConditions,
+      funnelWindowSeconds,
+      allEventNames,
+      breakdowns,
+      breakdownStep,
+      traitDescriptors,
+    });
 
     // Final aggregation — quantileTDigestIf medians (same as raw path).
     const medianSelects: string[] = [];
     for (let i = 1; i < stepConditions.length; i++) {
       const tsCol = `step_${i + 1}_ts`;
       medianSelects.push(
-        `quantileTDigestIf(0.5)(dateDiff('second', step_1_ts, ${tsCol}), ${tsCol} != ${ZERO_TS}) as step_${i}_median`,
+        `quantileTDigestIf(0.5)(dateDiff('second', step_1_ts, ${tsCol}), ${tsCol} != ${zeroTs}) as step_${i}_median`,
       );
     }
 
@@ -1988,16 +2062,7 @@ export class FunnelService {
       : '';
 
     const sql = `
-      WITH ${[
-        ...traitCteSqls,
-        mvEventsCte,
-        step1Cte,
-        perProfileCte,
-        chainCte,
-        timingBdCte,
-      ]
-        .filter(Boolean)
-        .join(',\n')}
+      WITH ${ctes.join(',\n')}
       SELECT ${bdSelectsInFinal}
         ${medianSelects.join(',\n')}
       FROM chain
@@ -2016,6 +2081,142 @@ export class FunnelService {
           .map((_, i) => normalizeBreakdownValue(row[`b_${i}`]))
           .join('|');
         result.set(key, row);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * MV-backed drop-in for getFunnelPropertyStats. The step chain comes from
+   * buildMvFunnelChainCtes (so "who converted and when" is the same answer
+   * the timing stats give); only the property value itself is read from the
+   * raw events table, and only for converters at the LAST step's event
+   * name(s) and exact timestamp. That replaces N chained joins over every
+   * step event in the window with one name-pruned lookup — on regain-app
+   * "Server: Purchase" is ~18K user-days a month against 800K+ paywall views.
+   */
+  private async getFunnelPropertyStatsFromMv({
+    projectId,
+    startDate,
+    endDate,
+    stepConditions,
+    funnelWindowSeconds,
+    allEventNames,
+    lastStepEventNames,
+    propertyKey,
+    breakdowns = [],
+    breakdownStep,
+    traitDescriptors = new Map<string, TraitBreakdown>(),
+    timezone,
+  }: {
+    projectId: string;
+    startDate: string;
+    endDate: string;
+    stepConditions: string[];
+    funnelWindowSeconds: number;
+    allEventNames: string[];
+    lastStepEventNames: string[];
+    propertyKey: string;
+    breakdowns?: { name: string }[];
+    breakdownStep?: number;
+    traitDescriptors?: Map<string, TraitBreakdown>;
+    timezone: string;
+  }): Promise<Map<string, { sum: number; average: number; count: number }>> {
+    const result = new Map<
+      string,
+      { sum: number; average: number; count: number }
+    >();
+    if (stepConditions.length < 1) return result;
+
+    const { ctes, hasBreakdowns, zeroTs } = this.buildMvFunnelChainCtes({
+      projectId,
+      startDate,
+      endDate,
+      stepConditions,
+      funnelWindowSeconds,
+      allEventNames,
+      breakdowns,
+      breakdownStep,
+      traitDescriptors,
+    });
+
+    const escapedProject = sqlstring.escape(projectId);
+    const escapedStart = sqlstring.escape(startDate);
+    const escapedEnd = sqlstring.escape(endDate);
+    const lastStepIdx = stepConditions.length;
+    const lastStepTs = lastStepIdx === 1 ? 'step_1_ts' : `step_${lastStepIdx}_ts`;
+    const lastNames = lastStepEventNames
+      .map((n) => sqlstring.escape(n))
+      .join(', ');
+    // Qualified so a trait filter's bare `profile_id` on the last step
+    // resolves to the event row rather than the `completed` CTE.
+    const lastStepCondition = qualifyFunnelCondition(
+      stepConditions[stepConditions.length - 1]!,
+      'e',
+    );
+    const propExpr = getSelectPropertyKey(propertyKey);
+
+    const completedCte = `completed AS (
+      SELECT profile_id, ${lastStepTs} AS last_step_ts
+      FROM chain
+      WHERE ${lastStepTs} != ${zeroTs}
+    )`;
+    // Same anyIf shape as the raw path: the value at exactly the last-step
+    // timestamp, NULL (and therefore not counted) if the event carries none.
+    const propValsCte = `prop_vals AS (
+      SELECT c.profile_id AS profile_id,
+        anyIf(
+          toFloat64OrNull(toString(e.${propExpr})),
+          e.created_at = c.last_step_ts AND (${lastStepCondition})
+        ) AS prop_value
+      FROM completed c
+      JOIN ${TABLE_NAMES.events} e ON e.profile_id = c.profile_id
+      WHERE e.project_id = ${escapedProject}
+        AND e.name IN (${lastNames})
+        AND e.created_at BETWEEN toDateTime(${escapedStart}) AND addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})
+        AND e.profile_id != e.device_id
+      GROUP BY c.profile_id
+    )`;
+
+    const bdSelectsInFinal = hasBreakdowns
+      ? `${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')},`
+      : '';
+    const bdJoinInFinal = hasBreakdowns
+      ? 'LEFT JOIN timing_bd bd ON pv.profile_id = bd.profile_id'
+      : '';
+    const bdGroupByInFinal = hasBreakdowns
+      ? `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`
+      : '';
+
+    const sql = `
+      WITH ${[...ctes, completedCte, propValsCte].join(',\n')}
+      SELECT
+        ${bdSelectsInFinal}
+        sum(pv.prop_value) as total_sum,
+        avg(pv.prop_value) as property_average,
+        count(pv.prop_value) as property_count
+      FROM prop_vals pv
+      ${bdJoinInFinal}
+      ${bdGroupByInFinal}
+    `;
+
+    const rows = await chQuery<Record<string, any>>(sql, {
+      session_timezone: timezone,
+    });
+    const toStats = (row: Record<string, any> | undefined) => ({
+      sum: typeof row?.total_sum === 'number' ? row.total_sum : 0,
+      average:
+        typeof row?.property_average === 'number' ? row.property_average : 0,
+      count: typeof row?.property_count === 'number' ? row.property_count : 0,
+    });
+    if (!hasBreakdowns) {
+      result.set('none', toStats(rows[0]));
+    } else {
+      for (const row of rows) {
+        const key = breakdowns
+          .map((_, i) => normalizeBreakdownValue(row[`b_${i}`]))
+          .join('|');
+        result.set(key, toStats(row));
       }
     }
     return result;
@@ -2093,6 +2294,7 @@ export class FunnelService {
     breakdownStep,
     timezone,
     cohortPredicate = null,
+    eventSeries,
   }: {
     projectId: string;
     startDate: string;
@@ -2105,6 +2307,12 @@ export class FunnelService {
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     timezone: string;
+    /**
+     * The resolved steps. When given, the MV fast path is used under exactly
+     * the same eligibility rules as the funnel itself (isMvEligibleFunnel),
+     * so a funnel_metric never takes a different route than its funnel.
+     */
+    eventSeries?: ResolvedFunnelStep[];
     /**
      * Compiled cohort restriction for the report, already resolved at the
      * canonical membership instant. Without it these aggregates would be
@@ -2119,6 +2327,54 @@ export class FunnelService {
     >();
     if (stepConditions.length < 1) {
       return result;
+    }
+
+    if (eventSeries && eventSeries.length === stepConditions.length) {
+      const profileFilters = this.getProfileFilters(eventSeries).filter(
+        (f) => getTraitBreakdownDescriptor(`profile.${f}`) === null,
+      );
+      const traitDescriptors = new Map<string, TraitBreakdown>();
+      for (const b of breakdowns) {
+        const desc = getTraitBreakdownDescriptor(b.name);
+        if (desc && !traitDescriptors.has(desc.key)) {
+          traitDescriptors.set(desc.key, desc);
+        }
+      }
+      const useMv = await this.isMvEligibleFunnel({
+        hasCohortRestriction: Boolean(cohortPredicate),
+        eventSeries,
+        breakdowns,
+        groupBy,
+        anyFilterOnProfile: profileFilters.length > 0,
+        anyBreakdownOnProfile: breakdowns.some(
+          (b) =>
+            b.name.startsWith('profile.') &&
+            getTraitBreakdownDescriptor(b.name) === null,
+        ),
+        projectId,
+        traitDescriptors,
+        startDate,
+      });
+      if (useMv) {
+        const lastStep = eventSeries[eventSeries.length - 1]!;
+        const lastStepEventNames = lastStep.customEventComponents
+          ? lastStep.customEventComponents.map((c) => c.eventName)
+          : [lastStep.name];
+        return this.getFunnelPropertyStatsFromMv({
+          projectId,
+          startDate,
+          endDate,
+          stepConditions,
+          funnelWindowSeconds,
+          allEventNames,
+          lastStepEventNames,
+          propertyKey,
+          breakdowns,
+          breakdownStep,
+          traitDescriptors,
+          timezone,
+        });
+      }
     }
 
     const entityKey = groupBy;
