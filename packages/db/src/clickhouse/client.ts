@@ -182,9 +182,58 @@ export async function withRetry<T>(
   throw lastError;
 }
 
+/**
+ * Bounded concurrency for read queries.
+ *
+ * A dashboard open fires every widget's query at once — 30-40 funnels and
+ * retention grids against an 8-core ClickHouse node. Each query is planned
+ * with max_threads = cores, so they oversubscribe the CPU together and ALL
+ * take 20-40 s, while the same set run six at a time finishes in the same
+ * total wall-clock with individual latencies back at their 1-5 s cost. It also
+ * bounds peak memory: N concurrent × 6 GiB per-query limit must stay under the
+ * server's ~29 GiB, which 34-way concurrency does not.
+ *
+ * OP_CH_MAX_CONCURRENT_QUERIES=0 (default) leaves it unbounded. Inserts and
+ * commands are never queued.
+ */
+class QuerySemaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.limit <= 0) return fn();
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    this.active += 1;
+    try {
+      return await fn();
+    } finally {
+      this.active -= 1;
+      const next = this.waiters.shift();
+      if (next) next();
+    }
+  }
+
+  get pending() {
+    return this.waiters.length;
+  }
+}
+
+export const querySemaphore = new QuerySemaphore(
+  Number(process.env.OP_CH_MAX_CONCURRENT_QUERIES) || 0,
+);
+
 export const ch = new Proxy(originalCh, {
   get(target, property, receiver) {
     const value = Reflect.get(target, property, receiver);
+
+    if (property === 'query') {
+      return (...args: any[]) =>
+        querySemaphore.run(() => withRetry(() => value.apply(target, args)));
+    }
 
     if (property === 'insert') {
       return (...args: any[]) =>
