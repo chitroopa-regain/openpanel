@@ -61,6 +61,10 @@ export const TABLE_NAMES = {
   // the (min, max) approximation for funnels once backfilled. See
   // packages/db/scripts/mv/README.md.
   event_profile_ts: 'event_profile_ts_local',
+  // Picker-backing key views (packages/db/scripts/mv/picker_keys.sql).
+  event_property_keys: 'event_property_keys_local',
+  profile_trait_keys: 'profile_trait_keys_local',
+  profile_trait_values: 'profile_trait_values_local',
   sessions: 'sessions',
   events_imports: 'events_imports',
   session_replay_chunks: 'session_replay_chunks',

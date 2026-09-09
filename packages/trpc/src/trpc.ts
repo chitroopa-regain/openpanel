@@ -424,6 +424,31 @@ export const cacheMiddleware = (
           marker: middlewareMarker,
         };
       }
+      // Stale array: serve it NOW and refresh in the background under the
+      // same single-flight lock the forced path uses. Recomputing inline
+      // here was the periodic stall in every picker — the first open after
+      // the freshness window paid the full list query while the user
+      // waited. The next open gets the refreshed list.
+      const lockKey = `${key}:lock`;
+      getRedisCache()
+        .set(lockKey, '1', 'EX', 30, 'NX')
+        .then(async (gotLock) => {
+          if (!gotLock) return;
+          try {
+            await computeAndStore();
+          } finally {
+            getRedisCache()
+              .del(lockKey)
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+      return {
+        ok: true,
+        data: attachCacheMeta(env.d, env.t, true),
+        ctx,
+        marker: middlewareMarker,
+      };
     }
 
     // Cold cache: compute, store, return fresh.

@@ -59,10 +59,13 @@ export function ReportBreakdowns() {
     chartType !== 'sankey' &&
     chartType !== 'conversion';
 
+  // Which series the property picker lists keys for. Funnels scope to the
+  // breakdown step; everything else scopes to the first series. Leaving it
+  // unscoped (the old behaviour for pie / bar / line / metric) asked the
+  // server for the keys of EVERY event in the project — a 77-129 s query on
+  // regain-app that the picker showed as an empty list.
   let scopedBreakdownSource: IChartEventItem | undefined;
-  if (chartType === 'retention') {
-    scopedBreakdownSource = series[0];
-  } else if (
+  if (
     (chartType === 'funnel' || chartType === 'funnel_metric') &&
     options?.type === 'funnel' &&
     options.breakdownStep !== undefined &&
@@ -70,6 +73,10 @@ export function ReportBreakdowns() {
     options.breakdownStep < series.length
   ) {
     scopedBreakdownSource = series[options.breakdownStep];
+  } else {
+    scopedBreakdownSource = series.find(
+      (serie) => serie.type === 'event' || serie.type === 'custom_event',
+    );
   }
 
   const scopedBreakdownProps = getScopedBreakdownProps(scopedBreakdownSource);

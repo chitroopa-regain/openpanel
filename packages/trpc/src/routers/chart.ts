@@ -594,29 +594,46 @@ export const chartRouter = createTRPCRouter({
     .query(async ({ input: { projectId, event, customEventId, mode } }) => {
       const scopes = getChartPropertiesQueryScopes(mode);
       const profileProperties: string[] = [];
+      // The picker "keys" views (packages/db/scripts/mv/picker_keys.sql) hold
+      // only distinct keys, so a picker open is a primary-key-prefix read of a
+      // few thousand rows. Before them, listing event keys grouped the
+      // 4.9B-row values view (77-129 s unfiltered, 8-18 s per event) and
+      // listing profile keys scanned 10K profile JSON blobs plus a DISTINCT
+      // over 522M trait rows hidden behind a 1 h cache — which is also why a
+      // new trait took up to an hour to appear.
+      const usePickerViews = process.env.OP_PICKER_VIEWS_DISABLED !== '1';
 
       if (scopes.profileProperties) {
-        const profiles = await clix(ch, 'UTC')
-          .select<Pick<IServiceProfile, 'properties'>>(['properties'])
-          .from(TABLE_NAMES.profiles)
-          .where('project_id', '=', projectId)
-          .where('is_external', '=', true)
-          .limit(10_000)
-          .execute();
+        if (usePickerViews) {
+          const traitKeys = await chQuery<{ key: string }>(
+            `SELECT key FROM ${TABLE_NAMES.profile_trait_keys} WHERE project_id = ${sqlstring.escape(projectId)} GROUP BY key ORDER BY length(key), key LIMIT 5000`,
+          );
+          profileProperties.push(
+            ...traitKeys.map((t) => `profile.properties.${t.key}`),
+          );
+        } else {
+          const profiles = await clix(ch, 'UTC')
+            .select<Pick<IServiceProfile, 'properties'>>(['properties'])
+            .from(TABLE_NAMES.profiles)
+            .where('project_id', '=', projectId)
+            .where('is_external', '=', true)
+            .limit(10_000)
+            .execute();
 
-        profileProperties.push(
-          ...new Set(
-            profiles.flatMap((p) =>
-              Object.keys(p.properties).map((k) => `profile.properties.${k}`)
+          profileProperties.push(
+            ...new Set(
+              profiles.flatMap((p) =>
+                Object.keys(p.properties).map((k) => `profile.properties.${k}`)
+              )
             )
-          )
-        );
+          );
 
-        // Also fetch trait keys from profile_traits table (cached)
-        const traitKeys = await getProfileTraitsKeysCached(projectId);
-        profileProperties.push(
-          ...traitKeys.map((key) => `profile.properties.${key}`)
-        );
+          // Also fetch trait keys from profile_traits table (cached)
+          const traitKeys = await getProfileTraitsKeysCached(projectId);
+          profileProperties.push(
+            ...traitKeys.map((key) => `profile.properties.${key}`)
+          );
+        }
       }
 
       // Resolve custom event to component event names for property filtering
@@ -640,9 +657,15 @@ export const chartRouter = createTRPCRouter({
         const query = clix(ch)
           .select<{ property_key: string; created_at: string }>([
             'distinct property_key',
-            'max(created_at) as created_at',
+            usePickerViews
+              ? 'max(last_seen) as created_at'
+              : 'max(created_at) as created_at',
           ])
-          .from(TABLE_NAMES.event_property_values_mv)
+          .from(
+            usePickerViews
+              ? TABLE_NAMES.event_property_keys
+              : TABLE_NAMES.event_property_values_mv,
+          )
           .where('project_id', '=', projectId)
           .groupBy(['property_key'])
           .orderBy('length(property_key)', 'ASC')
@@ -756,9 +779,19 @@ export const chartRouter = createTRPCRouter({
             .replace('profile.properties.', '')
             .split('.')[0];
           if (traitKey) {
-            const traitValues = await chQuery<{ value: string }>(
-              `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
-            );
+            // Distinct values ever written for the key, from the picker view
+            // (primary-key read) instead of argMax per profile over every row
+            // of the key. Includes values a profile has since moved away
+            // from; the filter itself still evaluates each profile's latest
+            // value, so offering a historical value is harmless.
+            const traitValues =
+              process.env.OP_PICKER_VIEWS_DISABLED === '1'
+                ? await chQuery<{ value: string }>(
+                    `SELECT DISTINCT val as value FROM (SELECT argMax(value, updated_at) as val FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id HAVING val != '') ORDER BY length(value), value LIMIT 1000`
+                  )
+                : await chQuery<{ value: string }>(
+                    `SELECT value FROM ${TABLE_NAMES.profile_trait_values} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY value ORDER BY length(value), value LIMIT 1000`
+                  );
             return {
               values: traitValues.map((t) => t.value),
             };
