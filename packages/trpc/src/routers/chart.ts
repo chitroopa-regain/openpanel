@@ -67,10 +67,12 @@ import sqlstring from 'sqlstring';
 import { z } from 'zod';
 import { getProjectAccess } from '../access';
 import { getReportFreshness } from '../cache-freshness';
+import { QuerySemaphore } from '@openpanel/db';
 import { TRPCAccessError } from '../errors';
 import {
   cacheMiddleware,
   createTRPCRouter,
+  middleware,
   protectedProcedure,
   publicProcedure,
 } from '../trpc';
@@ -196,6 +198,21 @@ function assertNoCohortBreakdown(
 }
 
 const cacher = cacheMiddleware(getReportFreshness);
+
+/**
+ * Bounded concurrency for the HEAVY report procedures only (funnel,
+ * conversion, sankey, chart, aggregate, cohort). Placed AFTER the cache
+ * middleware so a cache hit never takes a slot; only recomputes queue.
+ * Cheap procedures (event list, pickers, profiles) are deliberately not
+ * gated — queueing them behind funnels made a 150 ms list take 17.9 s.
+ * OP_CH_MAX_CONCURRENT_QUERIES=0 disables (prod runs 6 on an 8-core node).
+ */
+const heavyQueryLimiter = new QuerySemaphore(
+  Number(process.env.OP_CH_MAX_CONCURRENT_QUERIES) || 0,
+);
+const limitHeavy = middleware(({ next }) =>
+  heavyQueryLimiter.run(() => next()),
+);
 
 type FunnelPropertyStats = { sum: number; average: number; count: number };
 type FunnelSeriesLike = {
@@ -870,6 +887,7 @@ export const chartRouter = createTRPCRouter({
   funnel: chartProcedure
     .use(guardNoCohortBreakdown('funnel', { allowFilter: true, allowBreakdown: true }))
     .use(cacher)
+    .use(limitHeavy)
     .input(
       zReportInput.and(
         z.object({
@@ -1123,6 +1141,7 @@ export const chartRouter = createTRPCRouter({
   conversion: chartProcedure
     .use(guardNoCohortBreakdown('conversion'))
     .use(cacher)
+    .use(limitHeavy)
     .input(
       zReportInput.and(
         z.object({
@@ -1185,6 +1204,7 @@ export const chartRouter = createTRPCRouter({
   sankey: protectedProcedure
     .use(guardNoCohortBreakdown('sankey'))
     .use(cacher)
+    .use(limitHeavy)
     .input(zReportInput)
     .query(async ({ input }) => {
       const { timezone } = await getSettingsForProject(input.projectId);
@@ -1225,6 +1245,7 @@ export const chartRouter = createTRPCRouter({
 
   chart: chartProcedure
     .use(cacher)
+    .use(limitHeavy)
     .input(
       zReportInput.and(
         z.object({
@@ -1251,6 +1272,7 @@ export const chartRouter = createTRPCRouter({
 
   aggregate: chartProcedure
     .use(cacher)
+    .use(limitHeavy)
     .input(
       zReportInput.and(
         z.object({
@@ -1276,6 +1298,7 @@ export const chartRouter = createTRPCRouter({
   cohort: chartProcedure
     .use(guardNoCohortBreakdown('retention', { allowFilter: true, allowBreakdown: true }))
     .use(cacher)
+    .use(limitHeavy)
     .input(
       z.object({
         projectId: z.string(),

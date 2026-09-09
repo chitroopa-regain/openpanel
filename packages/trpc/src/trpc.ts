@@ -133,6 +133,7 @@ const enforceAccess = t.middleware(async ({ ctx, next, type, getRawInput }) => {
 });
 
 export const createTRPCRouter = t.router;
+export const middleware = t.middleware;
 
 const loggerMiddleware = t.middleware(
   async ({ ctx, next, getRawInput, path, input, type }) => {

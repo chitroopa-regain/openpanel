@@ -6,7 +6,7 @@ vi.mock('@openpanel/logger', () => ({
 
 describe('ClickHouse query semaphore', () => {
   it('never runs more than the configured number of queries at once', async () => {
-    process.env.OP_CH_MAX_CONCURRENT_QUERIES = '2';
+    process.env.OP_CH_CLIENT_MAX_CONCURRENT_QUERIES = '2';
     vi.resetModules();
     const { querySemaphore } = await import('./client');
     let active = 0;
@@ -26,7 +26,7 @@ describe('ClickHouse query semaphore', () => {
   });
 
   it('releases the slot when the query throws', async () => {
-    process.env.OP_CH_MAX_CONCURRENT_QUERIES = '1';
+    process.env.OP_CH_CLIENT_MAX_CONCURRENT_QUERIES = '1';
     vi.resetModules();
     const { querySemaphore } = await import('./client');
     await expect(
@@ -38,7 +38,7 @@ describe('ClickHouse query semaphore', () => {
   });
 
   it('is a pass-through when unset', async () => {
-    delete process.env.OP_CH_MAX_CONCURRENT_QUERIES;
+    delete process.env.OP_CH_CLIENT_MAX_CONCURRENT_QUERIES;
     vi.resetModules();
     const { querySemaphore } = await import('./client');
     let active = 0;

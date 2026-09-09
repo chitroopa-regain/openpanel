@@ -187,20 +187,21 @@ export async function withRetry<T>(
 }
 
 /**
- * Bounded concurrency for read queries.
+ * Bounded concurrency helper.
  *
- * A dashboard open fires every widget's query at once — 30-40 funnels and
- * retention grids against an 8-core ClickHouse node. Each query is planned
- * with max_threads = cores, so they oversubscribe the CPU together and ALL
- * take 20-40 s, while the same set run six at a time finishes in the same
- * total wall-clock with individual latencies back at their 1-5 s cost. It also
- * bounds peak memory: N concurrent × 6 GiB per-query limit must stay under the
- * server's ~29 GiB, which 34-way concurrency does not.
+ * The REPORT procedures (funnel, retention, chart, …) are gated with this in
+ * packages/trpc — see `heavyQueryLimiter` — so a dashboard open that fires
+ * 30-40 heavy queries at an 8-core ClickHouse node runs them a few at a time
+ * instead of oversubscribing the CPU (where they ALL took 20-40 s) and it
+ * bounds peak memory (N × 6 GiB per-query limit vs the ~29 GiB server cap).
  *
- * OP_CH_MAX_CONCURRENT_QUERIES=0 (default) leaves it unbounded. Inserts and
- * commands are never queued.
+ * The client-level gate below is OFF by default (OP_CH_CLIENT_MAX_CONCURRENT_
+ * QUERIES). Gating every query at the client made cheap ones — the event
+ * list, pickers — wait behind queued funnels (measured 17.9 s for a list that
+ * takes 150 ms), which is exactly the wrong trade. Inserts and commands are
+ * never queued either way.
  */
-class QuerySemaphore {
+export class QuerySemaphore {
   private active = 0;
   private readonly waiters: Array<() => void> = [];
 
@@ -227,7 +228,7 @@ class QuerySemaphore {
 }
 
 export const querySemaphore = new QuerySemaphore(
-  Number(process.env.OP_CH_MAX_CONCURRENT_QUERIES) || 0,
+  Number(process.env.OP_CH_CLIENT_MAX_CONCURRENT_QUERIES) || 0,
 );
 
 export const ch = new Proxy(originalCh, {
