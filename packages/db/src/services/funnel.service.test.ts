@@ -32,6 +32,7 @@ vi.mock('../clickhouse/client', () => ({
     event_property_values_mv: 'event_property_values_mv',
     cohort_events_mv: 'cohort_events_mv',
     event_profile_firsts: 'event_profile_firsts_local',
+    event_profile_ts: 'event_profile_ts_local',
     sessions: 'sessions',
     events_imports: 'events_imports',
     session_replay_chunks: 'session_replay_chunks',
@@ -2282,6 +2283,7 @@ describe('FunnelService.getFunnelPropertyStats MV path', () => {
     expect(sql).toContain(`JOIN ${mocks.tables.events} e ON e.profile_id = c.profile_id`);
     expect(sql).toContain("e.name IN ('Server: Purchase')");
     expect(sql).toContain("e.created_at = c.last_step_ts AND (e.name = 'Server: Purchase')");
+    expect(sql).toContain('e.profile_id IN (SELECT profile_id FROM completed)');
     expect(sql).toContain('LEFT JOIN timing_bd bd ON pv.profile_id = bd.profile_id GROUP BY bd.b_0');
     expect(sql).toContain(`${traitDescriptor.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value`);
     // The raw ladder must be gone.

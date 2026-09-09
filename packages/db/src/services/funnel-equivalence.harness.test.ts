@@ -66,6 +66,7 @@ vi.mock('../clickhouse/client', () => {
       event_property_values_mv: 'event_property_values_mv',
       cohort_events_mv: 'cohort_events_mv',
       event_profile_firsts: 'event_profile_firsts_local',
+    event_profile_ts: 'event_profile_ts_local',
       sessions: 'sessions',
       events_imports: 'events_imports',
       session_replay_chunks: 'session_replay_chunks',

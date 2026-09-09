@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -44,8 +45,11 @@ def ch(sql: str, tz: str, threads: int) -> list:
     req = urllib.request.Request(url, data=body.encode(), method="POST")
     req.add_header("X-ClickHouse-User", os.environ.get("CH_USER", "default"))
     req.add_header("X-ClickHouse-Key", os.environ.get("CH_PASSWORD", ""))
-    with urllib.request.urlopen(req, timeout=650) as resp:
-        payload = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=650) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as e:  # surface ClickHouse's message, not just the status
+        raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:600]}") from None
     return payload["data"], [m["name"] for m in payload.get("meta", [])]
 
 

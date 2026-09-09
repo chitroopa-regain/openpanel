@@ -57,6 +57,10 @@ export const TABLE_NAMES = {
   event_property_values_mv: 'event_property_values_mv',
   cohort_events_mv: 'cohort_events_mv',
   event_profile_firsts: 'event_profile_firsts_local',
+  // Exact per-day identified timestamps (Array) at the same grain — replaces
+  // the (min, max) approximation for funnels once backfilled. See
+  // packages/db/scripts/mv/README.md.
+  event_profile_ts: 'event_profile_ts_local',
   sessions: 'sessions',
   events_imports: 'events_imports',
   session_replay_chunks: 'session_replay_chunks',

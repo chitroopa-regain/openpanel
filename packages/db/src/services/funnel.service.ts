@@ -41,6 +41,43 @@ export const EMPTY_BREAKDOWN_LABEL = 'Not set';
 // 5h30 of the range's first day live on the previous UTC day, and a
 // pre-filter starting at `toDate(start)` silently dropped them — measured
 // 226,514 vs 226,194 step-1 users on a 30-day unfiltered funnel.
+/**
+ * Which pre-aggregated table feeds the funnel fast path, and how one row of
+ * it unpacks into the timestamp stream the windowFunnel / chain read.
+ *
+ * - `firsts`: event_profile_firsts_local, (min, max) identified timestamp per
+ *   profile/name/day/app_version/country. An APPROXIMATION: a repeated middle
+ *   step can hide the occurrence that bridges the funnel, and timing medians
+ *   shift on high-repeat steps.
+ * - `ts`: event_profile_ts_local, EVERY identified timestamp at the same
+ *   grain. Exact for windowFunnel and for the timing chain. Duplicate
+ *   timestamps (the source table is ReplacingMergeTree, so an event can be
+ *   inserted twice before its merge) are collapsed with arrayDistinct.
+ */
+export type MvSource = {
+  kind: 'firsts' | 'ts';
+  table: string;
+  /** SELECT expression producing one `ts` per event occurrence. */
+  tsSelect: string;
+  /** Row predicate: keep only rows that carry identified timestamps. */
+  rowFilter: string;
+};
+
+export const MV_SOURCE_FIRSTS: MvSource = {
+  kind: 'firsts',
+  table: TABLE_NAMES.event_profile_firsts,
+  tsSelect:
+    'arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts',
+  rowFilter: "min_created_at_identified > toDateTime64('1970-01-02', 3)",
+};
+
+export const MV_SOURCE_TS: MvSource = {
+  kind: 'ts',
+  table: TABLE_NAMES.event_profile_ts,
+  tsSelect: 'arrayJoin(arrayDistinct(ts_identified)) AS ts',
+  rowFilter: 'notEmpty(ts_identified)',
+};
+
 export function mvDayRangeTail(funnelWindowSeconds: number): number {
   return Math.ceil(Math.max(0, funnelWindowSeconds) / 86_400) + 1;
 }
@@ -338,7 +375,21 @@ export class FunnelService {
    * of ±few users (see scratchpad/mv_baseline.md). Latency drops from
    * ~45s to ~1s on the reference 30-day install→engagement funnel.
    */
-  async isMvEligibleFunnel(params: {
+  async isMvEligibleFunnel(
+    params: Parameters<FunnelService['resolveMvSource']>[0],
+  ): Promise<boolean> {
+    return (await this.resolveMvSource(params)) !== null;
+  }
+
+  /**
+   * Decide whether the funnel can leave the raw events table, and which
+   * pre-aggregated source to read. Preference order when eligible:
+   *   1. the exact timestamp view (OP_FUNNEL_TS_MV=1 and its backfill covers
+   *      the range and is fresh),
+   *   2. the (min, max) view,
+   *   3. null → raw path.
+   */
+  async resolveMvSource(params: {
     eventSeries: ResolvedFunnelStep[];
     breakdowns: { name: string }[];
     groupBy: 'session_id' | 'profile_id';
@@ -348,13 +399,13 @@ export class FunnelService {
     traitDescriptors: Map<string, TraitBreakdown>;
     startDate: string;
     hasCohortRestriction?: boolean;
-  }): Promise<boolean> {
+  }): Promise<MvSource | null> {
     // Global kill switch (no code change needed to revert everywhere).
     if (
       process.env.OP_FUNNEL_MV_DISABLED === '1' ||
       process.env.OP_FUNNEL_MV_DISABLED === 'true'
     ) {
-      return false;
+      return null;
     }
 
     // A cohort restriction compiles to a SESSION-eligibility semi-join, and the MV
@@ -363,15 +414,15 @@ export class FunnelService {
     // be exactly the row-filter semantics the session semi-join exists to
     // avoid, and would mix two sources whose coverage drifts independently —
     // the failure already measured on cohort_events_mv. Take the raw path.
-    if (params.hasCohortRestriction) return false;
+    if (params.hasCohortRestriction) return null;
 
     // MV is per profile_id — no session mode.
-    if (params.groupBy !== 'profile_id') return false;
+    if (params.groupBy !== 'profile_id') return null;
 
     // The MV keeps only min/max timestamps per event/day. Repeated or
     // overlapping event names need every physical occurrence so that one row
     // can advance at most one funnel step; force the raw-events fallback.
-    if (funnelStepsShareEventName(params.eventSeries)) return false;
+    if (funnelStepsShareEventName(params.eventSeries)) return null;
 
     // Filters/breakdowns on this whitelist of top-level event columns are
     // supported because they are stored directly in the MV grain
@@ -393,13 +444,13 @@ export class FunnelService {
       getTraitBreakdownDescriptor(f.name) !== null;
 
     for (const step of params.eventSeries) {
-      if (step.firstTimeFilter) return false;
+      if (step.firstTimeFilter) return null;
       const stepFilters = step.filters ?? [];
-      if (stepFilters.some((f) => !isMvSupportedFilter(f))) return false;
+      if (stepFilters.some((f) => !isMvSupportedFilter(f))) return null;
       const componentFilters = (step.customEventComponents ?? []).flatMap(
         (c) => c.filters ?? [],
       );
-      if (componentFilters.some((f) => !isMvSupportedFilter(f))) return false;
+      if (componentFilters.some((f) => !isMvSupportedFilter(f))) return null;
     }
 
     // Breakdown on any column outside the whitelist → raw. Trait
@@ -414,24 +465,38 @@ export class FunnelService {
         !MV_ALLOWED_COLUMNS.has(b.name) &&
         getTraitBreakdownDescriptor(b.name) === null
       ) {
-        return false;
+        return null;
       }
     }
 
-    if (params.anyFilterOnProfile || params.anyBreakdownOnProfile) return false;
+    if (params.anyFilterOnProfile || params.anyBreakdownOnProfile) return null;
 
-    // Auto-detect: MV must have data for this project, covering the
-    // query range, AND be fresh (writer not stalled).
-    const coverage = await this.getMvProjectCoverage(params.projectId);
-    if (!coverage) return false;
+    // Auto-detect: a view must have data for this project, covering the
+    // query range, AND be fresh (writer not stalled). The exact view is
+    // opt-in (OP_FUNNEL_TS_MV=1) so it can be backfilled newest-day-first
+    // and validated with the equivalence harness before it takes traffic;
+    // until its coverage reaches the report's start day the (min, max) view
+    // keeps serving, and the raw path remains the floor.
     const startDay = params.startDate.slice(0, 10); // 'YYYY-MM-DD'
-    if (coverage.minDay > startDay) return false; // backfill doesn't cover range
     const maxStalenessHours = Number(
       process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS || 24,
     );
-    if (coverage.stalenessHours > maxStalenessHours) return false;
-
-    return true;
+    const candidates: MvSource[] =
+      process.env.OP_FUNNEL_TS_MV === '1' ||
+      process.env.OP_FUNNEL_TS_MV === 'true'
+        ? [MV_SOURCE_TS, MV_SOURCE_FIRSTS]
+        : [MV_SOURCE_FIRSTS];
+    for (const source of candidates) {
+      const coverage = await this.getMvProjectCoverage(
+        params.projectId,
+        source.table,
+      );
+      if (!coverage) continue;
+      if (coverage.minDay > startDay) continue; // backfill doesn't cover range
+      if (coverage.stalenessHours > maxStalenessHours) continue;
+      return source;
+    }
+    return null;
   }
 
   /**
@@ -449,30 +514,32 @@ export class FunnelService {
    *   OP_FUNNEL_MV_MAX_STALENESS_HOURS to avoid serving gap-riddled
    *   funnels.
    */
-  private mvMinDayCache: {
-    fetchedAt: number;
-    minDays: Map<string, string>;
-  } | null = null;
+  private mvMinDayCache = new Map<
+    string,
+    { fetchedAt: number; minDays: Map<string, string> }
+  >();
 
-  private mvCoverageCache: {
-    fetchedAt: number;
-    coverage: Map<
-      string,
-      { minDay: string; maxDay: string; stalenessHours: number }
-    >;
-  } | null = null;
+  private mvCoverageCache = new Map<
+    string,
+    {
+      fetchedAt: number;
+      coverage: Map<
+        string,
+        { minDay: string; maxDay: string; stalenessHours: number }
+      >;
+    }
+  >();
 
   private async getMvProjectCoverage(
     projectId: string,
+    table: string = TABLE_NAMES.event_profile_firsts,
   ): Promise<
     { minDay: string; maxDay: string; stalenessHours: number } | null
   > {
     const ttlSec = Number(process.env.OP_FUNNEL_MV_CACHE_TTL_SECONDS || 900);
     const nowMs = Date.now();
-    if (
-      !this.mvCoverageCache ||
-      nowMs - this.mvCoverageCache.fetchedAt > ttlSec * 1000
-    ) {
+    const cached = this.mvCoverageCache.get(table);
+    if (!cached || nowMs - cached.fetchedAt > ttlSec * 1000) {
       const coverage = new Map<
         string,
         { minDay: string; maxDay: string; stalenessHours: number }
@@ -488,23 +555,30 @@ export class FunnelService {
           process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS || 24,
         );
         const lookbackDays = Math.ceil(maxStalenessHours / 24) + 2;
-        const minDayTtlMs = 24 * 60 * 60 * 1000;
+        // The exact view is backfilled newest-day-first, so its min(day)
+        // moves every few minutes while the backfill runs: cache it for the
+        // coverage TTL only. The (min, max) view's backfill finished long
+        // ago; a day is fine there.
+        const minDayTtlMs =
+          table === TABLE_NAMES.event_profile_ts
+            ? ttlSec * 1000
+            : 24 * 60 * 60 * 1000;
+        const minCached = this.mvMinDayCache.get(table);
         const minDayFresh =
-          this.mvMinDayCache &&
-          nowMs - this.mvMinDayCache.fetchedAt <= minDayTtlMs;
+          minCached && nowMs - minCached.fetchedAt <= minDayTtlMs;
         const minDays = minDayFresh
-          ? this.mvMinDayCache!.minDays
+          ? minCached!.minDays
           : new Map(
               (
                 await chQuery<{ project_id: string; min_day: string }>(
                   `SELECT project_id, toString(min(day)) AS min_day
-                   FROM ${TABLE_NAMES.event_profile_firsts}
+                   FROM ${table}
                    GROUP BY project_id`,
                 )
               ).map((r) => [r.project_id, r.min_day] as const),
             );
         if (!minDayFresh) {
-          this.mvMinDayCache = { fetchedAt: nowMs, minDays };
+          this.mvMinDayCache.set(table, { fetchedAt: nowMs, minDays });
         }
         const rows = await chQuery<{
           project_id: string;
@@ -514,7 +588,7 @@ export class FunnelService {
           `SELECT project_id,
                   toString(max(day)) AS max_day,
                   dateDiff('hour', toDateTime(max(day)) + INTERVAL 1 DAY, now()) AS staleness_hours
-           FROM ${TABLE_NAMES.event_profile_firsts}
+           FROM ${table}
            WHERE day >= today() - ${lookbackDays}
            GROUP BY project_id`,
         );
@@ -533,9 +607,9 @@ export class FunnelService {
         // MV table doesn't exist (fresh install / self-hosted). Leave
         // cache empty — all funnels route through raw-events path.
       }
-      this.mvCoverageCache = { fetchedAt: nowMs, coverage };
+      this.mvCoverageCache.set(table, { fetchedAt: nowMs, coverage });
     }
-    return this.mvCoverageCache.coverage.get(projectId) ?? null;
+    return this.mvCoverageCache.get(table)!.coverage.get(projectId) ?? null;
   }
 
   /**
@@ -552,12 +626,14 @@ export class FunnelService {
     additionalSelects = [],
     additionalGroupBy = [],
     traitDescriptors = new Map<string, TraitBreakdown>(),
+    mvSource = MV_SOURCE_FIRSTS,
   }: {
     projectId: string;
     startDate: string;
     endDate: string;
     eventSeries: ResolvedFunnelStep[];
     funnelWindowMilliseconds: number;
+    mvSource?: MvSource;
     /**
      * Breakdown expression selects like `app_version as b_0` or
      * `argMaxIf(app_version, created_at, name = 'X') as b_0`. `created_at`
@@ -657,12 +733,12 @@ export class FunnelService {
         ) AS level${extraSelectsClause}
       FROM (
         SELECT project_id, name, profile_id, app_version, country,
-          arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
-        FROM ${TABLE_NAMES.event_profile_firsts}
+          ${mvSource.tsSelect}
+        FROM ${mvSource.table}
         WHERE project_id = ${escapedProject}
           AND name IN (${escapedNames})
           AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
-          AND min_created_at_identified > toDateTime64('1970-01-02', 3)
+          AND ${mvSource.rowFilter}
       )${hasTraitJoins ? ' AS mv' : ''}
       ${traitJoins}
       WHERE ts >= toDateTime64(${escapedStart}, 3)
@@ -1201,7 +1277,7 @@ export class FunnelService {
     // attached, the selects qualify their column references with the
     // base-table alias, and that alias is `mv` on the MV path but `events`
     // on the raw path.
-    const useMv = await this.isMvEligibleFunnel({
+    const mvSource = await this.resolveMvSource({
       hasCohortRestriction: Boolean(audiencePredicate),
       eventSeries,
       breakdowns,
@@ -1212,6 +1288,7 @@ export class FunnelService {
       traitDescriptors,
       startDate: startDate!,
     });
+    const useMv = mvSource !== null;
     const baseAlias = useMv ? 'mv' : 'events';
 
     const needsBreakdownQualify =
@@ -1255,6 +1332,7 @@ export class FunnelService {
         additionalSelects: breakdownSelects,
         additionalGroupBy: breakdownGroupBy,
         traitDescriptors,
+        mvSource: mvSource!,
       });
       funnelCte = mv.sql;
       firstTimeCtes = mv.firstTimeCtes;
@@ -1486,6 +1564,7 @@ export class FunnelService {
               breakdowns,
               breakdownStep,
               traitDescriptors,
+              mvSource: mvSource!,
               timezone,
             })
           : await this.getFunnelTimingStats({
@@ -1834,6 +1913,7 @@ export class FunnelService {
     breakdowns = [],
     breakdownStep,
     traitDescriptors = new Map<string, TraitBreakdown>(),
+    mvSource = MV_SOURCE_FIRSTS,
   }: {
     projectId: string;
     startDate: string;
@@ -1844,6 +1924,7 @@ export class FunnelService {
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     traitDescriptors?: Map<string, TraitBreakdown>;
+    mvSource?: MvSource;
   }): { ctes: string[]; hasBreakdowns: boolean; zeroTs: string } {
     const nameList = allEventNames
       .map((n) => sqlstring.escape(n))
@@ -1862,12 +1943,12 @@ export class FunnelService {
 
     const mvEventsCte = `mv_events AS (
       SELECT project_id, name, profile_id, app_version, country,
-        arrayJoin([min_created_at_identified, max_created_at_identified]) AS ts
-      FROM ${TABLE_NAMES.event_profile_firsts}
+        ${mvSource.tsSelect}
+      FROM ${mvSource.table}
       WHERE project_id = ${escapedProject}
         AND name IN (${nameList})
         AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
-        AND min_created_at_identified > toDateTime64('1970-01-02', 3)
+        AND ${mvSource.rowFilter}
     )`;
 
     // Step 1: anchored to [startDate, endDate].
@@ -2008,6 +2089,7 @@ export class FunnelService {
     breakdowns = [],
     breakdownStep,
     traitDescriptors = new Map<string, TraitBreakdown>(),
+    mvSource = MV_SOURCE_FIRSTS,
     timezone,
   }: {
     projectId: string;
@@ -2025,6 +2107,7 @@ export class FunnelService {
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     traitDescriptors?: Map<string, TraitBreakdown>;
+    mvSource?: MvSource;
     timezone: string;
   }): Promise<Map<string, Record<string, number | null>>> {
     const result = new Map<string, Record<string, number | null>>();
@@ -2040,6 +2123,7 @@ export class FunnelService {
       breakdowns,
       breakdownStep,
       traitDescriptors,
+      mvSource,
     });
 
     // Final aggregation — quantileTDigestIf medians (same as raw path).
@@ -2107,6 +2191,7 @@ export class FunnelService {
     breakdowns = [],
     breakdownStep,
     traitDescriptors = new Map<string, TraitBreakdown>(),
+    mvSource = MV_SOURCE_FIRSTS,
     timezone,
   }: {
     projectId: string;
@@ -2120,6 +2205,7 @@ export class FunnelService {
     breakdowns?: { name: string }[];
     breakdownStep?: number;
     traitDescriptors?: Map<string, TraitBreakdown>;
+    mvSource?: MvSource;
     timezone: string;
   }): Promise<Map<string, { sum: number; average: number; count: number }>> {
     const result = new Map<
@@ -2138,6 +2224,7 @@ export class FunnelService {
       breakdowns,
       breakdownStep,
       traitDescriptors,
+      mvSource,
     });
 
     const escapedProject = sqlstring.escape(projectId);
@@ -2163,6 +2250,11 @@ export class FunnelService {
     )`;
     // Same anyIf shape as the raw path: the value at exactly the last-step
     // timestamp, NULL (and therefore not counted) if the event carries none.
+    // The `profile_id IN (SELECT … FROM completed)` predicate is what keeps
+    // the JOIN's build side small: ClickHouse hashes the RIGHT table, and
+    // without it every row of the last-step event in the window — with its
+    // `properties` map — is materialised first (OOM at 6 GiB on a brainrot
+    // 16-variant funnel_metric). The semi-join prunes it to converters.
     const propValsCte = `prop_vals AS (
       SELECT c.profile_id AS profile_id,
         anyIf(
@@ -2175,6 +2267,7 @@ export class FunnelService {
         AND e.name IN (${lastNames})
         AND e.created_at BETWEEN toDateTime(${escapedStart}) AND addSeconds(toDateTime(${escapedEnd}), ${funnelWindowSeconds})
         AND e.profile_id != e.device_id
+        AND e.profile_id IN (SELECT profile_id FROM completed)
       GROUP BY c.profile_id
     )`;
 
@@ -2340,7 +2433,7 @@ export class FunnelService {
           traitDescriptors.set(desc.key, desc);
         }
       }
-      const useMv = await this.isMvEligibleFunnel({
+      const mvSource = await this.resolveMvSource({
         hasCohortRestriction: Boolean(cohortPredicate),
         eventSeries,
         breakdowns,
@@ -2355,7 +2448,7 @@ export class FunnelService {
         traitDescriptors,
         startDate,
       });
-      if (useMv) {
+      if (mvSource) {
         const lastStep = eventSeries[eventSeries.length - 1]!;
         const lastStepEventNames = lastStep.customEventComponents
           ? lastStep.customEventComponents.map((c) => c.eventName)
@@ -2372,6 +2465,7 @@ export class FunnelService {
           breakdowns,
           breakdownStep,
           traitDescriptors,
+          mvSource,
           timezone,
         });
       }

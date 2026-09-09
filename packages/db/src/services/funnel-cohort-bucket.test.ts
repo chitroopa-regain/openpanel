@@ -23,22 +23,24 @@ const BUCKET = "NOT (profile_id IN (SELECT profile_id FROM events WHERE name = '
 
 /**
  * A breakdown bucket must reach the SAME predicate the report filter uses, for
- * one reason: that predicate is what `isMvEligibleFunnel` reads. A bucket
+ * one reason: that predicate is what `resolveMvSource` reads. A bucket
  * attached anywhere else would let a bucketed funnel run on the materialized
  * view, which has no session_id and cannot express the restriction — every
  * bucket would then return the same unfiltered number.
  */
 describe('funnel cohort bucket', () => {
   it('tells eligibility that a BUCKET restricts the funnel', async () => {
-    // Asserting isMvEligibleFunnel(hasCohortRestriction: true) === false only
+    // Asserting resolveMvSource(hasCohortRestriction: true) === null only
     // proves the helper obeys its argument. The defect this guards against is
     // getFunnel failing to SET that argument from `extraCohortPredicate`, so
     // the test has to go through getFunnel and observe what eligibility was
     // actually told.
     const service = new FunnelService({} as any);
+    // getFunnel asks resolveMvSource (isMvEligibleFunnel is its boolean
+    // wrapper); the argument under test is the same either way.
     const spy = vi
-      .spyOn(service, 'isMvEligibleFunnel')
-      .mockResolvedValue(false);
+      .spyOn(service, 'resolveMvSource')
+      .mockResolvedValue(null);
     vi.spyOn(service, 'buildFunnelCte').mockReturnValue({
       query: 'SELECT 1',
       firstTimeCtes: [],
