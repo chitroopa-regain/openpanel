@@ -12,6 +12,7 @@ import {
 } from '../display-mode';
 import { useReportRevalidation } from '../use-report-revalidation';
 import { Chart } from './chart';
+import { RetentionMetric } from './metric';
 import CohortTable, { type CohortRow } from './table';
 import { hasRenderableRetention } from './has-renderable-retention';
 import { Combobox } from '@/components/ui/combobox';
@@ -174,51 +175,44 @@ export function ReportRetentionChart() {
     : (res.data.data as CohortRow[]);
 
   const isDashboardLayout = options.retentionLayout === 'dashboard';
+  // Metric visualization: one number per breakdown, every cohort collapsed.
+  // The chart/table display-mode toggle does not apply — there is no grid.
+  if (retentionOptions?.visualization === 'metric') {
+    return (
+      <>
+        {showBreakdownControlsFor(report.breakdowns.length, isDashboardLayout) && (
+          <BreakdownControls
+            breakdownSort={breakdownSort}
+            setBreakdownSort={setBreakdownSort}
+            setTopN={setTopN}
+            topN={topN}
+          />
+        )}
+        <div className={isDashboardLayout ? 'h-full min-h-0 w-full' : undefined}>
+          <RetentionMetric data={rows} />
+        </div>
+      </>
+    );
+  }
   const displayMode = getReportDisplayMode(
     report,
     options.displayLayout ?? (isDashboardLayout ? 'dashboard' : 'default')
   );
   const { showChart, showTable } = getReportDisplayVisibility(displayMode);
-  const showBreakdownControls =
-    report.breakdowns.length > 0 && !isDashboardLayout;
+  const showBreakdownControls = showBreakdownControlsFor(
+    report.breakdowns.length,
+    isDashboardLayout
+  );
 
   return (
     <>
       {showBreakdownControls && (
-        <div className="mb-3 flex flex-wrap items-center justify-end gap-4">
-          <div className="flex items-center gap-2">
-            <Label className="mb-0 whitespace-nowrap">Sort by Profiles</Label>
-            <Combobox
-              align="end"
-              items={[
-                { label: 'High to Low', value: 'profile_count_desc' },
-                { label: 'Low to High', value: 'profile_count_asc' },
-              ]}
-              onChange={(value) =>
-                setBreakdownSort(
-                  value === 'profile_count_asc'
-                    ? 'profile_count_asc'
-                    : 'profile_count_desc'
-                )
-              }
-              placeholder="High to Low"
-              value={breakdownSort}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Label className="mb-0 whitespace-nowrap">Show</Label>
-            <Combobox
-              align="end"
-              items={[1, 3, 5, 10, 20].map((value) => ({
-                label: `Top ${value}`,
-                value: String(value),
-              }))}
-              onChange={(value) => setTopN(Number(value))}
-              placeholder="Top 20"
-              value={String(topN)}
-            />
-          </div>
-        </div>
+        <BreakdownControls
+          breakdownSort={breakdownSort}
+          setBreakdownSort={setBreakdownSort}
+          setTopN={setTopN}
+          topN={topN}
+        />
       )}
       <div
         className={
@@ -246,6 +240,62 @@ export function ReportRetentionChart() {
         )}
       </div>
     </>
+  );
+}
+
+function showBreakdownControlsFor(
+  breakdownCount: number,
+  isDashboardLayout: boolean
+) {
+  return breakdownCount > 0 && !isDashboardLayout;
+}
+
+function BreakdownControls({
+  breakdownSort,
+  setBreakdownSort,
+  setTopN,
+  topN,
+}: {
+  breakdownSort: 'profile_count_desc' | 'profile_count_asc';
+  setBreakdownSort: (value: 'profile_count_desc' | 'profile_count_asc') => void;
+  setTopN: (value: number) => void;
+  topN: number;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-end gap-4">
+      <div className="flex items-center gap-2">
+        <Label className="mb-0 whitespace-nowrap">Sort by Profiles</Label>
+        <Combobox
+          align="end"
+          items={[
+            { label: 'High to Low', value: 'profile_count_desc' },
+            { label: 'Low to High', value: 'profile_count_asc' },
+          ]}
+          onChange={(value) =>
+            setBreakdownSort(
+              value === 'profile_count_asc'
+                ? 'profile_count_asc'
+                : 'profile_count_desc'
+            )
+          }
+          placeholder="High to Low"
+          value={breakdownSort}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Label className="mb-0 whitespace-nowrap">Show</Label>
+        <Combobox
+          align="end"
+          items={[1, 3, 5, 10, 20].map((value) => ({
+            label: `Top ${value}`,
+            value: String(value),
+          }))}
+          onChange={(value) => setTopN(Number(value))}
+          placeholder="Top 20"
+          value={String(topN)}
+        />
+      </div>
+    </div>
   );
 }
 

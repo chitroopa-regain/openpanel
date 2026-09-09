@@ -345,6 +345,7 @@ export const zRetentionMeasure = z.enum([
   'property_sum',
   'property_average',
 ]);
+export const zRetentionVisualization = z.enum(['curve', 'metric']);
 export const zReportDisplayMode = z.enum(['both', 'chart', 'table']);
 
 // Report Options - Discriminated union based on chart type
@@ -397,6 +398,15 @@ export const zRetentionOptions = z.object({
   topN: z.number().int().positive().max(20).optional(),
   /** Display order for the selected top breakdowns. */
   breakdownSort: zRetentionBreakdownSort.optional(),
+  /**
+   * How the retention result is shown. `curve` (default) is the cohort grid
+   * plus area chart. `metric` collapses every cohort in the date range into one
+   * headline number per breakdown — Mixpanel's `disableCohortize` +
+   * "insights-metric" display.
+   */
+  visualization: zRetentionVisualization.optional(),
+  /** 0-based retention step the metric visualization reads. undefined = 0. */
+  metricStep: z.number().int().nonnegative().optional(),
 });
 
 export const zSankeyOptions = z.object({

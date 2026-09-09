@@ -28,6 +28,7 @@ import type {
   zReportDisplayMode,
   zRetentionBreakdownSort,
   zRetentionTimeUnit,
+  zRetentionVisualization,
 } from '@openpanel/validation';
 import type { PayloadAction } from '@reduxjs/toolkit';
 import { createSlice } from '@reduxjs/toolkit';
@@ -653,6 +654,39 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeRetentionVisualization(
+      state,
+      action: PayloadAction<z.infer<typeof zRetentionVisualization> | undefined>
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          displayMode: state.options?.displayMode,
+          type: 'retention',
+          visualization: action.payload,
+        };
+      } else {
+        state.options.visualization = action.payload;
+      }
+    },
+
+    changeRetentionMetricStep(
+      state,
+      action: PayloadAction<number | undefined>
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          displayMode: state.options?.displayMode,
+          type: 'retention',
+          visualization: 'metric',
+          metricStep: action.payload,
+        };
+      } else {
+        state.options.metricStep = action.payload;
+      }
+    },
+
     changeFunnelGroup(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
@@ -902,6 +936,8 @@ export const {
   changeRetentionPropertyAverageDenominatorStep,
   changeRetentionTopN,
   changeRetentionBreakdownSort,
+  changeRetentionVisualization,
+  changeRetentionMetricStep,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,

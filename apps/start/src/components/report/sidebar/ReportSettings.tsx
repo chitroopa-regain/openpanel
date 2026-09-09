@@ -11,10 +11,12 @@ import {
   changePrevious,
   changeRetentionBreakdownSort,
   changeRetentionMetric,
+  changeRetentionMetricStep,
   changeRetentionProperty,
   changeRetentionPropertyAverageDenominatorStep,
   changeRetentionTopN,
   changeRetentionUnit,
+  changeRetentionVisualization,
   changeSankeyExclude,
   changeSankeyInclude,
   changeSankeyMode,
@@ -50,6 +52,8 @@ export function ReportSettings() {
   const retentionTopN = retentionOptions?.topN ?? 20;
   const retentionBreakdownSort =
     retentionOptions?.breakdownSort ?? 'profile_count_desc';
+  const retentionVisualization = retentionOptions?.visualization ?? 'curve';
+  const retentionMetricStep = retentionOptions?.metricStep ?? 0;
   const breakdownCount = useSelector((state) => state.report.breakdowns.length);
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
@@ -122,6 +126,7 @@ export function ReportSettings() {
     }
 
     if (chartType === 'retention') {
+      fields.push('retentionVisualization');
       fields.push('criteria');
       fields.push('retentionUnit');
       fields.push('retentionMetric');
@@ -220,6 +225,60 @@ export function ReportSettings() {
             />
           </div>
         )}
+        {fields.includes('retentionVisualization') && (
+          <div className="flex items-center justify-between gap-4">
+            <Label className="mb-0 whitespace-nowrap font-medium">
+              Visualization
+            </Label>
+            <Combobox
+              align="end"
+              items={[
+                { label: 'Retention Curve', value: 'curve' },
+                { label: 'Metric', value: 'metric' },
+              ]}
+              onChange={(val) =>
+                dispatch(
+                  changeRetentionVisualization(
+                    val === 'metric' ? 'metric' : undefined
+                  )
+                )
+              }
+              placeholder="Retention Curve"
+              value={retentionVisualization}
+            />
+          </div>
+        )}
+        {fields.includes('retentionVisualization') &&
+          retentionVisualization === 'metric' && (
+            <div className="flex items-center justify-between gap-4">
+              <Label className="mb-0 whitespace-nowrap font-medium">
+                Metric Step
+              </Label>
+              <Combobox
+                align="end"
+                items={Array.from({ length: 31 }, (_, i) => ({
+                  label: `${
+                    retentionUnit === 'week'
+                      ? 'Week'
+                      : retentionUnit === 'month'
+                        ? 'Month'
+                        : 'Day'
+                  } ${i}`,
+                  value: String(i),
+                }))}
+                onChange={(val) => {
+                  const step = Number(val);
+                  dispatch(
+                    changeRetentionMetricStep(
+                      Number.isNaN(step) || step <= 0 ? undefined : step
+                    )
+                  );
+                }}
+                placeholder="Day 0"
+                value={String(retentionMetricStep)}
+              />
+            </div>
+          )}
         {fields.includes('retentionUnit') && (
           <div className="flex items-center justify-between gap-4">
             <Label className="mb-0 whitespace-nowrap font-medium">
