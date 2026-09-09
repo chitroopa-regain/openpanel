@@ -1862,7 +1862,7 @@ describe('FunnelService.buildFunnelCteFromMv', () => {
     );
     // Day partition prune
     expect(normalized).toContain(
-      "day BETWEEN toDate('2026-06-15 00:00:00') AND addDays(toDate('2026-07-16 00:00:00'), 1)"
+      "day BETWEEN toDate('2026-06-15 00:00:00') AND addDays(toDate('2026-07-16 00:00:00'), 2)"
     );
     // MV zero-sentinel filter (unidentified rows have min_..._identified = 0)
     expect(normalized).toContain(
@@ -2037,5 +2037,185 @@ describe('FunnelService.getFunnelTimingStatsFromMv (MV timing path)', () => {
     // would fail with UNKNOWN_IDENTIFIER.
     expect(sql).toContain('ts >= toDateTime');
     expect(sql).not.toMatch(/step_1 AS[^)]*created_at\s*>=/);
+  });
+});
+
+describe('FunnelService MV path with profile-trait breakdowns', () => {
+  const traitDescriptor = {
+    key: 'pomodoro_first_variant_v1',
+    cteName: 'trait_pomodoro_first_variant_v1',
+    column: 'trait_pomodoro_first_variant_v1.value',
+  };
+  const steps = [
+    {
+      id: 's1',
+      name: 'Application Installed',
+      type: 'event' as const,
+      filters: [
+        {
+          id: 'f1',
+          name: 'profile.properties.experiment_key',
+          operator: 'is' as const,
+          value: ['EXP_V1'],
+        },
+      ],
+      segment: 'event' as const,
+    },
+    {
+      id: 's2',
+      name: 'Subscription: Paywall Viewed',
+      type: 'event' as const,
+      filters: [],
+      segment: 'event' as const,
+    },
+    {
+      id: 's3',
+      name: 'Server: Purchase',
+      type: 'event' as const,
+      filters: [],
+      segment: 'event' as const,
+    },
+  ];
+  const range = {
+    projectId: 'regain-app',
+    startDate: '2026-08-10 00:00:00',
+    endDate: '2026-09-10 00:00:00',
+  };
+
+  beforeEach(() => {
+    mocks.chQuery.mockReset();
+  });
+
+  it('accepts a trait breakdown for the MV path but not an event-property one', async () => {
+    const service = new FunnelService({} as any);
+    mocks.chQuery
+      .mockResolvedValueOnce([{ project_id: 'regain-app', min_day: '2026-03-05' }])
+      .mockResolvedValueOnce([
+        { project_id: 'regain-app', max_day: '2026-09-09', staleness_hours: 0 },
+      ]);
+    const base = {
+      eventSeries: steps,
+      groupBy: 'profile_id' as const,
+      anyFilterOnProfile: false,
+      anyBreakdownOnProfile: false,
+      projectId: 'regain-app',
+      traitDescriptors: new Map([[traitDescriptor.key, traitDescriptor]]),
+      startDate: range.startDate,
+    };
+    await expect(
+      service.isMvEligibleFunnel({
+        ...base,
+        breakdowns: [{ name: 'profile.properties.pomodoro_first_variant_v1' }],
+      })
+    ).resolves.toBe(true);
+    await expect(
+      service.isMvEligibleFunnel({
+        ...base,
+        breakdowns: [{ name: 'properties.mode' }],
+      })
+    ).resolves.toBe(false);
+    // Coverage was read with the split cheap queries, once.
+    expect(mocks.chQuery).toHaveBeenCalledTimes(2);
+    expect(normalizeSql(mocks.chQuery.mock.calls[1]![0])).toContain(
+      'WHERE day >= today() - 3'
+    );
+  });
+
+  it('joins the trait CTE inside the MV subquery and qualifies profile_id', () => {
+    const service = new FunnelService({} as any);
+    const { sql, traitCtes } = service.buildFunnelCteFromMv({
+      ...range,
+      eventSeries: steps,
+      funnelWindowMilliseconds: 7 * 24 * 60 * 60 * 1000,
+      additionalSelects: [
+        `argMaxIf(${traitDescriptor.column}, mv.created_at, mv.name = 'Application Installed') as b_0`,
+      ],
+      traitDescriptors: new Map([[traitDescriptor.key, traitDescriptor]]),
+    });
+    const flat = normalizeSql(sql);
+    expect(flat).toContain(') AS mv');
+    expect(flat).toContain(
+      'LEFT ANY JOIN trait_pomodoro_first_variant_v1 ON trait_pomodoro_first_variant_v1.profile_id = mv.profile_id'
+    );
+    expect(flat).toContain('SELECT mv.profile_id AS profile_id');
+    expect(flat).toContain('GROUP BY mv.profile_id');
+    // The trait FILTER's semi-join is qualified on the outer side only.
+    expect(flat).toContain('mv.profile_id IN (SELECT profile_id FROM');
+    // created_at rewritten to the arrayJoin alias, including qualified refs.
+    expect(flat).toContain('argMaxIf(trait_pomodoro_first_variant_v1.value, mv.ts,');
+    expect(flat).not.toContain('created_at,');
+    // Attribution tail: 7-day window ⇒ day pre-filter reaches end + 8 days.
+    expect(flat).toContain("addDays(toDate('2026-09-10 00:00:00'), 8)");
+    expect(traitCtes).toEqual([
+      {
+        name: 'trait_pomodoro_first_variant_v1',
+        sql: `SELECT profile_id, argMax(value, updated_at) AS value FROM ${mocks.tables.profileTraits} WHERE project_id = 'regain-app' AND key = 'pomodoro_first_variant_v1' GROUP BY profile_id`,
+      },
+    ]);
+  });
+
+  it('leaves the no-breakdown MV CTE unaliased', () => {
+    const service = new FunnelService({} as any);
+    const { sql, traitCtes } = service.buildFunnelCteFromMv({
+      ...range,
+      eventSeries: steps,
+      funnelWindowMilliseconds: 24 * 60 * 60 * 1000,
+    });
+    const flat = normalizeSql(sql);
+    expect(flat).toContain('SELECT profile_id AS profile_id');
+    expect(flat).not.toContain(' AS mv');
+    expect(flat).not.toContain('LEFT ANY JOIN');
+    expect(flat).toContain("addDays(toDate('2026-09-10 00:00:00'), 2)");
+    expect(traitCtes).toEqual([]);
+  });
+
+  it('keys MV timing stats by breakdown value like the raw path', async () => {
+    const service = new FunnelService({} as any);
+    mocks.chQuery.mockResolvedValueOnce([
+      { b_0: 'pomodoro_first', step_1_median: 120, step_2_median: 3600 },
+      { b_0: 'timer_first', step_1_median: 90, step_2_median: null },
+      { b_0: null, step_1_median: 10, step_2_median: 20 },
+    ]);
+    const stepConditions = service.getFunnelConditions(steps, 'regain-app');
+    const result = await (service as any).getFunnelTimingStatsFromMv({
+      ...range,
+      stepConditions,
+      funnelWindowSeconds: 7 * 24 * 60 * 60,
+      allEventNames: steps.map((s) => s.name),
+      breakdowns: [{ name: 'profile.properties.pomodoro_first_variant_v1' }],
+      breakdownStep: 0,
+      traitDescriptors: new Map([[traitDescriptor.key, traitDescriptor]]),
+      timezone: 'UTC',
+    });
+    expect(result.get('pomodoro_first')?.step_2_median).toBe(3600);
+    expect(result.get('timer_first')?.step_1_median).toBe(90);
+    expect(result.has('none')).toBe(false);
+    expect(result.size).toBe(3);
+
+    const sql = normalizeSql(mocks.chQuery.mock.calls[0]![0]);
+    expect(sql).toContain('trait_pomodoro_first_variant_v1 AS (SELECT profile_id, argMax(value, updated_at) AS value');
+    expect(sql).toContain('timing_bd AS ( SELECT e.profile_id AS profile_id, argMaxIf(trait_pomodoro_first_variant_v1.value, e.ts,');
+    expect(sql).toContain('LEFT ANY JOIN trait_pomodoro_first_variant_v1 ON trait_pomodoro_first_variant_v1.profile_id = e.profile_id');
+    expect(sql).toContain('e.profile_id IN (SELECT profile_id FROM');
+    expect(sql).toContain('LEFT JOIN timing_bd bd ON chain.profile_id = bd.profile_id GROUP BY bd.b_0');
+    expect(sql).toContain("addDays(toDate('2026-09-10 00:00:00'), 8)");
+    expect(sql).not.toContain('e.created_at');
+  });
+
+  it('keeps the single "none" key without breakdowns', async () => {
+    const service = new FunnelService({} as any);
+    mocks.chQuery.mockResolvedValueOnce([{ step_1_median: 5, step_2_median: 6 }]);
+    const stepConditions = service.getFunnelConditions(steps, 'regain-app');
+    const result = await (service as any).getFunnelTimingStatsFromMv({
+      ...range,
+      stepConditions,
+      funnelWindowSeconds: 3600,
+      allEventNames: steps.map((s) => s.name),
+      timezone: 'UTC',
+    });
+    expect(result.get('none')).toEqual({ step_1_median: 5, step_2_median: 6 });
+    const sql = normalizeSql(mocks.chQuery.mock.calls[0]![0]);
+    expect(sql).not.toContain('timing_bd');
+    expect(sql).toContain("addDays(toDate('2026-09-10 00:00:00'), 2)");
   });
 });

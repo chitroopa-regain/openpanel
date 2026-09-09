@@ -24,6 +24,20 @@ import {
 /** Display label for null/empty breakdown values (e.g. property not set). */
 export const EMPTY_BREAKDOWN_LABEL = 'Not set';
 
+/**
+ * How many days past `endDate` the MV day pre-filter must admit.
+ *
+ * Step 1 is anchored to [start, end], but steps 2..N may land up to the funnel
+ * window after `end` — the raw path scans `created_at <= end + window`, and the
+ * MV path's own `ts` predicate does too. The `day` pre-filter used to stop at
+ * end + 1 day regardless of the window, silently dropping late conversions on
+ * any closed range with a multi-day window (invisible on ranges that end
+ * today, which is why the byte-identical comparisons never caught it).
+ */
+export function mvDayRangeTail(funnelWindowSeconds: number): number {
+  return Math.ceil(Math.max(0, funnelWindowSeconds) / 86_400) + 1;
+}
+
 function normalizeBreakdownValue(value: unknown): string {
   if (value == null || value === '') {
     return EMPTY_BREAKDOWN_LABEL;
@@ -382,14 +396,22 @@ export class FunnelService {
     }
 
     // Breakdown on any column outside the whitelist → raw. Trait
-    // (profile.properties.*) breakdowns still fall through here because the
-    // trait CTE join hasn't been ported to the MV subquery yet.
+    // (profile.properties.*) breakdowns are allowed: the MV subquery joins the
+    // same per-profile trait CTE the raw path uses, keyed on profile_id, which
+    // the MV grain carries, so the breakdown value resolves identically.
+    // Measured 2026-09-09 on the c66 launch board: raw vs MV counts per trait
+    // bucket were byte-identical, while the raw path's timing ladder cost
+    // 10-56 s per report against 1-3 s on the MV.
     for (const b of params.breakdowns) {
-      if (!MV_ALLOWED_COLUMNS.has(b.name)) return false;
+      if (
+        !MV_ALLOWED_COLUMNS.has(b.name) &&
+        getTraitBreakdownDescriptor(b.name) === null
+      ) {
+        return false;
+      }
     }
 
     if (params.anyFilterOnProfile || params.anyBreakdownOnProfile) return false;
-    if (params.traitDescriptors.size > 0) return false;
 
     // Auto-detect: MV must have data for this project, covering the
     // query range, AND be fresh (writer not stalled).
@@ -420,6 +442,11 @@ export class FunnelService {
    *   OP_FUNNEL_MV_MAX_STALENESS_HOURS to avoid serving gap-riddled
    *   funnels.
    */
+  private mvMinDayCache: {
+    fetchedAt: number;
+    minDays: Map<string, string>;
+  } | null = null;
+
   private mvCoverageCache: {
     fetchedAt: number;
     coverage: Map<
@@ -444,22 +471,53 @@ export class FunnelService {
         { minDay: string; maxDay: string; stalenessHours: number }
       >();
       try {
+        // Two cheap reads instead of one full scan. `min(day)` needs every
+        // row of the MV (3.6B rows / ~10 GiB read, 6-7 s) but only moves
+        // when a backfill runs, so it is refreshed once a day. `max(day)` is
+        // what freshness is judged on and only needs the recent tail — the
+        // MV is ordered (project_id, name, day, …), so a lower bound on `day`
+        // prunes to a handful of granules per (project, name).
+        const maxStalenessHours = Number(
+          process.env.OP_FUNNEL_MV_MAX_STALENESS_HOURS || 24,
+        );
+        const lookbackDays = Math.ceil(maxStalenessHours / 24) + 2;
+        const minDayTtlMs = 24 * 60 * 60 * 1000;
+        const minDayFresh =
+          this.mvMinDayCache &&
+          nowMs - this.mvMinDayCache.fetchedAt <= minDayTtlMs;
+        const minDays = minDayFresh
+          ? this.mvMinDayCache!.minDays
+          : new Map(
+              (
+                await chQuery<{ project_id: string; min_day: string }>(
+                  `SELECT project_id, toString(min(day)) AS min_day
+                   FROM ${TABLE_NAMES.event_profile_firsts}
+                   GROUP BY project_id`,
+                )
+              ).map((r) => [r.project_id, r.min_day] as const),
+            );
+        if (!minDayFresh) {
+          this.mvMinDayCache = { fetchedAt: nowMs, minDays };
+        }
         const rows = await chQuery<{
           project_id: string;
-          min_day: string;
           max_day: string;
           staleness_hours: number;
         }>(
           `SELECT project_id,
-                  toString(min(day)) AS min_day,
                   toString(max(day)) AS max_day,
                   dateDiff('hour', toDateTime(max(day)) + INTERVAL 1 DAY, now()) AS staleness_hours
            FROM ${TABLE_NAMES.event_profile_firsts}
+           WHERE day >= today() - ${lookbackDays}
            GROUP BY project_id`,
         );
         for (const r of rows) {
+          const minDay = minDays.get(r.project_id);
+          // A project with no MV row inside the lookback is by definition
+          // staler than the threshold: leave it out so it takes the raw path.
+          if (!minDay) continue;
           coverage.set(r.project_id, {
-            minDay: r.min_day,
+            minDay,
             maxDay: r.max_day,
             stalenessHours: Number(r.staleness_hours),
           });
@@ -486,6 +544,7 @@ export class FunnelService {
     funnelWindowMilliseconds,
     additionalSelects = [],
     additionalGroupBy = [],
+    traitDescriptors = new Map<string, TraitBreakdown>(),
   }: {
     projectId: string;
     startDate: string;
@@ -495,17 +554,32 @@ export class FunnelService {
     /**
      * Breakdown expression selects like `app_version as b_0` or
      * `argMaxIf(app_version, created_at, name = 'X') as b_0`. `created_at`
-     * refs are rewritten to `ts` (the arrayJoin output). Since MV
-     * eligibility only whitelists top-level cols (app_version, country),
-     * the expression itself resolves against the MV subquery's projection.
+     * refs are rewritten to `ts` (the arrayJoin output). Top-level cols
+     * (app_version, country) resolve against the MV subquery's projection;
+     * trait columns (`trait_<key>.value`) resolve against the joined trait
+     * CTE. When a trait join is attached the caller qualifies bare event
+     * columns with the `mv` alias (see getFunnel's baseAlias).
      */
     additionalSelects?: string[];
     additionalGroupBy?: string[];
-  }): { sql: string; firstTimeCtes: never[]; traitCtes: never[] } {
+    /**
+     * profile.properties.* breakdowns. Each becomes a top-level CTE (returned
+     * in `traitCtes`, register them on the outer query) and a
+     * `LEFT ANY JOIN ... ON trait.profile_id = mv.profile_id` inside this CTE
+     * — the same shape buildFunnelCte uses, so the value per profile is the
+     * same on both paths.
+     */
+    traitDescriptors?: Map<string, TraitBreakdown>;
+  }): {
+    sql: string;
+    firstTimeCtes: never[];
+    traitCtes: { name: string; sql: string }[];
+  } {
     const escapedProject = sqlstring.escape(projectId);
     const escapedStart = sqlstring.escape(startDate);
     const escapedEnd = sqlstring.escape(endDate);
     const funnelWindowSeconds = Math.ceil(funnelWindowMilliseconds / 1000);
+    const hasTraitJoins = traitDescriptors.size > 0;
 
     const rawFunnels = this.getFunnelConditions(eventSeries, projectId);
     if (rawFunnels.length === 0) {
@@ -517,7 +591,18 @@ export class FunnelService {
     // Rewrite `created_at` -> `ts` since the MV subquery aliases the
     // unpacked timestamp as `ts`. `name` and `properties` refs pass
     // through unchanged (MV subquery exposes `name`).
-    const funnels = rawFunnels.map((f) => f.replace(/\bcreated_at\b/g, 'ts'));
+    //
+    // With a trait CTE joined, a bare `profile_id` (e.g. inside a
+    // `profile_id IN (SELECT profile_id FROM profile_traits …)` trait filter)
+    // is ambiguous between the MV subquery and the trait CTE — qualify it
+    // with the subquery alias first, exactly as the raw path qualifies with
+    // `events`. String literals and subquery bodies are preserved.
+    const funnels = rawFunnels.map((f) =>
+      (hasTraitJoins ? qualifyFunnelCondition(f, 'mv') : f).replace(
+        /\bcreated_at\b/g,
+        'ts',
+      ),
+    );
     funnels[0] =
       `(${funnels[0]}) AND ts >= toDateTime64(${escapedStart}, 3) AND ts <= toDateTime64(${escapedEnd}, 3)`;
 
@@ -550,7 +635,15 @@ export class FunnelService {
     const extraGroupByClause =
       additionalGroupBy.length > 0 ? `, ${additionalGroupBy.join(', ')}` : '';
 
-    const sql = `SELECT profile_id AS profile_id,
+    const profileIdExpr = hasTraitJoins ? 'mv.profile_id' : 'profile_id';
+    const traitJoins = Array.from(traitDescriptors.values())
+      .map(
+        (desc) =>
+          `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = mv.profile_id`,
+      )
+      .join('\n      ');
+
+    const sql = `SELECT ${profileIdExpr} AS profile_id,
         windowFunnel(${funnelWindowMilliseconds}, 'strict_increase')(
           toUInt64(toUnixTimestamp64Milli(ts)),
           ${funnels.join(', ')}
@@ -561,14 +654,20 @@ export class FunnelService {
         FROM ${TABLE_NAMES.event_profile_firsts}
         WHERE project_id = ${escapedProject}
           AND name IN (${escapedNames})
-          AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), 1)
+          AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
           AND min_created_at_identified > toDateTime64('1970-01-02', 3)
-      )
+      )${hasTraitJoins ? ' AS mv' : ''}
+      ${traitJoins}
       WHERE ts >= toDateTime64(${escapedStart}, 3)
         AND ts <= addSeconds(toDateTime64(${escapedEnd}, 3), ${funnelWindowSeconds})
-      GROUP BY profile_id${extraGroupByClause}`;
+      GROUP BY ${profileIdExpr}${extraGroupByClause}`;
 
-    return { sql, firstTimeCtes: [], traitCtes: [] };
+    const traitCtes = Array.from(traitDescriptors.values()).map((desc) => ({
+      name: desc.cteName,
+      sql: `SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id`,
+    }));
+
+    return { sql, firstTimeCtes: [], traitCtes };
   }
 
   buildFunnelCte({
@@ -1087,17 +1186,38 @@ export class FunnelService {
     // scalar profile filter (e.g. profile.email) or a scalar profile
     // breakdown (e.g. profile.email) still will — hence this broader
     // trigger covers both trait CTE joins and that remaining path.
+    // MV fast path — swap FROM events with a subquery over the aggregating
+    // MV when the funnel is "simple" (see isMvEligibleFunnel). Same
+    // windowFunnel semantics, ~90× faster on install→engagement funnels.
+    //
+    // Decided BEFORE the breakdown selects are built: with a trait join
+    // attached, the selects qualify their column references with the
+    // base-table alias, and that alias is `mv` on the MV path but `events`
+    // on the raw path.
+    const useMv = await this.isMvEligibleFunnel({
+      hasCohortRestriction: Boolean(audiencePredicate),
+      eventSeries,
+      breakdowns,
+      groupBy: group,
+      anyFilterOnProfile,
+      anyBreakdownOnProfile,
+      projectId,
+      traitDescriptors,
+      startDate: startDate!,
+    });
+    const baseAlias = useMv ? 'mv' : 'events';
+
     const needsBreakdownQualify =
       traitDescriptors.size > 0 || anyFilterOnProfile || anyBreakdownOnProfile;
     const argMaxIfCreatedAt = needsBreakdownQualify
-      ? 'events.created_at'
+      ? `${baseAlias}.created_at`
       : 'created_at';
 
     if (breakdownStep !== undefined && breakdownStep < eventSeries.length) {
       const stepConditions = this.getFunnelConditions(eventSeries, projectId);
       const rawStepCondition = stepConditions[breakdownStep]!;
       const stepCondition = needsBreakdownQualify
-        ? qualifyFunnelCondition(rawStepCondition, 'events')
+        ? qualifyFunnelCondition(rawStepCondition, baseAlias)
         : rawStepCondition;
       breakdownSelects = breakdowns.map(
         (b, index) =>
@@ -1114,21 +1234,6 @@ export class FunnelService {
 
     const stepConditions = this.getFunnelConditions(eventSeries, projectId);
 
-    // MV fast path — swap FROM events with a subquery over the aggregating
-    // MV when the funnel is "simple" (see isMvEligibleFunnel). Same
-    // windowFunnel semantics, ~90× faster on install→engagement funnels.
-    const useMv = await this.isMvEligibleFunnel({
-      hasCohortRestriction: Boolean(audiencePredicate),
-      eventSeries,
-      breakdowns,
-      groupBy: group,
-      anyFilterOnProfile,
-      anyBreakdownOnProfile,
-      projectId,
-      traitDescriptors,
-      startDate: startDate!,
-    });
-
     let funnelCte: ReturnType<typeof clix> | string;
     let firstTimeCtes: { name: string; sql: string }[];
     let traitCtes: { name: string; sql: string }[];
@@ -1142,6 +1247,7 @@ export class FunnelService {
         funnelWindowMilliseconds,
         additionalSelects: breakdownSelects,
         additionalGroupBy: breakdownGroupBy,
+        traitDescriptors,
       });
       funnelCte = mv.sql;
       firstTimeCtes = mv.firstTimeCtes;
@@ -1370,6 +1476,9 @@ export class FunnelService {
               stepConditions,
               funnelWindowSeconds,
               allEventNames: allTimingEventNames,
+              breakdowns,
+              breakdownStep,
+              traitDescriptors,
               timezone,
             })
           : await this.getFunnelTimingStats({
@@ -1703,6 +1812,9 @@ export class FunnelService {
     stepConditions,
     funnelWindowSeconds,
     allEventNames,
+    breakdowns = [],
+    breakdownStep,
+    traitDescriptors = new Map<string, TraitBreakdown>(),
     timezone,
   }: {
     projectId: string;
@@ -1711,6 +1823,15 @@ export class FunnelService {
     stepConditions: string[];
     funnelWindowSeconds: number;
     allEventNames: string[];
+    /**
+     * Same contract as getFunnelTimingStats: with breakdowns the result is
+     * keyed by the normalized breakdown values joined with `|`, otherwise by
+     * `'none'`. Previously the MV path always returned `'none'`, so every
+     * breakdown series on an MV-eligible funnel lost its time-to-convert.
+     */
+    breakdowns?: { name: string }[];
+    breakdownStep?: number;
+    traitDescriptors?: Map<string, TraitBreakdown>;
     timezone: string;
   }): Promise<Map<string, Record<string, number | null>>> {
     const result = new Map<string, Record<string, number | null>>();
@@ -1738,9 +1859,58 @@ export class FunnelService {
       FROM ${TABLE_NAMES.event_profile_firsts}
       WHERE project_id = ${escapedProject}
         AND name IN (${nameList})
-        AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), 1)
+        AND day BETWEEN toDate(${escapedStart}) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
         AND min_created_at_identified > toDateTime64('1970-01-02', 3)
     )`;
+
+    // Breakdown values per step-1 entrant, mirroring the raw path's
+    // `timing_bd` CTE (same argMaxIf-on-breakdown-step semantics, same
+    // trait CTE join, same known limitation when breakdownStep is unset).
+    const hasBreakdowns = breakdowns.length > 0;
+    const traitCteSqls = Array.from(traitDescriptors.values()).map(
+      (desc) =>
+        `${desc.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${escapedProject} AND key = ${sqlstring.escape(desc.key)} GROUP BY profile_id)`,
+    );
+    let timingBdCte = '';
+    if (hasBreakdowns) {
+      const bdStepIdx = breakdownStep ?? 0;
+      const rawBdStepCondition =
+        stepConditions[bdStepIdx] ?? stepConditions[0]!;
+      const bdStepCondition = toMvCondition(
+        traitDescriptors.size > 0
+          ? qualifyFunnelCondition(rawBdStepCondition, 'e')
+          : rawBdStepCondition,
+      );
+      const breakdownExpr = (name: string): string => {
+        const desc = getTraitBreakdownDescriptor(name);
+        if (desc && traitDescriptors.has(desc.key)) {
+          return desc.column;
+        }
+        return getSelectPropertyKey(name);
+      };
+      const bdExprs =
+        breakdownStep !== undefined
+          ? breakdowns.map(
+              (b, i) =>
+                `argMaxIf(${breakdownExpr(b.name)}, e.ts, ${bdStepCondition}) as b_${i}`,
+            )
+          : breakdowns.map((b, i) => `${breakdownExpr(b.name)} as b_${i}`);
+      const bdGroup =
+        breakdownStep !== undefined ? [] : breakdowns.map((_, i) => `b_${i}`);
+      const traitJoins = Array.from(traitDescriptors.values())
+        .map(
+          (desc) =>
+            `LEFT ANY JOIN ${desc.cteName} ON ${desc.cteName}.profile_id = e.profile_id`,
+        )
+        .join('\n        ');
+      timingBdCte = `timing_bd AS (
+        SELECT e.profile_id AS profile_id, ${bdExprs.join(', ')}
+        FROM mv_events AS e
+        ${traitJoins}
+        WHERE e.profile_id IN (SELECT profile_id FROM step_1)
+        GROUP BY e.profile_id${bdGroup.length > 0 ? `, ${bdGroup.join(', ')}` : ''}
+      )`;
+    }
 
     // Step 1: anchored to [startDate, endDate].
     const step1Cte = `step_1 AS (
@@ -1807,16 +1977,47 @@ export class FunnelService {
       );
     }
 
+    const bdSelectsInFinal = hasBreakdowns
+      ? `${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')},`
+      : '';
+    const bdJoinInFinal = hasBreakdowns
+      ? 'LEFT JOIN timing_bd bd ON chain.profile_id = bd.profile_id'
+      : '';
+    const bdGroupByInFinal = hasBreakdowns
+      ? `GROUP BY ${breakdowns.map((_, i) => `bd.b_${i}`).join(', ')}`
+      : '';
+
     const sql = `
-      WITH ${[mvEventsCte, step1Cte, perProfileCte, chainCte].join(',\n')}
-      SELECT ${medianSelects.join(',\n')}
+      WITH ${[
+        ...traitCteSqls,
+        mvEventsCte,
+        step1Cte,
+        perProfileCte,
+        chainCte,
+        timingBdCte,
+      ]
+        .filter(Boolean)
+        .join(',\n')}
+      SELECT ${bdSelectsInFinal}
+        ${medianSelects.join(',\n')}
       FROM chain
+      ${bdJoinInFinal}
+      ${bdGroupByInFinal}
     `;
 
     const rows = await chQuery<Record<string, any>>(sql, {
       session_timezone: timezone,
     });
-    result.set('none', rows[0] ?? {});
+    if (!hasBreakdowns) {
+      result.set('none', rows[0] ?? {});
+    } else {
+      for (const row of rows) {
+        const key = breakdowns
+          .map((_, i) => normalizeBreakdownValue(row[`b_${i}`]))
+          .join('|');
+        result.set(key, row);
+      }
+    }
     return result;
   }
 
