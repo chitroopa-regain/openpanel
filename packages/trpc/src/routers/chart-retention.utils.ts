@@ -299,6 +299,7 @@ export function buildRetentionMeasureIntervalSelect({
   propertyExpression,
   propertyAverageDenominatorStep = 0,
   maturityExpression,
+  excludeEmptyProfiles = false,
 }: {
   index: number;
   criteria: '>=' | '=' | '<=';
@@ -306,8 +307,11 @@ export function buildRetentionMeasureIntervalSelect({
   propertyExpression?: string;
   propertyAverageDenominatorStep?: number;
   maturityExpression?: string;
+  excludeEmptyProfiles?: boolean;
 }) {
-  const predicate = `r.x_after_cohort ${criteria} ${index}`;
+  // A LEFT JOIN with no return events supplies an empty profile and interval 0.
+  // Exclude that placeholder so an empty D0 cohort cannot count as one user.
+  const predicate = `${excludeEmptyProfiles ? "r.profile_id != '' AND " : ''}r.x_after_cohort ${criteria} ${index}`;
   let aggregateExpression: string;
 
   if (measure === 'property_average' && propertyExpression) {

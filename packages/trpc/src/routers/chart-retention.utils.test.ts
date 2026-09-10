@@ -17,6 +17,24 @@ import {
 } from './chart-retention.utils';
 
 describe('chart retention utils', () => {
+  it('excludes the unmatched LEFT JOIN row from opted-in D0 counts', () => {
+    expect(
+      buildRetentionMeasureIntervalSelect({
+        index: 0,
+        criteria: '=',
+        excludeEmptyProfiles: true,
+        maturityExpression: 'cohort_has_started',
+      })
+    ).toBe(
+      "if(cohort_has_started, uniqExactIf(r.profile_id, r.profile_id != '' AND r.x_after_cohort = 0), NULL) AS interval_0_user_count"
+    );
+    expect(
+      buildRetentionMeasureIntervalSelect({ index: 0, criteria: '=' })
+    ).toBe(
+      'uniqExactIf(r.profile_id, r.x_after_cohort = 0) AS interval_0_user_count'
+    );
+  });
+
   it('uses rolling elapsed windows instead of calendar week boundaries', () => {
     expect(
       getRetentionElapsedIntervalExpression('week', 'cohort_date', 'event_date')
