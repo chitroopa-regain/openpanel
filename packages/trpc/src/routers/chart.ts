@@ -1597,6 +1597,8 @@ export const chartRouter = createTRPCRouter({
             measure: retentionMetric,
             propertyExpression: retentionPropertyExpr,
             propertyAverageDenominatorStep,
+            // Roll out the empty-return correction to Brainpal only.
+            excludeEmptyProfiles: projectId === 'brainrot-app',
             maturityExpression: getRetentionIntervalMaturityExpression({
               index,
               unit: retentionUnit,
