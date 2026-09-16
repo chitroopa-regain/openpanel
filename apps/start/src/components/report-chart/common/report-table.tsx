@@ -15,6 +15,7 @@ import { useSelector } from '@/redux';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
+import { getOverallSerie, OVERALL_SERIE_ID } from './overall-series';
 import type { ColumnDef, Header, Row } from '@tanstack/react-table';
 import { useQueries } from '@tanstack/react-query';
 import {
@@ -347,6 +348,30 @@ export function ReportTable({
   // Use expandable rows if available, otherwise use flat rows
   const rows = expandableRows ?? flatRows ?? [];
 
+  // Whole-population row, pinned above the buckets in flat mode. Built from
+  // the server's `overall` companion — not summed from the rows, which is
+  // wrong for unique users and averages. Kept out of `rows` so sorting,
+  // filtering, colour ranges and the visibility checkboxes ignore it.
+  const overallRow = useMemo<TableRow | null>(() => {
+    const overallSerie = getOverallSerie(data);
+    if (!overallSerie || grouped) {
+      return null;
+    }
+    const built = transformToTableData(
+      { ...data, series: [overallSerie] },
+      [],
+      false
+    ).rows[0] as TableRow | undefined;
+    if (!built) {
+      return null;
+    }
+    return {
+      ...built,
+      serieId: OVERALL_SERIE_ID,
+      breakdownValues: breakdownPropertyNames.map(() => ''),
+    };
+  }, [data, grouped, breakdownPropertyNames]);
+
   // Filter rows based on global search and apply sorting
   const filteredRows = useMemo(() => {
     let result = rows;
@@ -545,6 +570,11 @@ export function ReportTable({
 
     return result;
   }, [rows, globalFilter, grouped, sorting]);
+
+  const tableRows = useMemo(
+    () => (overallRow ? [overallRow, ...filteredRows] : filteredRows),
+    [overallRow, filteredRows]
+  );
 
   // Calculate min/max values for color visualization
   const { metricRanges, dateRanges } = useMemo(() => {
@@ -791,6 +821,23 @@ export function ReportTable({
         const hasSubRows =
           'subRows' in originalRow && (originalRow.subRows?.length ?? 0) > 0;
         const isExpandable = grouped && isSerieGroupHeader && hasSubRows;
+
+        if (serieId === OVERALL_SERIE_ID) {
+          // Not a bucket: no checkbox (it is not a toggleable series) and a
+          // neutral outlined swatch instead of a palette colour.
+          return (
+            <div
+              className="flex items-center gap-2 px-4 h-12"
+              data-testid="chart-overall-row"
+            >
+              <div
+                aria-hidden="true"
+                className="h-4 w-4 shrink-0 rounded-[4px] border-2 border-foreground/50"
+              />
+              <SerieName className="truncate font-semibold" name={serieName} />
+            </div>
+          );
+        }
 
         return (
           <div className="flex items-center gap-2 px-4 h-12">
@@ -1086,9 +1133,13 @@ export function ReportTable({
 
     // Total across all series (matches the pie chart's centre value) — used
     // to render a "%" column for pie charts.
+    // Share of total: the un-split total when the server provides it (a
+    // top-N slice or an overlapping unique-users breakdown makes the sum of
+    // the buckets the wrong denominator), else the sum of the buckets.
     const pieTotalSum =
       chartType === 'pie'
-        ? data.series.reduce((acc, s) => acc + (s.metrics?.sum ?? 0), 0)
+        ? (getOverallSerie(data)?.metrics.sum ??
+          data.series.reduce((acc, s) => acc + (s.metrics?.sum ?? 0), 0))
         : 0;
 
     metrics.forEach((metric) => {
@@ -1241,7 +1292,7 @@ export function ReportTable({
   // Memoize table options to ensure table updates when filteredRows changes
   const tableOptions = useMemo(
     () => ({
-      data: filteredRows, // This is already sorted in filteredRows
+      data: tableRows, // filteredRows (already sorted) behind the pinned Overall row
       columns,
       getCoreRowModel: getCoreRowModel(),
       getExpandedRowModel: grouped ? getExpandedRowModel() : undefined,
@@ -1281,7 +1332,7 @@ export function ReportTable({
       manualFiltering: true, // We handle filtering manually
     }),
     [
-      filteredRows,
+      tableRows,
       columns,
       grouped,
       breakdownPropertyNames.length,

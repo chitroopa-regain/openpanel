@@ -174,6 +174,12 @@ export function ReportRetentionChart() {
       })
     : (res.data.data as CohortRow[]);
 
+  // Whole-population companion the server returns beside a breakdown. Kept
+  // OUT of `rows`: grouping and colours there are positional, and every
+  // consumer pins it separately as the reference the buckets are read against.
+  // Absent on responses cached before it existed.
+  const overall: CohortRow[] | null = res.data.overall ?? null;
+
   const isDashboardLayout = options.retentionLayout === 'dashboard';
   // Metric visualization: one number per breakdown, every cohort collapsed.
   // The chart/table display-mode toggle does not apply — there is no grid.
@@ -189,7 +195,7 @@ export function ReportRetentionChart() {
           />
         )}
         <div className={isDashboardLayout ? 'h-full min-h-0 w-full' : undefined}>
-          <RetentionMetric data={rows} />
+          <RetentionMetric data={rows} overall={overall} />
         </div>
       </>
     );
@@ -224,18 +230,18 @@ export function ReportRetentionChart() {
         {showChart &&
           (isDashboardLayout ? (
             <div className="min-h-0 overflow-hidden">
-              <Chart data={rows} />
+              <Chart data={rows} overall={overall} />
             </div>
           ) : (
             <AspectContainer>
-              <Chart data={rows} />
+              <Chart data={rows} overall={overall} />
             </AspectContainer>
           ))}
         {showTable && (
           <div
             className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}
           >
-            <CohortTable data={rows} />
+            <CohortTable data={rows} overall={overall} />
           </div>
         )}
       </div>

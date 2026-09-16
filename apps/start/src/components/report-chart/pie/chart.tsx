@@ -27,6 +27,7 @@ import { formatDate } from '@/utils/date';
 import { round } from '@/utils/math';
 import { getChartColor } from '@/utils/theme';
 import { truncate } from '@/utils/truncate';
+import { getOverallSerie } from '../common/overall-series';
 
 interface Props {
   data: IChartData;
@@ -96,7 +97,11 @@ export function Chart({ data }: Props) {
     (e) => 'segment' in e && e.segment === 'frequency_distribution'
   );
 
-  const sum = series.reduce((acc, serie) => acc + serie.metrics.sum, 0);
+  // Centre total and slice percentages are read against the un-split total
+  // when the server provides it: the sum of the slices understates it after
+  // a top-N slice and overstates nothing but hides overlap for unique users.
+  const slicesSum = series.reduce((acc, serie) => acc + serie.metrics.sum, 0);
+  const sum = getOverallSerie(data)?.metrics.sum ?? slicesSum;
   const hasBreakdown = (report.breakdowns?.length ?? 0) > 0;
   // When a breakdown is configured, the slice label shows only the breakdown
   // value (e.g. "google-play") rather than "<event> > <breakdown>" — the event

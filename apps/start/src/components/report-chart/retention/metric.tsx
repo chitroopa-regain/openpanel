@@ -20,6 +20,8 @@ import { type CohortRow, getCohortBreakdownGroups } from './table';
 
 interface Props {
   data: CohortRow[];
+  /** Whole-population rows, present only with a breakdown. See index.tsx. */
+  overall?: CohortRow[] | null;
 }
 
 const MEASURE_LABEL: Record<RetentionMetricMeasure, string> = {
@@ -35,7 +37,7 @@ const MEASURE_LABEL: Record<RetentionMetricMeasure, string> = {
  * "Google Ads Revenue from New Users" style cards are: Mixpanel retention with
  * `disableCohortize` shown as an insights metric.
  */
-export function RetentionMetric({ data }: Props) {
+export function RetentionMetric({ data, overall }: Props) {
   const {
     report: { options: reportOptions, unit },
     options: { retentionLayout },
@@ -54,11 +56,29 @@ export function RetentionMetric({ data }: Props) {
     (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey),
   );
   const groups = hasBreakdowns
-    ? getCohortBreakdownGroups(data).map((group) => ({
-        key: group.key,
-        label: group.label,
-        aggregate: aggregateRetentionMetric(group.cohorts, step, measure),
-      }))
+    ? [
+        // The un-split number first, so each bucket card is read against it.
+        ...(overall && overall.length > 0
+          ? [
+              {
+                key: '__overall__',
+                label: 'Overall',
+                aggregate: aggregateRetentionMetric(
+                  overall.filter(
+                    (row) => row.cohort_interval !== 'Weighted Average',
+                  ),
+                  step,
+                  measure,
+                ),
+              },
+            ]
+          : []),
+        ...getCohortBreakdownGroups(data).map((group) => ({
+          key: group.key,
+          label: group.label,
+          aggregate: aggregateRetentionMetric(group.cohorts, step, measure),
+        })),
+      ]
     : [
         {
           key: 'all',

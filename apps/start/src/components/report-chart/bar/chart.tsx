@@ -35,6 +35,7 @@ import {
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
+import { getOverallSerie } from '../common/overall-series';
 
 type SortOption =
   | 'count-desc'
@@ -73,7 +74,10 @@ export function Chart({ data }: Props) {
     hiddenSeriesIds
   );
 
-  const totalSum = data.metrics.sum || 1;
+  // Bar widths and percentages are shares of the un-split total when the
+  // server provides it (see overall-series.ts), else of the buckets' sum.
+  const overallSerie = useMemo(() => getOverallSerie(data), [data]);
+  const totalSum = overallSerie?.metrics.sum || data.metrics.sum || 1;
 
   // Calculate original ranks (based on count descending - default sort)
   const seriesWithOriginalRank = useMemo(() => {
@@ -174,6 +178,28 @@ export function Chart({ data }: Props) {
       )}
       <div className="overflow-hidden">
         <div className="divide-y divide-def-200 dark:divide-def-800">
+          {overallSerie && (
+            <div
+              className="flex items-center justify-between gap-4 bg-muted/20 px-4 py-2"
+              data-testid="bar-overall-row"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <div
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0 rounded-full border-2 border-foreground/50"
+                />
+                <span className="truncate font-semibold text-sm tracking-tight">
+                  {overallSerie.names[0]}
+                </span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
+                  all values
+                </span>
+              </div>
+              <div className="font-mono font-semibold text-base tracking-tight">
+                {number.format(overallSerie.metrics.sum)}
+              </div>
+            </div>
+          )}
           {series.map((serie, idx) => {
             const isClickable =
               !serie.names.includes(NOT_SET_VALUE) && !!onClick;

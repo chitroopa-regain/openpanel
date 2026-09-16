@@ -39,6 +39,7 @@ import {
 } from '@openpanel/db';
 import {
   type IChartBreakdown,
+  type IReportInput,
   type IChartEventFilter,
   type ICustomEventComponent,
   zChartBreakdowns,
@@ -257,6 +258,43 @@ export function attachFunnelPropertyStatsToSeries(
     );
     item.lastStep.propertyCount = stats.count;
   }
+}
+
+/**
+ * Run a generic chart engine and, when the report splits its series by a
+ * property or cohort breakdown, run it once more with no breakdown so the
+ * response also carries the whole-population series as `overall`.
+ *
+ * A separate field on purpose: `series` order drives colours, the default
+ * visible top-5 and the `limit` slice on the client, and a JS-side sum of the
+ * buckets is wrong for unique_users / averages. `null` when there is no
+ * breakdown (the single series already is the overall) or the report has
+ * several series definitions (an "overall" per definition is a different
+ * feature; the table's totals row covers it).
+ */
+async function withOverallSeries<T extends { series: unknown[] }>(
+  chartInput: IReportInput,
+  execute: (input: IReportInput) => Promise<T>,
+): Promise<T & { overall: T['series'][number] | null }> {
+  const hasBreakdown =
+    (chartInput.breakdowns?.length ?? 0) > 0 ||
+    (chartInput.cohortBreakdown?.cohortIds?.length ?? 0) > 0;
+  const wantOverall = hasBreakdown && chartInput.series.length === 1;
+  const [main, overallRun] = await Promise.all([
+    execute(chartInput),
+    wantOverall
+      ? execute({
+          ...chartInput,
+          breakdowns: [],
+          cohortBreakdown: undefined,
+          previous: false,
+        })
+      : Promise.resolve(null),
+  ]);
+  return {
+    ...main,
+    overall: (overallRun?.series[0] as T['series'][number] | undefined) ?? null,
+  };
 }
 
 const chartProcedure = publicProcedure.use(
@@ -1322,7 +1360,7 @@ export const chartRouter = createTRPCRouter({
           }
         : input;
 
-      return ChartEngine.execute(chartInput);
+      return withOverallSeries(chartInput, ChartEngine.execute);
     }),
 
   aggregate: chartProcedure
@@ -1347,7 +1385,7 @@ export const chartRouter = createTRPCRouter({
           }
         : input;
 
-      return AggregateChartEngine.execute(chartInput);
+      return withOverallSeries(chartInput, AggregateChartEngine.execute);
     }),
 
   cohort: chartProcedure
@@ -1784,249 +1822,262 @@ export const chartRouter = createTRPCRouter({
         return `AND ${clauses.join(' AND ')}`;
       };
 
-      // Include both outer series filters AND component-level filters for profile JOINs
-      const traitBreakdownDescriptors = Array.from(
-        new Map(
-          breakdowns
-            .map((breakdown) => getTraitBreakdownDescriptor(breakdown.name))
-            .filter(Boolean)
-            .map((descriptor) => [descriptor!.key, descriptor!])
-        ).values()
-      );
-      const scalarProfileBreakdownFields = breakdowns
-        .filter(
+      // Every breakdown-dependent piece of the SQL template lives inside this
+      // function so the same report can be compiled twice: once with the
+      // report's breakdowns and once with none, for the whole-population
+      // "Overall" companion (see runOverallRetention below). Table choice,
+      // filters, window and metric are shared; only the b_* selects, the
+      // top-N CTE and the join/group/order columns differ.
+      const buildCohortQueryFor = (breakdowns: IChartBreakdown[]) => {
+        // Include both outer series filters AND component-level filters for profile JOINs
+        const traitBreakdownDescriptors = Array.from(
+          new Map(
+            breakdowns
+              .map((breakdown) => getTraitBreakdownDescriptor(breakdown.name))
+              .filter(Boolean)
+              .map((descriptor) => [descriptor!.key, descriptor!])
+          ).values()
+        );
+        const scalarProfileBreakdownFields = breakdowns
+          .filter(
+            (breakdown) =>
+              breakdown.name.startsWith('profile.') &&
+              getTraitBreakdownDescriptor(breakdown.name) === null
+          )
+          .map((breakdown) => breakdown.name.replace('profile.', ''));
+        const traitBreakdownCtes = traitBreakdownDescriptors
+          .map(
+            (descriptor) =>
+              `${descriptor.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(descriptor.key)} GROUP BY profile_id),`
+          )
+          .join('\n');
+        const traitBreakdownJoins = traitBreakdownDescriptors
+          .map(
+            (descriptor) =>
+              `LEFT ANY JOIN ${descriptor.cteName} ON ${descriptor.cteName}.profile_id = e.profile_id`
+          )
+          .join('\n');
+        const getRetentionBreakdownExpression = (name: string) => {
+          const descriptor = getTraitBreakdownDescriptor(name);
+          return descriptor ? descriptor.column : getSelectPropertyKey(name);
+        };
+        const breakdownAliases = breakdowns.map((_, index) => `b_${index}`);
+        const normalizedBreakdownExpressions = breakdowns.map(
           (breakdown) =>
-            breakdown.name.startsWith('profile.') &&
-            getTraitBreakdownDescriptor(breakdown.name) === null
-        )
-        .map((breakdown) => breakdown.name.replace('profile.', ''));
-      const traitBreakdownCtes = traitBreakdownDescriptors
-        .map(
-          (descriptor) =>
-            `${descriptor.cteName} AS (SELECT profile_id, argMax(value, updated_at) AS value FROM ${TABLE_NAMES.profile_traits} WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(descriptor.key)} GROUP BY profile_id),`
-        )
-        .join('\n');
-      const traitBreakdownJoins = traitBreakdownDescriptors
-        .map(
-          (descriptor) =>
-            `LEFT ANY JOIN ${descriptor.cteName} ON ${descriptor.cteName}.profile_id = e.profile_id`
-        )
-        .join('\n');
-      const getRetentionBreakdownExpression = (name: string) => {
-        const descriptor = getTraitBreakdownDescriptor(name);
-        return descriptor ? descriptor.column : getSelectPropertyKey(name);
-      };
-      const breakdownAliases = breakdowns.map((_, index) => `b_${index}`);
-      const normalizedBreakdownExpressions = breakdowns.map(
-        (breakdown) =>
-          `coalesce(nullIf(toString(${getRetentionBreakdownExpression(breakdown.name)}), ''), '(not set)')`
-      );
-      const breakdownSelects = buildRetentionBreakdownSelects(
-        normalizedBreakdownExpressions
-      );
+            `coalesce(nullIf(toString(${getRetentionBreakdownExpression(breakdown.name)}), ''), '(not set)')`
+        );
+        const breakdownSelects = buildRetentionBreakdownSelects(
+          normalizedBreakdownExpressions
+        );
 
-      const firstEventJoin = [
-        buildProfileJoin(
-          [...firstEventFilters, ...firstComponentFilters],
-          scalarProfileBreakdownFields,
-          'e'
-        ),
-        traitBreakdownJoins,
-      ]
-        .filter(Boolean)
-        .join('\n');
-      const firstEventWhere = buildFilterWhere(
-        firstEventFilters,
-        traitBreakdownDescriptors.length > 0 ? 'e' : undefined
-      );
-      const secondEventJoin = buildProfileJoin([
-        ...secondEventFilters,
-        ...secondComponentFilters,
-      ]);
-      const secondEventWhere = buildFilterWhere(secondEventFilters);
+        const firstEventJoin = [
+          buildProfileJoin(
+            [...firstEventFilters, ...firstComponentFilters],
+            scalarProfileBreakdownFields,
+            'e'
+          ),
+          traitBreakdownJoins,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        const firstEventWhere = buildFilterWhere(
+          firstEventFilters,
+          traitBreakdownDescriptors.length > 0 ? 'e' : undefined
+        );
+        const secondEventJoin = buildProfileJoin([
+          ...secondEventFilters,
+          ...secondComponentFilters,
+        ]);
+        const secondEventWhere = buildFilterWhere(secondEventFilters);
 
-      // cohort_events_mv pre-filters to identified users (profile_id != device_id).
-      // When falling back to the raw events table, replicate that condition.
-      const firstIdentifiedFilter = useEventsFirst
-        ? 'AND e.profile_id != e.device_id'
-        : '';
-      const secondIdentifiedFilter = useEventsSecond
-        ? 'AND profile_id != device_id'
-        : '';
+        // cohort_events_mv pre-filters to identified users (profile_id != device_id).
+        // When falling back to the raw events table, replicate that condition.
+        const firstIdentifiedFilter = useEventsFirst
+          ? 'AND e.profile_id != e.device_id'
+          : '';
+        const secondIdentifiedFilter = useEventsSecond
+          ? 'AND profile_id != device_id'
+          : '';
 
-      // For custom events, use the pre-built WHERE clause (includes component filters).
-      // For regular events, use whereEventNameIs() + separate filter clause.
-      // Outer series-level filters (firstEventWhere) are always applied on top.
-      const firstWhereClause = firstEventCustomWhere
-        ? `${firstEventCustomWhere}`
-        : `${getConcreteEventNameWhereClause(firstEvent)}`;
-      const firstFilterClause = firstEventWhere;
+        // For custom events, use the pre-built WHERE clause (includes component filters).
+        // For regular events, use whereEventNameIs() + separate filter clause.
+        // Outer series-level filters (firstEventWhere) are always applied on top.
+        const firstWhereClause = firstEventCustomWhere
+          ? `${firstEventCustomWhere}`
+          : `${getConcreteEventNameWhereClause(firstEvent)}`;
+        const firstFilterClause = firstEventWhere;
 
-      const secondWhereClause = secondEventCustomWhere
-        ? `${secondEventCustomWhere}`
-        : `${getRetentionReturnEventWhereClause(secondEvent)}`;
-      const secondFilterClause = secondEventWhere;
+        const secondWhereClause = secondEventCustomWhere
+          ? `${secondEventCustomWhere}`
+          : `${getRetentionReturnEventWhereClause(secondEvent)}`;
+        const secondFilterClause = secondEventWhere;
 
-      const firstTimeStartExpression = `toDate('${utc(dates.startDate)}', '${timezone}')`;
-      const firstTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}')`;
-      const secondTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval} - INTERVAL 1 SECOND`;
-      const firstEventFirstTimeCte = firstEventFirstTimeFilter
-        ? `first_event_first_time AS (${buildRetentionFirstTimeCteSql({
-            projectId,
-            eventPredicate: firstWhereClause,
-            startExpression: firstTimeStartExpression,
-            endExpression: firstTimeEndExpression,
-          })}),`
-        : '';
-      const secondEventFirstTimeCte = secondEventFirstTimeFilter
-        ? `second_event_first_time AS (${buildRetentionFirstTimeCteSql({
-            projectId,
-            eventPredicate: secondWhereClause,
-            startExpression: firstTimeStartExpression,
-            endExpression: secondTimeEndExpression,
-          })}),`
-        : '';
-      const firstEventFirstTimeJoin = firstEventFirstTimeFilter
-        ? 'INNER JOIN first_event_first_time AS first_ft ON first_ft.ft_profile_id = e.profile_id AND first_ft.first_created_at = e.created_at'
-        : '';
-      const secondEventFirstTimeJoin = secondEventFirstTimeFilter
-        ? 'INNER JOIN second_event_first_time AS second_ft ON second_ft.ft_profile_id = profile_id AND second_ft.first_created_at = created_at'
-        : '';
+        const firstTimeStartExpression = `toDate('${utc(dates.startDate)}', '${timezone}')`;
+        const firstTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}')`;
+        const secondTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval} - INTERVAL 1 SECOND`;
+        const firstEventFirstTimeCte = firstEventFirstTimeFilter
+          ? `first_event_first_time AS (${buildRetentionFirstTimeCteSql({
+              projectId,
+              eventPredicate: firstWhereClause,
+              startExpression: firstTimeStartExpression,
+              endExpression: firstTimeEndExpression,
+            })}),`
+          : '';
+        const secondEventFirstTimeCte = secondEventFirstTimeFilter
+          ? `second_event_first_time AS (${buildRetentionFirstTimeCteSql({
+              projectId,
+              eventPredicate: secondWhereClause,
+              startExpression: firstTimeStartExpression,
+              endExpression: secondTimeEndExpression,
+            })}),`
+          : '';
+        const firstEventFirstTimeJoin = firstEventFirstTimeFilter
+          ? 'INNER JOIN first_event_first_time AS first_ft ON first_ft.ft_profile_id = e.profile_id AND first_ft.first_created_at = e.created_at'
+          : '';
+        const secondEventFirstTimeJoin = secondEventFirstTimeFilter
+          ? 'INNER JOIN second_event_first_time AS second_ft ON second_ft.ft_profile_id = profile_id AND second_ft.first_created_at = created_at'
+          : '';
 
-      const breakdownSelectClause = breakdownSelects.length
-        ? `,\n            ${breakdownSelects.join(',\n            ')}`
-        : '';
-      const cohortUsersGroupBy = breakdownSelects.length
-        ? 'GROUP BY userID, project_id, cohort_interval'
-        : '';
-      const cohortIntervalSelect = toStartOfCohortInterval('e.created_at');
-      const displayIntervalSelect = breakdownSelects.length
-        ? `any(${toStartOfInterval(cohortIntervalSelect)})`
-        : toStartOfInterval('e.created_at');
-      const topBreakdownsCtes = breakdownAliases.length
-        ? `top_breakdowns AS (
-          SELECT ${breakdownAliases.join(', ')}, count() AS breakdown_users
-          FROM cohort_users
-          GROUP BY ${breakdownAliases.join(', ')}
-          ORDER BY breakdown_users DESC
-          LIMIT ${topN}
-        ),
-        limited_cohort_users AS (
-          SELECT cu.*
-          FROM cohort_users AS cu
-          INNER JOIN top_breakdowns AS tb ON ${breakdownAliases
-            .map((alias) => `cu.${alias} = tb.${alias}`)
-            .join(' AND ')}
-        ),`
-        : '';
-      const cohortUsersSource = breakdownAliases.length
-        ? 'limited_cohort_users'
-        : 'cohort_users';
-      const breakdownColumns = breakdownAliases.length
-        ? `, ${breakdownAliases.join(', ')}`
-        : '';
-      const breakdownColumnsFromFirst = breakdownAliases.length
-        ? `, ${breakdownAliases.map((alias) => `f.${alias}`).join(', ')}`
-        : '';
-      const breakdownColumnsFromCohortSizes = breakdownAliases.length
-        ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
-        : '';
-      const breakdownJoin = breakdownAliases.length
-        ? ` AND ${breakdownAliases
-            .map((alias) => `cs.${alias} = r.${alias}`)
-            .join(' AND ')}`
-        : '';
-      const breakdownOrder = breakdownAliases.length
-        ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
-        : '';
+        const breakdownSelectClause = breakdownSelects.length
+          ? `,\n            ${breakdownSelects.join(',\n            ')}`
+          : '';
+        const cohortUsersGroupBy = breakdownSelects.length
+          ? 'GROUP BY userID, project_id, cohort_interval'
+          : '';
+        const cohortIntervalSelect = toStartOfCohortInterval('e.created_at');
+        const displayIntervalSelect = breakdownSelects.length
+          ? `any(${toStartOfInterval(cohortIntervalSelect)})`
+          : toStartOfInterval('e.created_at');
+        const topBreakdownsCtes = breakdownAliases.length
+          ? `top_breakdowns AS (
+            SELECT ${breakdownAliases.join(', ')}, count() AS breakdown_users
+            FROM cohort_users
+            GROUP BY ${breakdownAliases.join(', ')}
+            ORDER BY breakdown_users DESC
+            LIMIT ${topN}
+          ),
+          limited_cohort_users AS (
+            SELECT cu.*
+            FROM cohort_users AS cu
+            INNER JOIN top_breakdowns AS tb ON ${breakdownAliases
+              .map((alias) => `cu.${alias} = tb.${alias}`)
+              .join(' AND ')}
+          ),`
+          : '';
+        const cohortUsersSource = breakdownAliases.length
+          ? 'limited_cohort_users'
+          : 'cohort_users';
+        const breakdownColumns = breakdownAliases.length
+          ? `, ${breakdownAliases.join(', ')}`
+          : '';
+        const breakdownColumnsFromFirst = breakdownAliases.length
+          ? `, ${breakdownAliases.map((alias) => `f.${alias}`).join(', ')}`
+          : '';
+        const breakdownColumnsFromCohortSizes = breakdownAliases.length
+          ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
+          : '';
+        const breakdownJoin = breakdownAliases.length
+          ? ` AND ${breakdownAliases
+              .map((alias) => `cs.${alias} = r.${alias}`)
+              .join(' AND ')}`
+          : '';
+        const breakdownOrder = breakdownAliases.length
+          ? `, ${breakdownAliases.map((alias) => `cs.${alias}`).join(', ')}`
+          : '';
 
-      // The day-0 cohort restriction is the ONLY thing that varies between
-      // bucket runs, so the template becomes a function of it. With no
-      // breakdown this is called exactly once with the report filter's own
-      // clause, producing the same SQL as before.
-      const buildCohortQuery = (dayZeroClause: string) => `
-        WITH
-        ${traitBreakdownCtes}
-        ${firstEventFirstTimeCte}
-        ${secondEventFirstTimeCte}
-        cohort_users AS (
-          SELECT
-            e.profile_id AS userID,
-            e.project_id,
-            ${displayIntervalSelect} AS display_interval,
-            ${cohortIntervalSelect} AS cohort_interval
-            ${breakdownSelectClause}
-          FROM ${firstEventTable} AS e
-          ${firstEventJoin}
-          ${firstEventFirstTimeJoin}
-          WHERE ${firstWhereClause}
-            AND e.project_id = ${sqlstring.escape(projectId)}
-            AND e.created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
-            ${firstIdentifiedFilter}
-            ${firstFilterClause}
-            ${dayZeroClause}
-          ${cohortUsersGroupBy}
-        ),
-        ${topBreakdownsCtes}
-        last_event AS
-        (
+        // The day-0 cohort restriction is the ONLY thing that varies between
+        // bucket runs, so the template becomes a function of it. With no
+        // breakdown this is called exactly once with the report filter's own
+        // clause, producing the same SQL as before.
+        const buildCohortQuery = (dayZeroClause: string) => `
+          WITH
+          ${traitBreakdownCtes}
+          ${firstEventFirstTimeCte}
+          ${secondEventFirstTimeCte}
+          cohort_users AS (
             SELECT
-                profile_id,
-                project_id,
-                toDate(created_at, '${timezone}') AS event_date
-                ${retentionPropertyExpr ? `, ${retentionPropertyExpr} AS retention_property_value` : ''}
-            FROM ${secondEventTable}
-            ${secondEventJoin}
-            ${secondEventFirstTimeJoin}
-            WHERE ${secondWhereClause}
-            AND project_id = ${sqlstring.escape(projectId)}
-            AND created_at >= toDate('${utc(dates.startDate)}', '${timezone}')
-            AND created_at < toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}
-            ${secondIdentifiedFilter}
-            ${secondFilterClause}
-        ),
-        retention_matrix AS
-        (
+              e.profile_id AS userID,
+              e.project_id,
+              ${displayIntervalSelect} AS display_interval,
+              ${cohortIntervalSelect} AS cohort_interval
+              ${breakdownSelectClause}
+            FROM ${firstEventTable} AS e
+            ${firstEventJoin}
+            ${firstEventFirstTimeJoin}
+            WHERE ${firstWhereClause}
+              AND e.project_id = ${sqlstring.escape(projectId)}
+              AND e.created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
+              ${firstIdentifiedFilter}
+              ${firstFilterClause}
+              ${dayZeroClause}
+            ${cohortUsersGroupBy}
+          ),
+          ${topBreakdownsCtes}
+          last_event AS
+          (
+              SELECT
+                  profile_id,
+                  project_id,
+                  toDate(created_at, '${timezone}') AS event_date
+                  ${retentionPropertyExpr ? `, ${retentionPropertyExpr} AS retention_property_value` : ''}
+              FROM ${secondEventTable}
+              ${secondEventJoin}
+              ${secondEventFirstTimeJoin}
+              WHERE ${secondWhereClause}
+              AND project_id = ${sqlstring.escape(projectId)}
+              AND created_at >= toDate('${utc(dates.startDate)}', '${timezone}')
+              AND created_at < toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}
+              ${secondIdentifiedFilter}
+              ${secondFilterClause}
+          ),
+          retention_matrix AS
+          (
+            SELECT
+                f.cohort_interval,
+                l.profile_id,
+                ${breakdownColumnsFromFirst.replace(/^, /, '')}${breakdownColumnsFromFirst ? ',' : ''}
+                ${retentionPropertyExpr ? 'l.retention_property_value,' : ''}
+                ${getRetentionElapsedIntervalExpression(
+                  retentionUnit,
+                  'f.cohort_interval',
+                  'l.event_date'
+                )} AS x_after_cohort
+            FROM ${cohortUsersSource} AS f
+            INNER JOIN last_event AS l ON f.userID = l.profile_id
+            WHERE (l.event_date >= f.cohort_interval)
+            AND (l.event_date < (f.cohort_interval + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}))
+          ),
+          cohort_sizes AS (
+            SELECT
+              cohort_interval,
+              any(display_interval) AS display_interval,
+              COUNT(DISTINCT userID) AS total_first_event_count
+              ${breakdownColumns}
+            FROM ${cohortUsersSource}
+            GROUP BY cohort_interval${breakdownColumns}
+          )
           SELECT
-              f.cohort_interval,
-              l.profile_id,
-              ${breakdownColumnsFromFirst.replace(/^, /, '')}${breakdownColumnsFromFirst ? ',' : ''}
-              ${retentionPropertyExpr ? 'l.retention_property_value,' : ''}
-              ${getRetentionElapsedIntervalExpression(
-                retentionUnit,
-                'f.cohort_interval',
-                'l.event_date'
-              )} AS x_after_cohort
-          FROM ${cohortUsersSource} AS f
-          INNER JOIN last_event AS l ON f.userID = l.profile_id
-          WHERE (l.event_date >= f.cohort_interval)
-          AND (l.event_date < (f.cohort_interval + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}))
-        ),
-        cohort_sizes AS (
-          SELECT
-            cohort_interval,
-            any(display_interval) AS display_interval,
-            COUNT(DISTINCT userID) AS total_first_event_count
-            ${breakdownColumns}
-          FROM ${cohortUsersSource}
-          GROUP BY cohort_interval${breakdownColumns}
-        )
-        SELECT
-          cs.display_interval,
-          cs.cohort_interval,
-          cs.total_first_event_count,
-          ${maturedIntervalsSelect} AS matured_intervals,
-          ${breakdownColumnsFromCohortSizes.replace(/^, /, '')}${breakdownColumnsFromCohortSizes ? ',' : ''}
-          ${countsSelect}
-          ${propertyAverageDenominatorSelect}
-        FROM cohort_sizes cs
-        LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval${breakdownJoin}
-        GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count${breakdownColumnsFromCohortSizes}
-        ORDER BY cs.cohort_interval ASC${breakdownOrder}
-      `;
+            cs.display_interval,
+            cs.cohort_interval,
+            cs.total_first_event_count,
+            ${maturedIntervalsSelect} AS matured_intervals,
+            ${breakdownColumnsFromCohortSizes.replace(/^, /, '')}${breakdownColumnsFromCohortSizes ? ',' : ''}
+            ${countsSelect}
+            ${propertyAverageDenominatorSelect}
+          FROM cohort_sizes cs
+          LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval${breakdownJoin}
+          GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count${breakdownColumnsFromCohortSizes}
+          ORDER BY cs.cohort_interval ASC${breakdownOrder}
+        `;
+        return buildCohortQuery;
+      };
+      const buildCohortQuery = buildCohortQueryFor(breakdowns);
 
-      const runRetention = async (dayZeroClause: string) => {
-        const query = buildCohortQuery(dayZeroClause);
+      const runRetention = async (
+        dayZeroClause: string,
+        build: (dayZeroClause: string) => string = buildCohortQuery,
+      ) => {
+        const query = build(dayZeroClause);
         const rows = await chQuery<{
           display_interval?: string;
           cohort_interval: string;
@@ -2055,6 +2106,23 @@ export const chartRouter = createTRPCRouter({
       //
       // Bounded concurrency: retention is an expensive query and a 2-cohort
       // breakdown is already 4 of them.
+      // Whole-population companion. With a breakdown every row on screen is
+      // one bucket (or the top-N of them), so the report's own retention curve
+      // — the number the buckets are read against — is nowhere. Re-run with no
+      // breakdown and no cohort bucket, keeping the report filter. Returned as
+      // a separate `overall` field, never mixed into `data`/`buckets`: colours
+      // and grouping there are positional.
+      const runOverallRetention = async () => {
+        if (breakdowns.length === 0 && retentionCohortBuckets.length === 0) {
+          return null;
+        }
+        const run = await runRetention(
+          retentionAudienceClause,
+          buildCohortQueryFor([]),
+        );
+        return { data: run.data, query: run.query };
+      };
+
       if (retentionCohortBuckets.length > 0) {
         const results: Array<{
           cohortId: string;
@@ -2064,8 +2132,9 @@ export const chartRouter = createTRPCRouter({
           query: string;
         }> = new Array(retentionCohortBuckets.length);
         let cursor = 0;
-        await Promise.all(
-          Array.from(
+        const [overall] = await Promise.all([
+          runOverallRetention(),
+          ...Array.from(
             { length: Math.min(2, retentionCohortBuckets.length) },
             async () => {
               while (cursor < retentionCohortBuckets.length) {
@@ -2091,7 +2160,7 @@ export const chartRouter = createTRPCRouter({
               }
             },
           ),
-        );
+        ]);
 
         return {
           // Deliberately EMPTY when buckets are present. Mirroring the first
@@ -2102,17 +2171,30 @@ export const chartRouter = createTRPCRouter({
           // is to make `buckets` the only answer.
           data: [] as (typeof results)[number]['data'],
           buckets: results,
-          queries: results.map((r) => r.query),
+          queries: [
+            ...results.map((r) => r.query),
+            ...(overall ? [overall.query] : []),
+          ],
+          overall: overall?.data ?? null,
           timezone,
           membershipAsOf,
         };
       }
 
-      const single = await runRetention(retentionAudienceClause);
+      const [single, overall] = await Promise.all([
+        runRetention(retentionAudienceClause),
+        runOverallRetention(),
+      ]);
 
       return {
         data: single.data,
-        queries: [single.query],
+        queries: [single.query, ...(overall ? [overall.query] : [])],
+        /**
+         * Whole-population retention for the same report, present only when a
+         * property or cohort breakdown is set; `null` otherwise (then `data`
+         * already is the overall).
+         */
+        overall: overall?.data ?? null,
         timezone,
         // The instant membership was evaluated at, returned for the same reason
         // the chart path returns it: a drill-down must reproduce this exact

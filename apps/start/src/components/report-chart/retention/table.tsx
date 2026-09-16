@@ -67,9 +67,14 @@ export function getCohortBreakdownGroups(
 
 interface CohortTableProps {
   data: CohortRow[];
+  /** Whole-population rows, present only with a breakdown. See index.tsx. */
+  overall?: CohortRow[] | null;
 }
 
-const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
+/** Group key reserved for the pinned whole-population row. */
+export const OVERALL_GROUP_KEY = '__overall__';
+
+const CohortTable: React.FC<CohortTableProps> = ({ data, overall }) => {
   const {
     report: { unit, options, breakdowns, series },
   } = useReportChartContext();
@@ -92,6 +97,23 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
     (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey),
   );
   const breakdownGroups = hasBreakdowns ? getCohortBreakdownGroups(data) : [];
+  // Pinned above the buckets, outside their sort/top-N and colour index. Its
+  // own cohorts expand like any group; no screenshot (it has no breakdown
+  // value to look one up by) and no rocket (it is not a competitor).
+  const overallGroup: CohortBreakdownGroup | null =
+    hasBreakdowns && overall && overall.length > 0
+      ? (() => {
+          const summary =
+            overall.find((row) => row.cohort_interval === 'Weighted Average') ??
+            overall[0]!;
+          return {
+            key: OVERALL_GROUP_KEY,
+            label: 'Overall',
+            summary,
+            cohorts: overall.filter((row) => row !== summary),
+          };
+        })()
+      : null;
   const screenshotSeries = breakdownGroups.flatMap((group) => {
     const event = series[0];
     if (!event || event.type !== 'event') return [];
@@ -270,13 +292,28 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
               </tr>
             </thead>
             {hasBreakdowns ? (
-              breakdownGroups.map((group, groupIndex) => {
+              [
+                ...(overallGroup ? [overallGroup] : []),
+                ...breakdownGroups,
+              ].map((group, index) => {
+                const isOverall = group.key === OVERALL_GROUP_KEY;
+                // Colour index stays positional in breakdownGroups so pinning
+                // the Overall row does not shift every bucket's colour.
+                const groupIndex = overallGroup ? index - 1 : index;
                 const isExpanded = expandedGroups.has(group.key);
-                const cohortRowsId = `${disclosureId}-cohorts-${groupIndex}`;
+                const cohortRowsId = `${disclosureId}-cohorts-${group.key.replace(/\W/g, '')}`;
                 return (
                   <Fragment key={group.key}>
                     <tbody>
-                      <tr className="border-t bg-def-50">
+                      <tr
+                        className={cn(
+                          'border-t bg-def-50',
+                          isOverall && 'border-b-2',
+                        )}
+                        data-testid={
+                          isOverall ? 'retention-overall-row' : undefined
+                        }
+                      >
                         <td className="sticky left-0 z-10 min-w-52 bg-def-50 p-0">
                           <button
                             aria-controls={cohortRowsId}
@@ -287,11 +324,16 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
                           >
                             <span
                               aria-hidden
-                              className="size-3 shrink-0 rounded-sm"
+                              className={cn(
+                                'size-3 shrink-0 rounded-sm',
+                                isOverall && 'border-2 border-foreground/50',
+                              )}
                               data-breakdown-color
-                              style={{
-                                backgroundColor: getChartColor(groupIndex),
-                              }}
+                              style={
+                                isOverall
+                                  ? undefined
+                                  : { backgroundColor: getChartColor(groupIndex) }
+                              }
                             />
                             {isExpanded ? (
                               <ChevronDown className="size-4 shrink-0" />
@@ -301,7 +343,7 @@ const CohortTable: React.FC<CohortTableProps> = ({ data }) => {
                             <span className="truncate" title={group.label}>
                               {group.label}
                             </span>
-                            {series[0]?.type === 'event' && (
+                            {!isOverall && series[0]?.type === 'event' && (
                               <ReportSeriesScreenshot
                                 eventName={`${series[0].name} — ${group.label}`}
                                 serieId={group.key}

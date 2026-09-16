@@ -3,10 +3,13 @@ import { useReportChartContext } from '../context';
 import { compactMetricGridClassName } from './metric-card-layout';
 import { MetricCard } from './metric-card';
 import type { IVisibleSeries } from '@/hooks/use-visible-series';
+import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 
 interface Props {
   series: IVisibleSeries;
+  /** Whole-population series, present only with a breakdown. */
+  overall?: IChartData['series'][number] | null;
 }
 
 export function shouldForceCompactMetricLayout(
@@ -16,7 +19,7 @@ export function shouldForceCompactMetricLayout(
   return metricLayout === 'hero' && seriesCount > 1;
 }
 
-export function Chart({ series }: Props) {
+export function Chart({ series, overall }: Props) {
   const {
     options,
     report: { unit },
@@ -28,11 +31,12 @@ export function Chart({ series }: Props) {
   // When formulas exist, only show formula series (like Mixpanel does)
   const displaySeries = useMemo(() => {
     const hasFormulas = series.some((s) => s.serieType === 'formula');
-    if (hasFormulas) {
-      return series.filter((s) => s.serieType === 'formula');
-    }
-    return series;
-  }, [series]);
+    const buckets = hasFormulas
+      ? series.filter((s) => s.serieType === 'formula')
+      : series;
+    // The un-split number first, so each bucket card is read against it.
+    return overall ? [overall, ...buckets] : buckets;
+  }, [series, overall]);
 
   if (isHero && displaySeries.length === 1) {
     return (

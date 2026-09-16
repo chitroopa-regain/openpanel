@@ -15,6 +15,7 @@ import {
   useVisibleSeries,
 } from '@/hooks/use-visible-series';
 import type { IChartData } from '@/trpc/client';
+import { getOverallSerie } from '../common/overall-series';
 
 export function ReportMetricChart() {
   const { isLazyLoading, report, shareId, options } = useReportChartContext();
@@ -82,18 +83,20 @@ function MetricContent({
     isEditMode ? 20 : 4,
     hiddenSeriesIds
   );
+  // Whole-population card beside the bucket cards (server companion).
+  const overall = useMemo(() => getOverallSerie(data), [data]);
 
   if (showChart && !showTable && isHero && !isPlainHero) {
     return (
       <AspectContainer className="max-h-[620px] min-h-[420px]">
-        <Chart series={series} />
+        <Chart overall={overall} series={series} />
       </AspectContainer>
     );
   }
 
   return (
     <div className="col h-full gap-4">
-      {showChart && <Chart series={series} />}
+      {showChart && <Chart overall={overall} series={series} />}
       {showTable && (
         <ReportTable
           data={data}

@@ -25,7 +25,12 @@ import { getChartColor } from '@/utils/theme';
 interface Props {
   // Rows may carry a custom-cohort bucket identity; see table.tsx.
   data: CohortRow[];
+  /** Whole-population rows, present only with a breakdown. See index.tsx. */
+  overall?: CohortRow[] | null;
 }
+
+/** Recharts dataKey for the pinned whole-population line. */
+const OVERALL_SERIES_KEY = 'series_overall';
 
 export function toChartValue(
   value: number | string | null | undefined,
@@ -63,7 +68,11 @@ function getNiceTicks(max: number, isPercentage: boolean): number[] {
   return [0, Math.ceil(max)];
 }
 
-function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
+export function getBreakdownChartState(
+  data: Props['data'],
+  isPercentage: boolean,
+  overall?: Props['overall']
+) {
   const averageRows = data.filter(
     (row) => row.cohort_interval === 'Weighted Average'
   );
@@ -73,12 +82,22 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
       row.breakdowns.length > 0 ||
       Boolean((row as { cohortKey?: string }).cohortKey),
   );
+  // The whole-population curve drawn beside the buckets. Only meaningful with
+  // a breakdown (without one the single series already is the overall).
+  const overallRow = hasBreakdowns
+    ? overall?.find((row) => row.cohort_interval === 'Weighted Average') ??
+      null
+    : null;
   const dataSource = isPercentage
     ? averageRow?.percentages
     : averageRow?.values;
   const rechartData = hasBreakdowns
     ? Array.from({
-        length: Math.max(...averageRows.map((row) => row.values.length), 0),
+        length: Math.max(
+          ...averageRows.map((row) => row.values.length),
+          overallRow?.values.length ?? 0,
+          0
+        ),
       }).map((_, dayIndex) => ({
         days: dayIndex,
         ...Object.fromEntries(
@@ -92,6 +111,16 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
             ),
           ])
         ),
+        ...(overallRow
+          ? {
+              [OVERALL_SERIES_KEY]: toChartValue(
+                isPercentage
+                  ? overallRow.percentages[dayIndex]
+                  : overallRow.values[dayIndex],
+                isPercentage
+              ),
+            }
+          : {}),
       }))
     : dataSource?.map((item, index) => ({
         days: index,
@@ -101,7 +130,7 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
       }));
   const dataMax = hasBreakdowns
     ? Math.max(
-        ...averageRows.flatMap((row) =>
+        ...[...averageRows, ...(overallRow ? [overallRow] : [])].flatMap((row) =>
           isPercentage
             ? row.percentages
                 .filter((value): value is number => value !== null)
@@ -118,10 +147,17 @@ function getBreakdownChartState(data: Props['data'], isPercentage: boolean) {
           ) ?? [0])
       );
 
-  return { averageRow, averageRows, dataMax, hasBreakdowns, rechartData };
+  return {
+    averageRow,
+    averageRows,
+    dataMax,
+    hasBreakdowns,
+    overallRow,
+    rechartData,
+  };
 }
 
-export function Chart({ data }: Props) {
+export function Chart({ data, overall }: Props) {
   const {
     report: {
       breakdowns,
@@ -145,8 +181,14 @@ export function Chart({ data }: Props) {
     hide: hideYAxis,
     tickFormatter: isPercentage ? (value) => `${value}%` : undefined,
   });
-  const { averageRow, averageRows, dataMax, hasBreakdowns, rechartData } =
-    getBreakdownChartState(data, isPercentage);
+  const {
+    averageRow,
+    averageRows,
+    dataMax,
+    hasBreakdowns,
+    overallRow,
+    rechartData,
+  } = getBreakdownChartState(data, isPercentage, overall);
   const normalizedAverageValues = (
     isPercentage ? averageRow?.percentages : averageRow?.values
   )
@@ -189,6 +231,15 @@ export function Chart({ data }: Props) {
 
   const breakdownLegend = () => (
     <div className="flex flex-wrap justify-center gap-3 text-xs">
+      {overallRow && (
+        <div className="flex items-center gap-1" key="retention:overall">
+          <span
+            aria-hidden
+            className="inline-block h-0 w-4 border-t-2 border-dashed border-foreground/70"
+          />
+          <span className="font-medium">Overall</span>
+        </div>
+      )}
       {averageRows.map((row, index) => (
         <div className="flex items-center gap-1" key={`retention:${index}`}>
           <ReportSeriesScreenshot
@@ -285,6 +336,21 @@ export function Chart({ data }: Props) {
                   type={'monotone'}
                 />
               </>
+            )}
+            {hasBreakdowns && overallRow && (
+              <Area
+                dataKey={OVERALL_SERIES_KEY}
+                fill="transparent"
+                isAnimationActive={false}
+                key="retention:overall"
+                name="Overall"
+                // Neutral and dashed: the palette belongs to the buckets.
+                stroke="currentColor"
+                strokeDasharray="6 4"
+                strokeOpacity={0.7}
+                strokeWidth={2}
+                type="monotone"
+              />
             )}
             {hasBreakdowns &&
               averageRows.map((row, index) => (

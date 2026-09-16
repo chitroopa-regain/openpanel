@@ -42,6 +42,11 @@ import { pushModal } from '@/modals';
 import type { IChartData } from '@/trpc/client';
 import { cn } from '@/utils/cn';
 import { getChartColor } from '@/utils/theme';
+import {
+  getOverallSerie,
+  OVERALL_SERIE_ID,
+  OVERALL_STROKE,
+} from '../common/overall-series';
 
 interface Props {
   data: IChartData;
@@ -88,7 +93,18 @@ export function Chart({ data }: Props) {
     undefined,
     hiddenSeriesIds
   );
-  const rechartData = useRechartDataModel(series);
+  // Whole-population line beside the stacked buckets (server companion, see
+  // overall-series.ts). Appended AFTER the visible series so it never shifts
+  // a bucket's positional colour; drawn neutral, dashed and unstacked.
+  const overallSerie = useMemo(() => getOverallSerie(data), [data]);
+  const modelSeries = useMemo(
+    () =>
+      overallSerie
+        ? [...series, { ...overallSerie, index: series.length }]
+        : series,
+    [series, overallSerie]
+  );
+  const rechartData = useRechartDataModel(modelSeries);
 
   let dotIndex: number | undefined;
   if (range === 'today') {
@@ -126,6 +142,15 @@ export function Chart({ data }: Props) {
   const CustomLegend = useCallback(() => {
     return (
       <div className="mt-4 -mb-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs">
+        {overallSerie && (
+          <div className="flex items-center gap-1" key={OVERALL_SERIE_ID}>
+            <span
+              aria-hidden
+              className="inline-block h-0 w-4 border-t-2 border-dashed border-foreground/70"
+            />
+            <span className="font-semibold">{overallSerie.names[0]}</span>
+          </div>
+        )}
         {series.map((serie) => (
           <div
             className="flex items-center gap-1"
@@ -145,7 +170,7 @@ export function Chart({ data }: Props) {
         ))}
       </div>
     );
-  }, [data.series, series]);
+  }, [data.series, series, overallSerie]);
 
   const yAxisProps = useYAxisProps({
     hide: hideYAxis,
@@ -325,6 +350,20 @@ export function Chart({ data }: Props) {
                   />
                 );
               })}
+              {overallSerie && (
+                <Line
+                  dataKey={`${OVERALL_SERIE_ID}:count`}
+                  dot={false}
+                  isAnimationActive={false}
+                  key={OVERALL_SERIE_ID}
+                  name={OVERALL_SERIE_ID}
+                  stroke={OVERALL_STROKE}
+                  strokeDasharray="6 4"
+                  strokeOpacity={0.7}
+                  strokeWidth={2}
+                  type={lineType}
+                />
+              )}
               {previous &&
                 series.map((serie) => {
                   const color = getChartColor(serie.index);
