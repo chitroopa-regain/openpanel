@@ -1122,9 +1122,19 @@ export class FunnelService {
     cohortFilters,
     membershipAsOf,
     extraCohortPredicate = null,
+    skipTimingOnRawPath = false,
   }: IReportInput & {
     timezone: string;
     events?: IChartEvent[];
+    /**
+     * Skip the time-between-steps median query when the funnel runs on the
+     * raw `events` table. Used for the auxiliary "overall" run that
+     * accompanies a breakdown funnel: on the MV path the timing query is
+     * ~1-3 s, but on the raw path the step_N JOIN ladder is the slowest shape
+     * we have (90 s+), and doubling it for a supplementary row is not worth
+     * it. Steps then carry `medianTimeToConvertSeconds: null`.
+     */
+    skipTimingOnRawPath?: boolean;
     /**
      * The canonical instant cohort membership is evaluated at, supplied by the
      * caller. NOT defaulted to this call's own `endDate`: the router invokes
@@ -1544,7 +1554,9 @@ export class FunnelService {
       string,
       Record<string, number | null>
     > = new Map();
-    if (stepConditions.length >= 2) {
+    const runTiming =
+      stepConditions.length >= 2 && !(skipTimingOnRawPath && !useMv);
+    if (runTiming) {
       try {
         const allTimingEventNames = uniq(
           eventSeries.flatMap((e) =>

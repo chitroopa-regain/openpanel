@@ -507,6 +507,50 @@ export function BreakdownList({
 
   const stickySubHeaderStyle = { top: 48 };
 
+  // Whole-population funnel the server returns alongside a breakdown. Pinned
+  // above the bucket rows, outside sorting, top-N and visibility: it is the
+  // reference every bucket is read against, not one more bucket.
+  const overall = data.overall ?? null;
+
+  const stepCells = (
+    rowId: string,
+    rowSteps: FunnelSeries['steps'],
+    inspect: (stepIdx: number) => void
+  ) =>
+    rowSteps.map((step, stepIdx) => {
+      if (stepIdx === 0) {
+        return (
+          <td
+            // Each step is its own report series, so the event id is unique
+            // within a row; the index is only a fallback for unsaved steps.
+            key={`${rowId}-${step.event.id ?? stepIdx}`}
+            className="px-3 py-2 text-right font-mono whitespace-nowrap border-l border-border cursor-pointer hover:bg-muted/50"
+            onClick={() => inspect(stepIdx)}
+          >
+            {number.format(step.stepConversionCount)}
+          </td>
+        );
+      }
+      return (
+        <Fragment key={`${rowId}-${step.event.id ?? stepIdx}`}>
+          <td className="px-3 py-2 text-right font-mono border-l border-border whitespace-nowrap text-muted-foreground">
+            {step.medianTimeToConvertSeconds != null
+              ? formatDuration(step.medianTimeToConvertSeconds)
+              : '—'}
+          </td>
+          <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+            {number.formatWithUnit(step.stepConversionPercent / 100, '%')}
+          </td>
+          <td
+            className="px-3 py-2 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-muted/50"
+            onClick={() => inspect(stepIdx)}
+          >
+            {number.format(step.stepConversionCount)}
+          </td>
+        </Fragment>
+      );
+    });
+
   const sortableHeader = (
     key: SortKey,
     label: string,
@@ -787,6 +831,49 @@ export function BreakdownList({
           </tr>
         </thead>
         <tbody>
+          {overall && (
+            <tr
+              className="border-border border-b-2 hover:bg-muted/30"
+              data-testid="funnel-overall-row"
+            >
+              <td
+                className={`px-2 py-2 ${stickyLeft0}`}
+                style={stickySelectionStyle}
+              >
+                <div
+                  aria-hidden="true"
+                  className="size-4 shrink-0 rounded-[4px] border-2 border-foreground/50"
+                />
+              </td>
+              <td
+                className={`max-w-[200px] px-3 py-2 font-semibold ${stickyLeft1}`}
+                style={stickyBreakdownStyle}
+                title="Overall — all users, regardless of breakdown value"
+              >
+                <span className="truncate">Overall</span>
+              </td>
+              <td
+                className={`whitespace-nowrap px-3 py-2 text-right font-mono font-semibold ${stickyLeft2}`}
+                style={stickyTotalConversionStyle}
+              >
+                {formatFunnelMeasureValue(
+                  number,
+                  getFunnelMeasureValue(overall.lastStep, measure),
+                  measure
+                )}
+              </td>
+              {/* No breakdown values and no serie id: the drill-down lists
+                  the whole step population, which is what this row is. */}
+              {stepCells('overall', overall.steps, (stepIdx) =>
+                onInspectStep?.(stepIdx)
+              )}
+              <td
+                aria-hidden="true"
+                className="px-0 py-2"
+                style={scrollGutterStyle}
+              />
+            </tr>
+          )}
           {sortedBreakdowns.map((item) => {
             const isVisible = visibleSeriesIds.includes(item.id);
             const colorIndex = allBreakdowns.findIndex((b) => b.id === item.id);
@@ -868,44 +955,9 @@ export function BreakdownList({
                     measure
                   )}
                 </td>
-                {item.steps.map((step, stepIdx) => {
-                  if (stepIdx === 0) {
-                    return (
-                      <td
-                        key={`${item.id}-s${stepIdx}`}
-                        className="px-3 py-2 text-right font-mono whitespace-nowrap border-l border-border cursor-pointer hover:bg-muted/50"
-                        onClick={() =>
-                          onInspectStep?.(stepIdx, item.breakdowns, item.id)
-                        }
-                      >
-                        {number.format(step.stepConversionCount)}
-                      </td>
-                    );
-                  }
-                  return (
-                    <Fragment key={`${item.id}-s${stepIdx}`}>
-                      <td className="px-3 py-2 text-right font-mono border-l border-border whitespace-nowrap text-muted-foreground">
-                        {step.medianTimeToConvertSeconds != null
-                          ? formatDuration(step.medianTimeToConvertSeconds)
-                          : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
-                        {number.formatWithUnit(
-                          step.stepConversionPercent / 100,
-                          '%'
-                        )}
-                      </td>
-                      <td
-                        className="px-3 py-2 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-muted/50"
-                        onClick={() =>
-                          onInspectStep?.(stepIdx, item.breakdowns, item.id)
-                        }
-                      >
-                        {number.format(step.stepConversionCount)}
-                      </td>
-                    </Fragment>
-                  );
-                })}
+                {stepCells(item.id, item.steps, (stepIdx) =>
+                  onInspectStep?.(stepIdx, item.breakdowns, item.id)
+                )}
                 <td
                   aria-hidden="true"
                   className="px-0 py-2"

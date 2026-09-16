@@ -1505,14 +1505,27 @@ const StripedBarShape = (props: any) => {
   );
 };
 
-function FunnelOverallLegend({ percent }: { percent: number }) {
+function FunnelOverallLegend({
+  percent,
+  neutral = false,
+}: {
+  percent: number;
+  /**
+   * With breakdowns drawn, the first series colour belongs to a bucket, so
+   * the overall swatch must not borrow it.
+   */
+  neutral?: boolean;
+}) {
   const number = useNumber();
 
   return (
     <div className="flex items-center justify-center gap-2 text-sm">
       <div
-        className="size-2.5 rounded-[3px] shrink-0"
-        style={{ backgroundColor: getChartColor(0) }}
+        className={cn(
+          'size-2.5 rounded-[3px] shrink-0',
+          neutral && 'border-2 border-foreground/50'
+        )}
+        style={neutral ? undefined : { backgroundColor: getChartColor(0) }}
       />
       <span className="font-medium text-foreground">
         Overall • {number.formatWithUnit(percent / 100, '%')}
@@ -1633,11 +1646,15 @@ export function Chart({
     data.previous !== undefined &&
     data.previous.length > 0;
   const showPreviousBars = hasPrevious && !hasBreakdowns;
-  const showSingleFunnelLabels = !hasBreakdowns;
   const showBreakdownPreviewLabels =
     hasBreakdowns && options.showFunnelPreviewLabels === true;
   const isDashboardLayout = options.funnelLayout === 'dashboard';
-  const overallPercent = data.current[0]?.lastStep.percent;
+  // Single series: that series IS the overall. With breakdowns: the server's
+  // whole-population companion run (absent on responses cached before it
+  // existed, in which case the legend simply stays hidden).
+  const overallPercent = hasBreakdowns
+    ? data.overall?.lastStep.percent
+    : data.current[0]?.lastStep.percent;
   const steps = data.current[0]?.steps ?? [];
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -1737,14 +1754,17 @@ export function Chart({
           isDashboardLayout ? 'flex h-full min-h-0 flex-col' : 'card'
         )}
       >
-        {showSingleFunnelLabels && typeof overallPercent === 'number' && (
+        {typeof overallPercent === 'number' && (
           <div
             className={cn(
               'px-4 py-2',
               !isDashboardLayout && 'border-b border-border'
             )}
           >
-            <FunnelOverallLegend percent={overallPercent} />
+            <FunnelOverallLegend
+              neutral={hasBreakdowns}
+              percent={overallPercent}
+            />
           </div>
         )}
         {hasVisibleBreakdowns && !isDashboardLayout && (

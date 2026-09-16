@@ -943,22 +943,41 @@ export const chartRouter = createTRPCRouter({
       // can repeat the WHOLE thing per bucket: running the funnel per bucket
       // but the property stats once would attach one population's sums to
       // another's steps.
-      const runFunnelOnce = async (extraCohortPredicate: string | null) => {
+      const runFunnelOnce = async (
+        extraCohortPredicate: string | null,
+        runOptions: {
+          /**
+           * Override the report's breakdowns. The "overall" companion run
+           * passes `[]` so the same steps, filters and window are evaluated
+           * once for the whole population.
+           */
+          breakdowns?: typeof chartInput.breakdowns;
+          /** Skip the previous-period run even when the report asks for it. */
+          skipPrevious?: boolean;
+          skipTimingOnRawPath?: boolean;
+        } = {},
+      ) => {
+      const breakdowns = runOptions.breakdowns ?? chartInput.breakdowns;
+      const wantPrevious = chartInput.previous && !runOptions.skipPrevious;
       const [current, previous] = await Promise.all([
         funnelService.getFunnel({
           ...chartInput,
           ...currentPeriod,
+          breakdowns,
           timezone,
           membershipAsOf,
           extraCohortPredicate,
+          skipTimingOnRawPath: runOptions.skipTimingOnRawPath,
         }),
-        chartInput.previous
+        wantPrevious
           ? funnelService.getFunnel({
               ...chartInput,
               ...previousPeriod,
+              breakdowns,
               timezone,
               membershipAsOf,
               extraCohortPredicate,
+              skipTimingOnRawPath: runOptions.skipTimingOnRawPath,
             })
           : Promise.resolve(null),
       ]);
@@ -1025,7 +1044,7 @@ export const chartRouter = createTRPCRouter({
             groupBy: group,
             allEventNames,
             propertyKey: funnelProperty,
-            breakdowns: chartInput.breakdowns,
+            breakdowns,
             breakdownStep: funnelOptions.breakdownStep,
             timezone,
             // The SAME predicate the funnel above ran with, not a re-resolved
@@ -1045,7 +1064,7 @@ export const chartRouter = createTRPCRouter({
                 groupBy: group,
                 allEventNames,
                 propertyKey: funnelProperty,
-                breakdowns: chartInput.breakdowns,
+                breakdowns,
                 breakdownStep: funnelOptions.breakdownStep,
                 timezone,
                 // Previous period, same membership instant, same predicate.
@@ -1066,6 +1085,31 @@ export const chartRouter = createTRPCRouter({
         return { current, previous };
       };
 
+      // Overall companion series. A breakdown funnel only shows one row per
+      // bucket, and when the breakdown is extracted from a later step every
+      // entity that dropped off before that step lands in "Not set" — so the
+      // funnel's own step-to-step conversion is nowhere on screen. Run the same
+      // funnel once more with no breakdown (and no cohort bucket) so the UI
+      // can pin an "Overall" row above the buckets. Only when there IS a
+      // breakdown; a plain funnel already is the overall.
+      //
+      // Computed in JS from the bucket rows this would be wrong: an entity
+      // may sit in several buckets when the breakdown is taken from all
+      // steps, and medians cannot be summed. One extra windowFunnel query
+      // (timing skipped on the raw path) is the honest price.
+      const hasPropertyBreakdown = (chartInput.breakdowns?.length ?? 0) > 0;
+      const runOverall = async () => {
+        if (!hasPropertyBreakdown && funnelCohortBuckets.length === 0) {
+          return null;
+        }
+        const run = await runFunnelOnce(null, {
+          breakdowns: [],
+          skipPrevious: true,
+          skipTimingOnRawPath: true,
+        });
+        return run.current.data[0] ?? null;
+      };
+
       // Breakdown by cohort: one full funnel per bucket, `In 'X'` and
       // `Not In 'X'` per cohort. One query per bucket rather than a GROUP BY,
       // because cohorts overlap and a grouping would put each profile in
@@ -1076,8 +1120,9 @@ export const chartRouter = createTRPCRouter({
           result: Awaited<ReturnType<typeof runFunnelOnce>>;
         }> = new Array(funnelCohortBuckets.length);
         let cursor = 0;
-        await Promise.all(
-          Array.from(
+        const [overall] = await Promise.all([
+          runOverall(),
+          ...Array.from(
             { length: Math.min(2, funnelCohortBuckets.length) },
             async () => {
               while (cursor < funnelCohortBuckets.length) {
@@ -1090,7 +1135,7 @@ export const chartRouter = createTRPCRouter({
               }
             },
           ),
-        );
+        ]);
 
         // Label each bucket's series through the SAME `breakdowns` field the
         // property breakdown uses, so every funnel surface (chart, list,
@@ -1120,17 +1165,27 @@ export const chartRouter = createTRPCRouter({
             ...run.result.current.queries,
             ...(run.result.previous?.queries ?? []),
           ]),
+          overall,
           timezone,
           membershipAsOf,
         };
       }
 
-      const { current, previous } = await runFunnelOnce(null);
+      const [{ current, previous }, overall] = await Promise.all([
+        runFunnelOnce(null),
+        runOverall(),
+      ]);
 
       return {
         current: current.data,
         previous: previous?.data ?? null,
         queries: [...current.queries, ...(previous?.queries ?? [])],
+        /**
+         * The whole-population funnel for the current period, present only
+         * when the report has a property or cohort breakdown. `null` otherwise
+         * (the single series in `current` already is the overall).
+         */
+        overall,
         timezone,
         // Returned so a drill-down evaluates membership at exactly the instant
         // this response was computed at, instead of guessing from a bucket date.
