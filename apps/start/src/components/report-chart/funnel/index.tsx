@@ -21,7 +21,7 @@ import { parseCohortSerieId } from '../cohort-serie-id';
 import { useDispatch } from '@/redux';
 
 export function ReportFunnelChart() {
-  const { isLazyLoading, isEditMode, report, shareId } =
+  const { isLazyLoading, isEditMode, options, report, shareId } =
     useReportChartContext();
   const { showChart, showTable } = useReportDisplayVisibility();
   const trpc = useTRPC();
@@ -141,23 +141,43 @@ export function ReportFunnelChart() {
   }
 
   const hasBreakdowns = res.data.current.length > 1;
+  const isDashboardBoth =
+    options.displayLayout === 'dashboard' && showChart && showTable;
+  const chart = (
+    <Chart data={res.data} visibleBreakdowns={visibleBreakdowns} />
+  );
+  const table = (
+    <BreakdownList
+      data={res.data}
+      onInspectStep={handleInspectStep}
+      onToggleVisibility={handleToggleVisibility}
+      onTopNChange={handleTopNChange}
+      savedTopN={savedTopN}
+      visibleSeriesIds={visibleSeriesIds}
+    />
+  );
 
   return (
-    <div className="col h-full gap-4">
+    <div className="col h-full min-w-0 gap-4">
       {showChart && isEditMode && hasBreakdowns && <Summary data={res.data} />}
-      {showChart && (
-        <Chart data={res.data} visibleBreakdowns={visibleBreakdowns} />
-      )}
-      {showTable && (
-        <BreakdownList
-          data={res.data}
-          onInspectStep={handleInspectStep}
-          onToggleVisibility={handleToggleVisibility}
-          onTopNChange={handleTopNChange}
-          savedTopN={savedTopN}
-          visibleSeriesIds={visibleSeriesIds}
-        />
-      )}
+      {/* The dashboard chart uses h-full/min-h-0 internally. As a direct flex
+          sibling of the scrollable table it can shrink to almost zero. Give
+          both surfaces non-shrinking slots; ReportChart owns vertical scrolling
+          when the card is too short, while BreakdownList keeps its own scroll. */}
+      {showChart &&
+        (isDashboardBoth ? (
+          <div className="h-[320px] min-h-[320px] min-w-0 grow shrink-0">
+            {chart}
+          </div>
+        ) : (
+          chart
+        ))}
+      {showTable &&
+        (isDashboardBoth ? (
+          <div className="min-w-0 shrink-0">{table}</div>
+        ) : (
+          table
+        ))}
     </div>
   );
 }
