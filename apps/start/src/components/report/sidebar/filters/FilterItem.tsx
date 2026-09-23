@@ -214,6 +214,7 @@ export function PureFilterItem({
     } else if (filter.operator === 'is' || filter.operator === 'isNot') {
       filterValueControl = (
         <ComboboxAdvanced
+          allowCustomValue
           items={valuesCombobox}
           value={filter.value}
           className="min-w-0 flex-1"

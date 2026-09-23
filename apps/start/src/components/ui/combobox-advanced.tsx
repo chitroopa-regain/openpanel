@@ -1,5 +1,10 @@
 import { Badge } from '@/components/ui/badge';
-import { Command, CommandInput, CommandItem } from '@/components/ui/command';
+import {
+  Command,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import { ChevronsUpDownIcon } from 'lucide-react';
 import VirtualList from 'rc-virtual-list';
 import * as React from 'react';
@@ -16,13 +21,12 @@ import {
 type IValue = any;
 type IItem = Record<'value' | 'label', IValue>;
 
-const sanitize = (value: string) => {
-  return encodeURIComponent(value.replaceAll('"', '&quot;'));
-};
-
-const desanitize = (value: string) => {
-  return decodeURIComponent(value).replaceAll('&quot;', '"');
-};
+// cmdk uses values in DOM selectors and normalizes their case/whitespace.
+// Give it an opaque, reversible-free identity; filter values stay raw literals.
+const commandValue = (value: IValue) =>
+  `value-${Array.from(`${typeof value}:${String(value)}`, (char) =>
+    char.codePointAt(0)!.toString(16)
+  ).join('-')}`;
 
 interface ComboboxAdvancedProps {
   value: IValue[];
@@ -32,6 +36,7 @@ interface ComboboxAdvancedProps {
   className?: string;
   size?: ButtonProps['size'];
   children?: React.ReactNode;
+  allowCustomValue?: boolean;
 }
 
 export function ComboboxAdvanced({
@@ -42,6 +47,7 @@ export function ComboboxAdvanced({
   className,
   size,
   children,
+  allowCustomValue = false,
 }: ComboboxAdvancedProps) {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState('');
@@ -51,19 +57,28 @@ export function ComboboxAdvanced({
       !q ||
       (typeof item.label === 'string' &&
         item.label.toLowerCase().includes(q)) ||
-      (typeof item.value === 'string' &&
-        item.value.toLowerCase().includes(q)),
-    [],
+      (typeof item.value === 'string' && item.value.toLowerCase().includes(q)),
+    []
   );
 
-  const matchingItems = items.filter((item) =>
-    matchesQuery(item, inputValue.toLowerCase()),
+  const uniqueItems = React.useMemo(() => {
+    const seen = new Set<IValue>();
+    return items.filter((item) => {
+      if (seen.has(item.value)) return false;
+      seen.add(item.value);
+      return true;
+    });
+  }, [items]);
+  const matchingItems = uniqueItems.filter((item) =>
+    matchesQuery(
+      item,
+      (allowCustomValue ? inputValue.trim() : inputValue).toLowerCase()
+    )
   );
   const matchingValues = matchingItems.map((i) => i.value);
   const matchingCount = matchingItems.length;
   const allMatchingSelected =
-    matchingValues.length > 0 &&
-    matchingValues.every((v) => value.includes(v));
+    matchingValues.length > 0 && matchingValues.every((v) => value.includes(v));
   const someMatchingSelected = matchingValues.some((v) => value.includes(v));
 
   const toggleSelectAll = React.useCallback(() => {
@@ -76,11 +91,19 @@ export function ComboboxAdvanced({
   }, [allMatchingSelected, matchingValues, value, onChange]);
 
   const selectables = matchingItems.filter(
-    (item) => !value.find((s) => s === item.value),
+    (item) => !value.includes(item.value)
   );
+  // Filter persistence and SQL already trim boundaries. Show the exact value
+  // that will be applied instead of displaying a whitespace-sensitive literal.
+  const customValue = inputValue.trim();
+  const canSpecify =
+    allowCustomValue &&
+    customValue.length > 0 &&
+    !items.some((item) => item.value === customValue) &&
+    !value.includes(customValue);
 
   const renderItem = (item: IItem) => {
-    const checked = !!value.find((s) => s === desanitize(item.value));
+    const checked = value.includes(item.value);
     return (
       <CommandItem
         onMouseDown={(e) => {
@@ -89,30 +112,30 @@ export function ComboboxAdvanced({
         }}
         onSelect={() => {
           onChange(
-            value.includes(desanitize(item.value))
-              ? value.filter((s) => s !== desanitize(item.value))
-              : [...value, desanitize(item.value)],
+            checked
+              ? value.filter((s) => s !== item.value)
+              : Array.from(new Set([...value, item.value]))
           );
         }}
         className={'flex cursor-pointer items-center gap-2'}
-        value={item.value}
+        value={commandValue(item.value)}
       >
         <DumpCheckbox checked={checked} />
-        {desanitize(item?.label ?? item?.value)}
+        {item.label ?? item.value}
       </CommandItem>
     );
   };
 
   const data = React.useMemo(() => {
     return [
-      ...value.map((val) => {
+      ...Array.from(new Set(value)).map((val) => {
         const item = items.find((item) => item.value === val);
         return item
           ? { value: val, label: item.label }
           : { value: val, label: val };
       }),
       ...selectables,
-    ].filter((item) => item.value);
+    ];
   }, [selectables, items, value]);
 
   const trigger = children ?? (
@@ -168,18 +191,31 @@ export function ComboboxAdvanced({
                 </span>
               </button>
             )}
-            <VirtualList
-              height={Math.min(items.length * 32, 300)}
-              data={data.map((item) => ({
-                ...item,
-                label: sanitize(item.label),
-                value: sanitize(item.value),
-              }))}
-              itemHeight={32}
-              itemKey="value"
-            >
-              {renderItem}
-            </VirtualList>
+            <CommandList>
+              {canSpecify && (
+                <CommandItem
+                  value={`specify-${commandValue(customValue)}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onSelect={() =>
+                    onChange(Array.from(new Set([...value, customValue])))
+                  }
+                  className="flex cursor-pointer items-center gap-2"
+                >
+                  <DumpCheckbox checked={false} />
+                  <span className="whitespace-pre-wrap">
+                    Specify: {customValue}
+                  </span>
+                </CommandItem>
+              )}
+              <VirtualList
+                height={Math.min(data.length * 32, 300)}
+                data={data}
+                itemHeight={32}
+                itemKey="value"
+              >
+                {renderItem}
+              </VirtualList>
+            </CommandList>
           </Command>
         </PopoverContent>
       </PopoverPortal>

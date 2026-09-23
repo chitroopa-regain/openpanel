@@ -92,6 +92,7 @@ function FilterPill({
       {/* Value picker — only when operator needs a value */}
       {!noValueNeeded && (
         <ComboboxAdvanced
+          allowCustomValue
           items={potentialValues.map((v) => ({ value: v, label: v }))}
           value={filter.value}
           onChange={onChangeValue}
