@@ -31,6 +31,7 @@ import { clone } from 'ramda';
 import { getProjectAccess } from '../access';
 import { TRPCAccessError } from '../errors';
 import { createTRPCRouter, protectedProcedure, publicProcedure } from '../trpc';
+import { encodeEventCursor, zEventCursor } from '../utils/event-cursor';
 
 const PROTECTED_EVENTS = ['session_start', 'session_end', 'screen_view'];
 
@@ -127,7 +128,7 @@ export const eventRouter = createTRPCRouter({
         projectId: z.string(),
         profileId: z.string().optional(),
         sessionId: z.string().optional(),
-        cursor: z.string().optional(),
+        cursor: zEventCursor.optional(),
         filters: z.array(zChartEventFilter).default([]),
         startDate: z.date().optional(),
         endDate: z.date().optional(),
@@ -139,7 +140,7 @@ export const eventRouter = createTRPCRouter({
       const items = await getEventList({
         ...input,
         take: 50,
-        cursor: input.cursor ? new Date(input.cursor) : undefined,
+        cursor: input.cursor,
         select: {
           ...columnVisibility,
           city: columnVisibility?.country ?? true,
@@ -180,7 +181,7 @@ export const eventRouter = createTRPCRouter({
         meta: {
           next:
             items.length > 0 && lastItem
-              ? lastItem.createdAt.toISOString()
+              ? encodeEventCursor(lastItem)
               : null,
         },
       };
@@ -194,7 +195,7 @@ export const eventRouter = createTRPCRouter({
     .input(
       z.object({
         projectId: z.string(),
-        cursor: z.string().optional(),
+        cursor: zEventCursor.optional(),
         startDate: z.date().optional(),
         endDate: z.date().optional(),
         events: z.array(z.string()).optional(),
@@ -222,7 +223,7 @@ export const eventRouter = createTRPCRouter({
       const items = await getEventList({
         ...input,
         take: 50,
-        cursor: input.cursor ? new Date(input.cursor) : undefined,
+        cursor: input.cursor,
         select: {
           ...columnVisibility,
           city: columnVisibility?.country ?? true,
@@ -262,7 +263,7 @@ export const eventRouter = createTRPCRouter({
         meta: {
           next:
             items.length > 0 && lastItem
-              ? lastItem.createdAt.toISOString()
+              ? encodeEventCursor(lastItem)
               : null,
         },
       };

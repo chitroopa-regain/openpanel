@@ -521,7 +521,7 @@ export interface GetEventListOptions {
   profileId?: string;
   sessionId?: string;
   take: number;
-  cursor?: number | Date;
+  cursor?: number | Date | { createdAt: Date; id: string };
   events?: string[] | null;
   filters?: IChartEventFilter[];
   startDate?: Date;
@@ -574,9 +574,18 @@ export async function getEventList(options: GetEventListOptions) {
 
   if (typeof cursor === 'number') {
     sb.offset = Math.max(0, (cursor ?? 0) * take);
-  } else if (cursor instanceof Date) {
-    sb.where.cursorWindow = `created_at >= toDateTime64(${sqlstring.escape(formatClickhouseDate(cursor))}, 3) - INTERVAL ${safeIntervalHours} HOUR`;
-    sb.where.cursor = `created_at < ${sqlstring.escape(formatClickhouseDate(cursor))}`;
+  } else if (cursor) {
+    const createdAt = cursor instanceof Date ? cursor : cursor.createdAt;
+    // The shared formatter intentionally drops milliseconds; a pagination
+    // boundary must preserve them or it skips the rest of that whole second.
+    const cursorTimestamp = createdAt.toISOString().replace('T', ' ').replace('Z', '');
+    const timestamp = `toDateTime64(${sqlstring.escape(cursorTimestamp)}, 3)`;
+    sb.where.cursorWindow = `created_at >= ${timestamp} - INTERVAL ${safeIntervalHours} HOUR`;
+    // Match the complete ordering: timestamp DESC, UUID ASC. Timestamp-only
+    // cursors skip every remaining event in the boundary millisecond.
+    sb.where.cursor = cursor instanceof Date
+      ? `created_at < ${timestamp}`
+      : `(created_at < ${timestamp} OR (created_at = ${timestamp} AND id > toUUID(${sqlstring.escape(cursor.id)})))`;
   }
 
   if (!cursor && !(startDate && endDate)) {
@@ -611,9 +620,8 @@ export async function getEventList(options: GetEventListOptions) {
   sb.select.deviceId = 'device_id';
   sb.select.sessionId = 'session_id';
 
-  if (select.id) {
-    sb.select.id = 'id';
-  }
+  // Required for keyset pagination even when the ID column is hidden.
+  sb.select.id = 'id';
   if (select.name) {
     sb.select.name = 'name';
   }
