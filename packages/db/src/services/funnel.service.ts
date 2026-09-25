@@ -61,6 +61,13 @@ export type MvSource = {
   tsSelect: string;
   /** Row predicate: keep only rows that carry identified timestamps. */
   rowFilter: string;
+  /**
+   * Hybrid mode: event names read from the raw `events` table instead of
+   * the view, because a step on them filters on an event property the view
+   * does not carry (e.g. `properties.currency = 'INR'` on Server: Purchase).
+   * Every other name still comes from the view. Empty/undefined = pure view.
+   */
+  rawEventNames?: string[];
 };
 
 export const MV_SOURCE_FIRSTS: MvSource = {
@@ -80,6 +87,73 @@ export const MV_SOURCE_TS: MvSource = {
 
 export function mvDayRangeTail(funnelWindowSeconds: number): number {
   return Math.ceil(Math.max(0, funnelWindowSeconds) / 86_400) + 1;
+}
+
+/**
+ * The per-occurrence timestamp stream every MV consumer reads: one row per
+ * identified event occurrence with (project_id, name, profile_id,
+ * app_version, country, ts, properties).
+ *
+ * Pure view: `properties` is absent (callers never reference it, because
+ * resolveMvSource rejects property filters unless they go hybrid).
+ *
+ * Hybrid (`mvSource.rawEventNames`): those names are read from `events`
+ * with exactly the view's row semantics — the view is
+ * `groupArrayIf(created_at, profile_id != device_id)` grouped by UTC
+ * `toDate(created_at)`, so the raw arm keeps identified rows only and
+ * admits the same UTC day range. The view arm excludes the raw names so no
+ * occurrence is counted twice. Rows read from `events` are a strict subset
+ * of what the all-raw path reads (same names, same window, fewer of them),
+ * so this can only be cheaper than falling back.
+ */
+export function buildMvEventStream({
+  mvSource,
+  escapedProject,
+  eventNames,
+  escapedStart,
+  escapedEnd,
+  funnelWindowSeconds,
+}: {
+  mvSource: MvSource;
+  escapedProject: string;
+  eventNames: string[];
+  escapedStart: string;
+  escapedEnd: string;
+  funnelWindowSeconds: number;
+}): string {
+  const tail = mvDayRangeTail(funnelWindowSeconds);
+  const rawNames = new Set(mvSource.rawEventNames ?? []);
+  const viewNames = eventNames.filter((n) => !rawNames.has(n));
+  const rawOnly = eventNames.filter((n) => rawNames.has(n));
+  const list = (names: string[]) =>
+    names.map((n) => sqlstring.escape(n)).join(', ');
+  const viewArm = (withProperties: boolean) => `SELECT project_id, name, profile_id, app_version, country,
+          ${mvSource.tsSelect}${withProperties ? ", CAST(map(), 'Map(String, String)') AS properties" : ''}
+        FROM ${mvSource.table}
+        WHERE project_id = ${escapedProject}
+          AND name IN (${list(viewNames)})
+          AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${tail})
+          AND ${mvSource.rowFilter}`;
+  if (rawOnly.length === 0) {
+    return viewArm(false);
+  }
+  const rawArm = `SELECT project_id, name, profile_id, app_version,
+          CAST(country, 'LowCardinality(String)') AS country,
+          created_at AS ts, properties
+        FROM ${TABLE_NAMES.events}
+        WHERE project_id = ${escapedProject}
+          AND name IN (${list(rawOnly)})
+          AND created_at >= toDateTime64(addDays(toDate(${escapedStart}), -1), 3, 'UTC')
+          AND created_at < toDateTime64(addDays(toDate(${escapedEnd}), ${tail + 1}), 3, 'UTC')
+          AND profile_id != device_id`;
+  if (viewNames.length === 0) {
+    return rawArm;
+  }
+  return `SELECT * FROM (
+        ${viewArm(true)}
+        UNION ALL
+        ${rawArm}
+      )`;
 }
 
 function normalizeBreakdownValue(value: unknown): string {
@@ -443,14 +517,36 @@ export class FunnelService {
       MV_ALLOWED_COLUMNS.has(f.name) ||
       getTraitBreakdownDescriptor(f.name) !== null;
 
+    // Event-property filters (`properties.<key>`) are not in the view, but
+    // the step that carries one can be read from raw `events` while every
+    // other step stays on the view (hybrid, see buildMvEventStream). On the
+    // regain launch boards nearly every revenue funnel filters Server:
+    // Purchase on `properties.currency = 'INR'`, which used to send the
+    // WHOLE funnel — install and paywall steps included — to the raw path
+    // and its step_N timing ladder (10-40 s per report).
+    const hybridDisabled =
+      process.env.OP_FUNNEL_MV_HYBRID_DISABLED === '1' ||
+      process.env.OP_FUNNEL_MV_HYBRID_DISABLED === 'true';
+    const isEventPropertyFilter = (f: { name: string }) =>
+      f.name.startsWith('properties.');
+    const rawEventNames = new Set<string>();
     for (const step of params.eventSeries) {
       if (step.firstTimeFilter) return null;
-      const stepFilters = step.filters ?? [];
-      if (stepFilters.some((f) => !isMvSupportedFilter(f))) return null;
-      const componentFilters = (step.customEventComponents ?? []).flatMap(
-        (c) => c.filters ?? [],
-      );
-      if (componentFilters.some((f) => !isMvSupportedFilter(f))) return null;
+      const stepNames = step.customEventComponents
+        ? step.customEventComponents.map((c) => c.eventName)
+        : [step.name];
+      for (const f of step.filters ?? []) {
+        if (isMvSupportedFilter(f)) continue;
+        if (hybridDisabled || !isEventPropertyFilter(f)) return null;
+        for (const n of stepNames) rawEventNames.add(n);
+      }
+      for (const c of step.customEventComponents ?? []) {
+        for (const f of c.filters ?? []) {
+          if (isMvSupportedFilter(f)) continue;
+          if (hybridDisabled || !isEventPropertyFilter(f)) return null;
+          rawEventNames.add(c.eventName);
+        }
+      }
     }
 
     // Breakdown on any column outside the whitelist → raw. Trait
@@ -494,7 +590,11 @@ export class FunnelService {
       if (!coverage) continue;
       if (coverage.minDay > startDay) continue; // backfill doesn't cover range
       if (coverage.stalenessHours > maxStalenessHours) continue;
-      return source;
+      if (rawEventNames.size === 0) return source;
+      // Hybrid only on the exact view: mixing raw occurrences with the
+      // (min, max) approximation would give a result that matches neither.
+      if (source.kind !== 'ts') continue;
+      return { ...source, rawEventNames: Array.from(rawEventNames) };
     }
     return null;
   }
@@ -696,10 +796,6 @@ export class FunnelService {
           : [e.name],
       ),
     );
-    const escapedNames = allEventNames
-      .map((n) => sqlstring.escape(n))
-      .join(', ');
-
     // Project the MV whitelist columns (app_version, country) alongside
     // the timestamp so step conditions like `app_version = '9.8.415'` and
     // WITH FILL breakdowns on `country` resolve to real column refs. If we
@@ -732,13 +828,14 @@ export class FunnelService {
           ${funnels.join(', ')}
         ) AS level${extraSelectsClause}
       FROM (
-        SELECT project_id, name, profile_id, app_version, country,
-          ${mvSource.tsSelect}
-        FROM ${mvSource.table}
-        WHERE project_id = ${escapedProject}
-          AND name IN (${escapedNames})
-          AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
-          AND ${mvSource.rowFilter}
+        ${buildMvEventStream({
+          mvSource,
+          escapedProject,
+          eventNames: allEventNames,
+          escapedStart,
+          escapedEnd,
+          funnelWindowSeconds,
+        })}
       )${hasTraitJoins ? ' AS mv' : ''}
       ${traitJoins}
       WHERE ts >= toDateTime64(${escapedStart}, 3)
@@ -1451,6 +1548,59 @@ export class FunnelService {
       .groupBy(['level', ...breakdowns.map((b, index) => `b_${index}`)])
       .orderBy('level', 'DESC');
 
+    // Compute time-to-convert metrics using chained step timestamps.
+    // Returns a map keyed by breakdown identity (e.g. 'none' or 'FOCUS_BADGE').
+    // Independent of the funnel counts, so it runs concurrently with the
+    // funnel query instead of after it: the report's latency becomes the
+    // slower of the two rather than their sum.
+    const runTiming =
+      stepConditions.length >= 2 && !(skipTimingOnRawPath && !useMv);
+    const timingPromise: Promise<
+      Map<string, Record<string, number | null>>
+    > = (async () => {
+      if (!runTiming) return new Map();
+      try {
+        const allTimingEventNames = uniq(
+          eventSeries.flatMap((e) =>
+            e.customEventComponents
+              ? e.customEventComponents.map((c) => c.eventName)
+              : [e.name],
+          ),
+        );
+        return useMv
+          ? await this.getFunnelTimingStatsFromMv({
+              projectId,
+              startDate: startDate!,
+              endDate: endDate!,
+              stepConditions,
+              funnelWindowSeconds,
+              allEventNames: allTimingEventNames,
+              breakdowns,
+              breakdownStep,
+              traitDescriptors,
+              mvSource: mvSource!,
+              timezone,
+            })
+          : await this.getFunnelTimingStats({
+              projectId,
+              startDate: startDate!,
+              endDate: endDate!,
+              stepConditions,
+              funnelWindowSeconds,
+              groupBy: group,
+              allEventNames: allTimingEventNames,
+              breakdowns,
+              breakdownSelects,
+              breakdownStep,
+              eventSeries,
+              timezone,
+            });
+      } catch {
+        // Timing query failed — continue without timing data
+        return new Map();
+      }
+    })();
+
     const queries = [funnelQuery.toSQL()];
     const funnelData = await funnelQuery.execute();
     const funnelSeries = this.toSeries(funnelData, breakdowns, limit);
@@ -1548,55 +1698,8 @@ export class FunnelService {
         return bTotal - aTotal;
       });
 
-    // Compute time-to-convert metrics using chained step timestamps.
-    // Returns a map keyed by breakdown identity (e.g. 'none' or 'FOCUS_BADGE').
-    let timingByBreakdown: Map<
-      string,
-      Record<string, number | null>
-    > = new Map();
-    const runTiming =
-      stepConditions.length >= 2 && !(skipTimingOnRawPath && !useMv);
-    if (runTiming) {
-      try {
-        const allTimingEventNames = uniq(
-          eventSeries.flatMap((e) =>
-            e.customEventComponents
-              ? e.customEventComponents.map((c) => c.eventName)
-              : [e.name],
-          ),
-        );
-        timingByBreakdown = useMv
-          ? await this.getFunnelTimingStatsFromMv({
-              projectId,
-              startDate: startDate!,
-              endDate: endDate!,
-              stepConditions,
-              funnelWindowSeconds,
-              allEventNames: allTimingEventNames,
-              breakdowns,
-              breakdownStep,
-              traitDescriptors,
-              mvSource: mvSource!,
-              timezone,
-            })
-          : await this.getFunnelTimingStats({
-              projectId,
-              startDate: startDate!,
-              endDate: endDate!,
-              stepConditions,
-              funnelWindowSeconds,
-              groupBy: group,
-              allEventNames: allTimingEventNames,
-              breakdowns,
-              breakdownSelects,
-              breakdownStep,
-              eventSeries,
-              timezone,
-            });
-      } catch {
-        // Timing query failed — continue without timing data
-      }
-    }
+    // Started alongside the funnel query above; both only read the inputs.
+    const timingByBreakdown = await timingPromise;
 
     // Merge timing + conversion data into funnel steps.
     for (const series of data) {
@@ -1938,9 +2041,6 @@ export class FunnelService {
     traitDescriptors?: Map<string, TraitBreakdown>;
     mvSource?: MvSource;
   }): { ctes: string[]; hasBreakdowns: boolean; zeroTs: string } {
-    const nameList = allEventNames
-      .map((n) => sqlstring.escape(n))
-      .join(', ');
     const escapedProject = sqlstring.escape(projectId);
     const escapedStart = sqlstring.escape(startDate);
     const escapedEnd = sqlstring.escape(endDate);
@@ -1954,13 +2054,14 @@ export class FunnelService {
       cond.replace(/\bcreated_at\b/g, 'ts');
 
     const mvEventsCte = `mv_events AS (
-      SELECT project_id, name, profile_id, app_version, country,
-        ${mvSource.tsSelect}
-      FROM ${mvSource.table}
-      WHERE project_id = ${escapedProject}
-        AND name IN (${nameList})
-        AND day BETWEEN addDays(toDate(${escapedStart}), -1) AND addDays(toDate(${escapedEnd}), ${mvDayRangeTail(funnelWindowSeconds)})
-        AND ${mvSource.rowFilter}
+      ${buildMvEventStream({
+        mvSource,
+        escapedProject,
+        eventNames: allEventNames,
+        escapedStart,
+        escapedEnd,
+        funnelWindowSeconds,
+      })}
     )`;
 
     // Step 1: anchored to [startDate, endDate].
@@ -2000,21 +2101,42 @@ export class FunnelService {
     )`;
 
     // Walk the chain: step_k_ts = first event with bit k-1 set strictly
-    // after step_{k-1}_ts; ZERO_TS (arrayFirst's default) means "did not
-    // reach", and short-circuits every later step.
+    // after step_{k-1}_ts; ZERO_TS means "did not reach", and short-circuits
+    // every later step. `arr` is sorted by ts, so one left-to-right fold that
+    // appends each step's timestamp as soon as it is reached gives exactly
+    // the arrayFirst chain. The earlier form nested every step_k_ts inside
+    // step_{k+1}_ts twice (the if-guard and the lambda), which ClickHouse
+    // expands inline: 2^N expression copies, 17 s of pure CPU on an 11-step
+    // onboarding funnel whose data read took 0.3 s. The fold is linear.
+    const chainSteps = stepConditions.length - 1;
     const chainSelects: string[] = [];
-    for (let i = 1; i < stepConditions.length; i++) {
-      const prevTs = i === 1 ? 'step_1_ts' : `step_${i}_ts`;
-      const bit = 1 << i;
-      const first = `arrayFirst(x -> bitAnd(x.2, ${bit}) != 0 AND x.1 > ${prevTs}, arr).1`;
+    for (let i = 1; i <= chainSteps; i++) {
       chainSelects.push(
-        i === 1
-          ? `${first} AS step_2_ts`
-          : `if(${prevTs} = ${ZERO_TS}, ${ZERO_TS}, ${first}) AS step_${i + 1}_ts`,
+        `if(length(reached) >= ${i}, reached[${i}], ${ZERO_TS}) AS step_${i + 1}_ts`,
       );
     }
-    const chainCte = `chain AS (
-      SELECT profile_id, step_1_ts${chainSelects.length ? `,\n        ${chainSelects.join(',\n        ')}` : ''}
+    const reachedExpr = `arrayFold(
+          (acc, x) -> if(
+            length(acc) < ${chainSteps}
+              AND bitAnd(x.2, bitShiftLeft(toUInt64(1), length(acc) + 1)) != 0
+              AND x.1 > if(length(acc) = 0, step_1_ts, acc[-1]),
+            arrayPushBack(acc, x.1),
+            acc
+          ),
+          arr,
+          arrayResize([step_1_ts], 0)
+        )`;
+    const chainCte = chainSteps > 0
+      ? `chain AS (
+      SELECT profile_id, step_1_ts,
+        ${chainSelects.join(',\n        ')}
+      FROM (
+        SELECT profile_id, step_1_ts, ${reachedExpr} AS reached
+        FROM per_profile
+      )
+    )`
+      : `chain AS (
+      SELECT profile_id, step_1_ts
       FROM per_profile
     )`;
 

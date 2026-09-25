@@ -1,6 +1,7 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -1984,9 +1985,13 @@ describe('FunnelService.getFunnelTimingStatsFromMv (MV timing path)', () => {
     expect(sql).toContain('e.ts > s1.step_1_ts');
     expect(sql).toContain("dateDiff('second', s1.step_1_ts, e.ts) <= 86400");
     expect(sql).toContain("toUInt64(name = 'Counter Bubble: Shown') * 2 AS mask");
-    // Chain walk: step 2 = first event with bit 1 set after step_1_ts
+    // Chain walk: one linear fold over the sorted array; step 2 = first
+    // event with bit 1 set after step_1_ts.
     expect(sql).toContain(
-      'arrayFirst(x -> bitAnd(x.2, 2) != 0 AND x.1 > step_1_ts, arr).1 AS step_2_ts'
+      'AND bitAnd(x.2, bitShiftLeft(toUInt64(1), length(acc) + 1)) != 0 AND x.1 > if(length(acc) = 0, step_1_ts, acc[-1])'
+    );
+    expect(sql).toContain(
+      'if(length(reached) >= 1, reached[1], toDateTime64(0, 3)) AS step_2_ts'
     );
     // No JOIN ladder — the MV slice must be read exactly once.
     expect(sql).not.toContain('step_2 AS');
@@ -2011,12 +2016,18 @@ describe('FunnelService.getFunnelTimingStatsFromMv (MV timing path)', () => {
     expect(sql).toContain(
       "toUInt64(name = 'A') * 2 + toUInt64((name = 'B' OR name = 'C')) * 4 + toUInt64(name = 'D') * 8 AS mask"
     );
+    // The fold stops appending once every step is reached, and a step that
+    // is never reached leaves all later ones at the zero timestamp.
+    expect(sql).toContain('length(acc) < 3');
     expect(sql).toContain(
-      'if(step_2_ts = toDateTime64(0, 3), toDateTime64(0, 3), arrayFirst(x -> bitAnd(x.2, 4) != 0 AND x.1 > step_2_ts, arr).1) AS step_3_ts'
+      'if(length(reached) >= 2, reached[2], toDateTime64(0, 3)) AS step_3_ts'
     );
     expect(sql).toContain(
-      'if(step_3_ts = toDateTime64(0, 3), toDateTime64(0, 3), arrayFirst(x -> bitAnd(x.2, 8) != 0 AND x.1 > step_3_ts, arr).1) AS step_4_ts'
+      'if(length(reached) >= 3, reached[3], toDateTime64(0, 3)) AS step_4_ts'
     );
+    // No step expression may reference another step's alias: nesting them
+    // made ClickHouse expand 2^N copies (17 s of CPU on an 11-step funnel).
+    expect(sql).not.toMatch(/arrayFirst/);
     expect(sql).toContain('step_3_median');
     expect(sql).not.toContain('step_4_median');
   });
@@ -2291,25 +2302,88 @@ describe('FunnelService.getFunnelPropertyStats MV path', () => {
     expect(sql).not.toContain('prop_bd');
   });
 
-  it('keeps the raw ladder when a step carries an event-property filter', async () => {
+  const withSourceFilter = steps.map((s, i) =>
+    i === 1
+      ? { ...s, filters: [{ id: 'x', name: 'properties.source', operator: 'is' as const, value: ['onboarding'] }] }
+      : s,
+  );
+
+  it('keeps the raw ladder for an event-property filter when only the (min, max) view is available', async () => {
     const service = new FunnelService({} as any);
     coverage();
     mocks.chQuery.mockResolvedValueOnce([{ total_sum: 1, property_average: 1, property_count: 1 }]);
-    const filtered = steps.map((s, i) =>
-      i === 1
-        ? { ...s, filters: [{ id: 'x', name: 'properties.source', operator: 'is' as const, value: ['onboarding'] }] }
-        : s,
-    );
     await service.getFunnelPropertyStats({
       ...base,
-      stepConditions: service.getFunnelConditions(filtered, 'regain-app'),
-      eventSeries: filtered,
+      stepConditions: service.getFunnelConditions(withSourceFilter, 'regain-app'),
+      eventSeries: withSourceFilter,
     });
-    // Eligibility rejected before any coverage read; the single call is the ladder.
-    const sql = normalizeSql(mocks.chQuery.mock.calls[0]![0]);
+    // Hybrid is exact-view only; the last call is the raw ladder.
+    const calls = mocks.chQuery.mock.calls;
+    const sql = normalizeSql(calls[calls.length - 1]![0]);
     expect(sql).toContain('step_2 AS (');
     expect(sql).toContain('prop_vals AS (');
     expect(sql).not.toContain('mv_events');
+  });
+
+  describe('hybrid (exact view + raw arm for property-filtered steps)', () => {
+    const prevTs = process.env.OP_FUNNEL_TS_MV;
+    const prevHybrid = process.env.OP_FUNNEL_MV_HYBRID_DISABLED;
+    beforeEach(() => {
+      process.env.OP_FUNNEL_TS_MV = '1';
+      delete process.env.OP_FUNNEL_MV_HYBRID_DISABLED;
+    });
+    afterEach(() => {
+      if (prevTs === undefined) delete process.env.OP_FUNNEL_TS_MV;
+      else process.env.OP_FUNNEL_TS_MV = prevTs;
+      if (prevHybrid === undefined) delete process.env.OP_FUNNEL_MV_HYBRID_DISABLED;
+      else process.env.OP_FUNNEL_MV_HYBRID_DISABLED = prevHybrid;
+    });
+
+    it('reads only the filtered step from events and every other step from the view', async () => {
+      const service = new FunnelService({} as any);
+      coverage();
+      mocks.chQuery.mockResolvedValueOnce([{ total_sum: 1, property_average: 1, property_count: 1 }]);
+      await service.getFunnelPropertyStats({
+        ...base,
+        stepConditions: service.getFunnelConditions(withSourceFilter, 'regain-app'),
+        eventSeries: withSourceFilter,
+      });
+      const calls = mocks.chQuery.mock.calls;
+      const sql = normalizeSql(calls[calls.length - 1]![0]);
+      expect(sql).toContain('mv_events AS (');
+      expect(sql).not.toContain('step_2 AS (');
+      // View arm: exact timestamps, the filtered name excluded.
+      expect(sql).toContain('FROM event_profile_ts_local');
+      expect(sql).toContain("name IN ('Application Installed', 'Server: Purchase')");
+      expect(sql).toContain("CAST(map(), 'Map(String, String)') AS properties");
+      // Raw arm: the filtered name only, identified rows, view's UTC day range.
+      expect(sql).toContain('UNION ALL');
+      expect(sql).toContain("name IN ('Subscription: Paywall Viewed')");
+      expect(sql).toContain('created_at AS ts, properties');
+      expect(sql).toContain('AND profile_id != device_id');
+      expect(sql).toContain(
+        "created_at >= toDateTime64(addDays(toDate('2026-08-10 00:00:00'), -1), 3, 'UTC')"
+      );
+      expect(sql).toContain(
+        "created_at < toDateTime64(addDays(toDate('2026-09-10 00:00:00'), 9), 3, 'UTC')"
+      );
+      // The property condition is evaluated on the stream's properties column.
+      expect(sql).toMatch(/properties\['source'\]/);
+    });
+
+    it('falls back to the raw ladder when the hybrid is switched off', async () => {
+      process.env.OP_FUNNEL_MV_HYBRID_DISABLED = '1';
+      const service = new FunnelService({} as any);
+      mocks.chQuery.mockResolvedValueOnce([{ total_sum: 1, property_average: 1, property_count: 1 }]);
+      await service.getFunnelPropertyStats({
+        ...base,
+        stepConditions: service.getFunnelConditions(withSourceFilter, 'regain-app'),
+        eventSeries: withSourceFilter,
+      });
+      const sql = normalizeSql(mocks.chQuery.mock.calls[0]![0]);
+      expect(sql).toContain('step_2 AS (');
+      expect(sql).not.toContain('mv_events');
+    });
   });
 
   it('keeps the raw ladder when eventSeries is not supplied', async () => {

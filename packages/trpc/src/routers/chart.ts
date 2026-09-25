@@ -1776,9 +1776,18 @@ export const chartRouter = createTRPCRouter({
         extraProfileFields: string[] = [],
         eventAlias?: string
       ) => {
+        // profile.properties.* filters compile to a profile_traits
+        // IN-subquery (getEventFiltersWhereClause) and never read the joined
+        // profile, so they must not trigger `profiles FINAL`: on regain-app
+        // that merge alone read ~3.5 GB and took 6-38 s per retention card
+        // on the launch boards, for a join nothing referenced.
         const profileFilters = [
           ...filters
-            .filter((f) => f.name.startsWith('profile.'))
+            .filter(
+              (f) =>
+                f.name.startsWith('profile.') &&
+                getTraitBreakdownDescriptor(f.name) === null
+            )
             .map((f) => f.name.replace('profile.', '')),
           ...extraProfileFields,
         ];
