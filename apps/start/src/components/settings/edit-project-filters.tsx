@@ -94,7 +94,14 @@ function EventRuleItem({
       ...rule,
       filters: rule.filters.map((f) =>
         f.id === filter.id
-          ? { ...f, operator, value: f.value.filter(Boolean).slice(0, 1) }
+          ? {
+              ...f,
+              operator,
+              value:
+                operator === 'is' || operator === 'isNot'
+                  ? f.value
+                  : f.value.filter(Boolean).slice(0, 1),
+            }
           : f,
       ),
     });

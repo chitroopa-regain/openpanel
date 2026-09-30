@@ -100,7 +100,12 @@ export function FilterItem({ filter, event }: FilterProps) {
           if (item.id === id) {
             return {
               ...item,
-              value: item.value ? item.value.filter(Boolean).slice(0, 1) : [],
+              value:
+                operator === 'is' || operator === 'isNot'
+                  ? (item.value ?? [])
+                  : item.value
+                    ? item.value.filter(Boolean).slice(0, 1)
+                    : [],
               operator,
             };
           }
