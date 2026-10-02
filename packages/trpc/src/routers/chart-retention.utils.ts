@@ -221,7 +221,9 @@ export function aggregateRetentionRowsByDisplayInterval(
                 ? Math.round((value / weight) * 100) / 100
                 : null;
             })
-          : group.values.map((value, index) => (isMature(index) ? value : null));
+          : group.values.map((value, index) =>
+              isMature(index) ? value : null
+            );
 
       return {
         cohort_interval,
@@ -241,6 +243,59 @@ export function aggregateRetentionRowsByDisplayInterval(
       };
     })
     .sort((a, b) => a.cohort_interval.localeCompare(b.cohort_interval));
+}
+
+/**
+ * Retention window bounds.
+ *
+ * Legacy (exactDays=false): `toDate(...)` compared with the DateTime64
+ * `created_at`, which ClickHouse reads as UTC midnight — kept byte-identical
+ * for existing reports.
+ *
+ * exactDays: local-midnight bounds. The cohort window is [start day 00:00,
+ * end day 00:00) where an end with a time of day (e.g. the "Yesterday" preset's
+ * 23:59:59) includes that whole day, and an end at 00:00:00 (the other
+ * presets) is already exclusive — the same rule processCohortGroupData uses
+ * for its row domain.
+ */
+export function getRetentionDateBounds({
+  startDate,
+  endDate,
+  timezone,
+  exactDays,
+  windowInterval,
+}: {
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  exactDays: boolean;
+  windowInterval: string;
+}) {
+  const tz = sqlstring.escape(timezone);
+  const startDay = `toDate(${sqlstring.escape(startDate)}, ${tz})`;
+  const endDay = `toDate(${sqlstring.escape(endDate)}, ${tz})`;
+  if (!exactDays) {
+    return {
+      firstTimeStart: startDay,
+      firstTimeEnd: endDay,
+      secondTimeEnd: `${endDay} + ${windowInterval} - INTERVAL 1 SECOND`,
+      cohortWindow: (col: string) => `${col} BETWEEN ${startDay} AND ${endDay}`,
+      returnWindow: (col: string) =>
+        `${col} >= ${startDay}\n              AND ${col} < ${endDay} + ${windowInterval}`,
+    };
+  }
+  const endHasTime =
+    endDate.length > 10 && endDate.slice(11, 19) !== '00:00:00';
+  const start = `toDateTime64(${startDay}, 3, ${tz})`;
+  const end = `toDateTime64(${endDay}${endHasTime ? ' + 1' : ''}, 3, ${tz})`;
+  return {
+    firstTimeStart: start,
+    firstTimeEnd: `${end} - INTERVAL 1 MILLISECOND`,
+    secondTimeEnd: `${end} + ${windowInterval} - INTERVAL 1 MILLISECOND`,
+    cohortWindow: (col: string) => `${col} >= ${start} AND ${col} < ${end}`,
+    returnWindow: (col: string) =>
+      `${col} >= ${start}\n              AND ${col} < ${end} + ${windowInterval}`,
+  };
 }
 
 export function getRetentionTimeUnitConfig(unit: RetentionTimeUnit): {

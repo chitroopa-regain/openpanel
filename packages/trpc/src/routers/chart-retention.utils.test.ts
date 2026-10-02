@@ -4,6 +4,7 @@ import {
   addRoasRevenue,
   aggregateRetentionRowsByDisplayInterval,
   buildRoasRevenueSelects,
+  getRetentionDateBounds,
   buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
@@ -783,5 +784,44 @@ describe('chart retention utils', () => {
       )
     ).toEqual({ d0: 2.5, d7: null, d30: null, lifetime: 7 });
     expect(addRoasRevenue(undefined, { d0: 1, d7: 1, d30: 1, lifetime: 1 })).toEqual({ d0: 1, d7: 1, d30: 1, lifetime: 1 });
+  });
+
+  it('legacy retention bounds stay byte-identical; exact-day bounds use local midnight', () => {
+    const legacy = getRetentionDateBounds({
+      startDate: '2026-09-25 00:00:00',
+      endDate: '2026-10-03 00:00:00',
+      timezone: 'Asia/Calcutta',
+      exactDays: false,
+      windowInterval: 'INTERVAL 9 DAY',
+    });
+    expect(legacy.cohortWindow('e.created_at')).toBe(
+      "e.created_at BETWEEN toDate('2026-09-25 00:00:00', 'Asia/Calcutta') AND toDate('2026-10-03 00:00:00', 'Asia/Calcutta')"
+    );
+    expect(legacy.returnWindow('created_at')).toBe(
+      "created_at >= toDate('2026-09-25 00:00:00', 'Asia/Calcutta')\n              AND created_at < toDate('2026-10-03 00:00:00', 'Asia/Calcutta') + INTERVAL 9 DAY"
+    );
+    expect(legacy.firstTimeEnd).toBe("toDate('2026-10-03 00:00:00', 'Asia/Calcutta')");
+
+    const exact = getRetentionDateBounds({
+      startDate: '2026-09-25 00:00:00',
+      endDate: '2026-10-03 00:00:00',
+      timezone: 'Asia/Calcutta',
+      exactDays: true,
+      windowInterval: 'INTERVAL 9 DAY',
+    });
+    expect(exact.cohortWindow('e.created_at')).toBe(
+      "e.created_at >= toDateTime64(toDate('2026-09-25 00:00:00', 'Asia/Calcutta'), 3, 'Asia/Calcutta') AND e.created_at < toDateTime64(toDate('2026-10-03 00:00:00', 'Asia/Calcutta'), 3, 'Asia/Calcutta')"
+    );
+    // "Yesterday" ends at 23:59:59: that whole day is in.
+    const yesterday = getRetentionDateBounds({
+      startDate: '2026-10-01 00:00:00',
+      endDate: '2026-10-01 23:59:59',
+      timezone: 'Asia/Calcutta',
+      exactDays: true,
+      windowInterval: 'INTERVAL 1 DAY',
+    });
+    expect(yesterday.cohortWindow('c')).toContain(
+      "c < toDateTime64(toDate('2026-10-01 23:59:59', 'Asia/Calcutta') + 1, 3, 'Asia/Calcutta')"
+    );
   });
 });

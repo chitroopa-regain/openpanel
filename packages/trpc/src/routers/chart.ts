@@ -107,6 +107,7 @@ import {
   buildRetentionMeasureIntervalSelect,
   buildRoasRevenueSelects,
   getConcreteEventNameWhereClause,
+  getRetentionDateBounds,
   getRetentionElapsedIntervalExpression,
   getRetentionIntervalMaturityExpression,
   getRetentionMaturedIntervalsExpression,
@@ -1729,6 +1730,11 @@ export const chartRouter = createTRPCRouter({
         cohortExpression: 'cs.cohort_interval',
         asOfExpression: `toDate(now('${timezone}'))`,
       });
+      // Spend is booked per whole local day, so a report showing it needs
+      // cohorts on whole local days too. The legacy bounds compare timestamps
+      // with Dates (= UTC midnight), shifting every window by the UTC offset;
+      // reports without acquisition cost keep them unchanged.
+      const exactDayBounds = acquisitionCostEnabled;
       // Exact cumulative revenue per cohort row for ROAS, from the same
       // population as the grid (breakdown, top-N, filters). Only when the
       // report measures a revenue property; ARPU cells are rounded averages.
@@ -1954,9 +1960,16 @@ export const chartRouter = createTRPCRouter({
           : `${getRetentionReturnEventWhereClause(secondEvent)}`;
         const secondFilterClause = secondEventWhere;
 
-        const firstTimeStartExpression = `toDate('${utc(dates.startDate)}', '${timezone}')`;
-        const firstTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}')`;
-        const secondTimeEndExpression = `toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval} - INTERVAL 1 SECOND`;
+        const bounds = getRetentionDateBounds({
+          startDate: utc(dates.startDate),
+          endDate: utc(dates.endDate),
+          timezone,
+          exactDays: exactDayBounds,
+          windowInterval: `INTERVAL ${retentionWindowEndInterval} ${sqlInterval}`,
+        });
+        const firstTimeStartExpression = bounds.firstTimeStart;
+        const firstTimeEndExpression = bounds.firstTimeEnd;
+        const secondTimeEndExpression = bounds.secondTimeEnd;
         const firstEventFirstTimeCte = firstEventFirstTimeFilter
           ? `first_event_first_time AS (${buildRetentionFirstTimeCteSql({
               projectId,
@@ -2048,7 +2061,7 @@ export const chartRouter = createTRPCRouter({
             ${firstEventFirstTimeJoin}
             WHERE ${firstWhereClause}
               AND e.project_id = ${sqlstring.escape(projectId)}
-              AND e.created_at BETWEEN toDate('${utc(dates.startDate)}', '${timezone}') AND toDate('${utc(dates.endDate)}', '${timezone}')
+              AND ${bounds.cohortWindow('e.created_at')}
               ${firstIdentifiedFilter}
               ${firstFilterClause}
               ${dayZeroClause}
@@ -2067,8 +2080,7 @@ export const chartRouter = createTRPCRouter({
               ${secondEventFirstTimeJoin}
               WHERE ${secondWhereClause}
               AND project_id = ${sqlstring.escape(projectId)}
-              AND created_at >= toDate('${utc(dates.startDate)}', '${timezone}')
-              AND created_at < toDate('${utc(dates.endDate)}', '${timezone}') + INTERVAL ${retentionWindowEndInterval} ${sqlInterval}
+              AND ${bounds.returnWindow('created_at')}
               ${secondIdentifiedFilter}
               ${secondFilterClause}
           ),
