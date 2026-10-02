@@ -291,7 +291,7 @@ describe('retention breakdown table groups', () => {
     );
   });
 
-  it('marks booked revenue and booked ROAS on rows before tracking', () => {
+  it('shows booked revenue and ROAS before tracking without extra tags or faded text', () => {
     render(
       createElement(CohortTable, {
         data: [
@@ -304,8 +304,13 @@ describe('retention breakdown table groups', () => {
       })
     );
     expect(screen.getAllByTestId('retention-play-installs-cell')[0]?.textContent).toBe('596667');
-    expect(screen.getAllByTestId('retention-revenue-cell')[0]?.textContent).toBe('₹11,88,650booked');
-    expect(screen.getAllByTestId('retention-roas-lifetime-cell')[0]?.textContent).toBe('1.15xbooked');
+    expect(screen.getAllByTestId('retention-revenue-cell')[0]?.textContent).toBe('₹11,88,650');
+    expect(screen.getAllByTestId('retention-roas-lifetime-cell')[0]?.textContent).toBe('1.15x');
+    expect(screen.getAllByTestId('retention-cpi-cell')[0]?.textContent).toBe('₹1.7');
+    // Same text colour on every row: no muted styling on Spend / CPI / Revenue.
+    for (const id of ['retention-spend-cell', 'retention-cpi-cell', 'retention-revenue-cell']) {
+      expect(screen.getAllByTestId(id)[0]?.querySelector('div')?.className ?? '').not.toContain('text-muted-foreground');
+    }
     expect(screen.getAllByTestId('retention-roas-d0-cell')[0]?.textContent).toBe('—');
   });
 

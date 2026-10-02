@@ -109,7 +109,7 @@ function describeSpendFilters(cost: AcquisitionCost) {
 
 function describeTracking(cost: AcquisitionCost) {
   return cost.trackingStart
-    ? ` · Install tracking began ${cost.trackingStart}: earlier spend is left out of CPI, ROAS and the summary row; earlier rows show CPI from Play Console installs ("Play"), revenue booked in the period and booked revenue / spend ("booked")`
+    ? ` · Install tracking began ${cost.trackingStart}: earlier spend is left out of CPI, ROAS and the summary row; earlier rows show CPI from Play Console installs, revenue booked in the period, and Lifetime ROAS as booked revenue / spend`
     : '';
 }
 
@@ -170,6 +170,16 @@ export function getCohortBreakdownGroups(
       cohorts: rows.filter((row) => row !== summary),
     };
   });
+}
+
+function roasTitle(soFar: boolean, booked: boolean) {
+  if (soFar) {
+    return 'Today is still running: revenue so far / spend so far';
+  }
+  if (booked) {
+    return 'Before install tracking: revenue booked in this period / spend';
+  }
+  return undefined;
 }
 
 interface CohortTableProps {
@@ -356,7 +366,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
   };
 
   const renderPlayInstallsCell = (row: CohortRow) => (
-    <div className="px-3 text-right font-mono text-muted-foreground">
+    <div className="px-3 text-right font-mono">
       {row.playInstalls === null || row.playInstalls === undefined
         ? '—'
         : number.format(row.playInstalls)}
@@ -369,10 +379,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
       row.lifetimeRevenue !== null && row.lifetimeRevenue !== undefined;
     return (
       <div
-        className={cn(
-          'px-3 text-right font-mono',
-          booked && 'text-muted-foreground'
-        )}
+        className="px-3 text-right font-mono"
         title={
           booked
             ? 'Before install tracking: revenue booked in this period (incl. renewals of earlier users)'
@@ -380,7 +387,6 @@ const CohortTable: React.FC<CohortTableProps> = ({
         }
       >
         {hasValue ? inr.format(row.lifetimeRevenue ?? 0) : '—'}
-        {booked && hasValue && <span className="ml-1 text-[10px]">booked</span>}
       </div>
     );
   };
@@ -394,7 +400,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
     }
     if (column.key === 'spend') {
       return (
-        <div className="px-3 text-right font-mono text-muted-foreground">
+        <div className="px-3 text-right font-mono">
           {row.spend === null || row.spend === undefined
             ? '—'
             : inr.format(row.spend)}
@@ -405,10 +411,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
       const fromPlay = row.installsSource === 'play';
       return (
         <div
-          className={cn(
-            'px-3 text-right font-medium font-mono',
-            fromPlay && 'text-muted-foreground'
-          )}
+          className="px-3 text-right font-mono"
           title={
             fromPlay
               ? `Before install tracking: spend / ${number.format(row.externalInstalls ?? 0)} Play Console installs`
@@ -418,7 +421,6 @@ const CohortTable: React.FC<CohortTableProps> = ({
           {row.cpi === null || row.cpi === undefined
             ? '—'
             : inrCpi.format(row.cpi)}
-          {fromPlay && <span className="ml-1 text-[10px]">Play</span>}
         </div>
       );
     }
@@ -441,15 +443,10 @@ const CohortTable: React.FC<CohortTableProps> = ({
           soFar && 'text-muted-foreground italic'
         )}
         data-so-far={soFar || undefined}
-        title={
-          soFar
-            ? 'Today is still running: revenue so far / spend so far'
-            : undefined
-        }
+        title={roasTitle(soFar, booked)}
       >
         {formatRoas(value)}
         {soFar && <span className="ml-1 text-[10px] not-italic">so far</span>}
-        {booked && <span className="ml-1 text-[10px]">booked</span>}
       </div>
     );
   };
