@@ -18,6 +18,88 @@ export interface ProcessedRetentionCohortRow {
   percentages: Array<number | null>;
   /** Intervals of history this cohort has; see getRetentionMaturedIntervalsExpression. */
   maturedIntervals?: number;
+  /** Cumulative revenue for ROAS; present only with acquisition cost on. */
+  revenue?: RoasRevenue;
+}
+
+/**
+ * ROAS windows, in days after the cohort day, matching the grid's own columns:
+ * D0 = `< 1 Day`, D7 = `Day 7` (days 0..7). A window is reported only once it
+ * has fully elapsed, and only when the report's range reaches it — the return
+ * leg is cut at cohort + range, so a 7-day report cannot see day 30.
+ */
+export const ROAS_WINDOWS = [
+  { key: 'd0', day: 0 },
+  { key: 'd7', day: 7 },
+  { key: 'd30', day: 30 },
+] as const;
+
+export interface RoasRevenue {
+  d0: number | null;
+  d7: number | null;
+  d30: number | null;
+  /** Everything the cohort has paid through now. */
+  lifetime: number | null;
+}
+
+export function buildRoasRevenueSelects({
+  unit,
+  diffInterval,
+  cohortExpression,
+  asOfExpression,
+}: {
+  unit: RetentionTimeUnit;
+  diffInterval: number;
+  cohortExpression: string;
+  asOfExpression: string;
+}) {
+  const revenue = 'ifNull(r.retention_property_value, 0)';
+  const windows = ROAS_WINDOWS.map(({ key, day }) =>
+    unit === 'day' && day <= diffInterval
+      ? `if(addDays(${cohortExpression}, ${day + 1}) <= ${asOfExpression}, round(sumIf(${revenue}, r.x_after_cohort <= ${day}), 2), NULL) AS roas_rev_${key}`
+      : `CAST(NULL, 'Nullable(Float64)') AS roas_rev_${key}`
+  );
+  return [...windows, `round(sum(${revenue}), 2) AS roas_rev_lifetime`].join(
+    ',\n'
+  );
+}
+
+const toNullableNumber = (value: unknown) =>
+  value === null || value === undefined ? null : Number(value);
+
+export function readRoasRevenue(
+  row: RawRetentionCohortRow
+): RoasRevenue | undefined {
+  if (!('roas_rev_lifetime' in row)) {
+    return undefined;
+  }
+  return {
+    d0: toNullableNumber(row.roas_rev_d0),
+    d7: toNullableNumber(row.roas_rev_d7),
+    d30: toNullableNumber(row.roas_rev_d30),
+    lifetime: toNullableNumber(row.roas_rev_lifetime),
+  };
+}
+
+/** Rolled-up revenue: a window is known only when every member's is. */
+export function addRoasRevenue(
+  a: RoasRevenue | undefined,
+  b: RoasRevenue | undefined
+): RoasRevenue | undefined {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  const add = (x: number | null, y: number | null) =>
+    x === null || y === null ? null : Math.round((x + y) * 100) / 100;
+  return {
+    d0: add(a.d0, b.d0),
+    d7: add(a.d7, b.d7),
+    d30: add(a.d30, b.d30),
+    lifetime: add(a.lifetime, b.lifetime),
+  };
 }
 
 export interface RawRetentionCohortRow {
@@ -85,6 +167,7 @@ export function aggregateRetentionRowsByDisplayInterval(
       weightedValues: number[];
       valueWeights: number[];
       maturedIntervals: number;
+      revenue?: RoasRevenue;
     }
   >();
 
@@ -99,6 +182,7 @@ export function aggregateRetentionRowsByDisplayInterval(
     };
 
     group.sum += row.sum;
+    group.revenue = addRoasRevenue(group.revenue, row.revenue);
     // The group can only be shown as far as its YOUNGEST member reaches. A
     // display row is read left to right, so every cell in it has to come from
     // the same population; letting a young member drop out column by column
@@ -144,6 +228,7 @@ export function aggregateRetentionRowsByDisplayInterval(
         sum: group.sum,
         values,
         valueWeights: group.valueWeights,
+        revenue: group.revenue,
         percentages: values.map((value, index) => {
           if (value === null) {
             return null;

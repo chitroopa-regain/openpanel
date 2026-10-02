@@ -12,6 +12,7 @@ import {
   isMinuteIntervalEnabledByRange,
 } from '@openpanel/constants';
 import type {
+  IAcquisitionColumn,
   IChartBreakdown,
   IChartEventItem,
   ICohortFilters,
@@ -700,6 +701,22 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeRetentionAcquisitionColumns(
+      state,
+      action: PayloadAction<IAcquisitionColumn[] | undefined>
+    ) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          displayMode: state.options?.displayMode,
+          type: 'retention',
+          acquisitionColumns: action.payload,
+        };
+      } else {
+        state.options.acquisitionColumns = action.payload;
+      }
+    },
+
     changeFunnelGroup(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
@@ -952,6 +969,7 @@ export const {
   changeRetentionVisualization,
   changeRetentionMetricStep,
   changeRetentionAcquisitionCost,
+  changeRetentionAcquisitionColumns,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,

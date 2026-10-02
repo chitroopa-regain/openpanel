@@ -209,6 +209,86 @@ describe('retention breakdown table groups', () => {
     expect(screen.queryByTestId('retention-acquisition-cost-note')).toBeNull();
   });
 
+  it('shows ROAS columns and hides any column whose tick box is cleared', () => {
+    const data = [
+      {
+        ...row('Weighted Average', [], 3000),
+        spend: 382000,
+        cpi: 127.33,
+        roas: { d0: 0.5, d7: 1, d30: null, lifetime: 0.942 },
+      },
+      {
+        ...row('2026-09-29', [], 2000),
+        spend: 282000,
+        cpi: 141,
+        roas: { d0: 0.5, d7: 1.25, d30: null, lifetime: 1.064 },
+      },
+    ];
+    render(
+      createElement(CohortTable, {
+        data,
+        acquisitionCost: {
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 382000,
+          attributedSpend: 382000,
+          currency: 'INR',
+          roasAvailable: true,
+          roasMaxDay: 7,
+        },
+      })
+    );
+    const headers = () =>
+      screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers().slice(1, 8)).toEqual([
+      'Spend',
+      'CPI',
+      'D0 ROAS',
+      'D7 ROAS',
+      'D30 ROAS',
+      'Lifetime ROAS',
+      'Total profiles',
+    ]);
+    expect(
+      screen.getAllByTestId('retention-roas-d7-cell').map((c) => c.textContent)
+    ).toEqual(['1.00x', '1.25x']);
+    expect(
+      screen.getAllByTestId('retention-roas-d30-cell').map((c) => c.textContent)
+    ).toEqual(['—', '—']);
+    expect(screen.getByText(/D30 ROAS \(range too short\)/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /^CPI$/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /D30 ROAS/ }));
+    expect(headers().slice(1, 6)).toEqual([
+      'Spend',
+      'D0 ROAS',
+      'D7 ROAS',
+      'Lifetime ROAS',
+      'Total profiles',
+    ]);
+  });
+
+  it('offers no ROAS columns when the report does not measure revenue', () => {
+    render(
+      createElement(CohortTable, {
+        data: [{ ...row('2026-09-29', [], 2000), spend: 1, cpi: 1, roas: null }],
+        acquisitionCost: {
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 1,
+          attributedSpend: 1,
+          currency: 'INR',
+          roasAvailable: false,
+          roasMaxDay: 7,
+        },
+      })
+    );
+    expect(screen.queryByText('D0 ROAS')).toBeNull();
+    expect(
+      screen.getByTestId('retention-acquisition-cost-note').textContent
+    ).toContain('ROAS needs a revenue metric');
+  });
+
   it('renders immature intervals as unavailable instead of zero', () => {
     const data: CohortData = [
       {

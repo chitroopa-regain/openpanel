@@ -262,6 +262,82 @@ describe('acquisition cost', () => {
     expect(spendForCohortOs(withIosMeta, [])).toHaveLength(withIosMeta.length);
   });
 
+  it('ROAS = cohort revenue / its spend; summary uses only completed windows', () => {
+    const { rows } = attachAcquisitionCost(
+      [
+        avg(3000),
+        {
+          cohort_interval: '2026-09-29',
+          sum: 2000,
+          breakdowns: [],
+          revenue: { d0: 141_000, d7: 282_000, d30: null, lifetime: 300_000 },
+        },
+        {
+          cohort_interval: '2026-09-30',
+          sum: 1000,
+          breakdowns: [],
+          // D7 not complete yet for this cohort.
+          revenue: { d0: 50_000, d7: null, d30: null, lifetime: 60_000 },
+        },
+      ],
+      spend,
+      { interval: 'day', attribution: null }
+    );
+    // 09-29 spend 282000 (blended, Android+iOS fixture), 09-30 spend 100000.
+    expect(rows[1]?.roas).toEqual({
+      d0: 0.5,
+      d7: 1,
+      d30: null,
+      lifetime: 1.064,
+    });
+    expect(rows[2]?.roas).toEqual({
+      d0: 0.5,
+      d7: null,
+      d30: null,
+      lifetime: 0.6,
+    });
+    // Summary D7 counts only 09-29 (revenue AND spend), not 09-30's spend.
+    expect(rows[0]?.roas).toEqual({
+      d0: 0.5,
+      d7: 1,
+      d30: null,
+      lifetime: 0.942,
+    });
+  });
+
+  it('unpaid rows have no ROAS; paid rows without revenue data have none either', () => {
+    const { rows } = attachAcquisitionCost(
+      [
+        {
+          cohort_interval: '2026-09-29',
+          sum: 1500,
+          breakdowns: ['google_ads'],
+          revenue: { d0: 75_000, d7: null, d30: null, lifetime: 90_000 },
+        },
+        {
+          cohort_interval: '2026-09-29',
+          sum: 2000,
+          breakdowns: ['organic'],
+          revenue: { d0: 99_000, d7: null, d30: null, lifetime: 99_000 },
+        },
+        { cohort_interval: '2026-09-29', sum: 100, breakdowns: ['facebook'] },
+      ],
+      spend,
+      {
+        interval: 'day',
+        attribution: findAttributionBreakdown(['properties.install_source']),
+      }
+    );
+    expect(rows[0]?.roas).toEqual({
+      d0: 0.5,
+      d7: null,
+      d30: null,
+      lifetime: 0.6,
+    });
+    expect(rows[1]?.roas).toBeNull();
+    expect(rows[2]?.roas).toBeNull();
+  });
+
   it('reads only the latest sync batch per platform-day', () => {
     const sql = buildSpendQuery({
       projectId: "regain-app'",

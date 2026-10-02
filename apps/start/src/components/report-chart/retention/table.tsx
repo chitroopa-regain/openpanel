@@ -6,6 +6,13 @@ import {
   ReportSeriesScreenshot,
   ReportSeriesScreenshotsProvider,
 } from '../common/report-series-screenshots';
+import {
+  type AcquisitionColumn,
+  availableAcquisitionColumns,
+  formatRoas,
+  resolveAcquisitionColumns,
+} from './acquisition-columns';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import { getPropertyLabel } from '@/translations/properties';
 import type { RouterOutputs } from '@/trpc/client';
@@ -28,6 +35,13 @@ export type CohortRow = CohortData[number] & {
   spend?: number | null;
   /** spend / cohort size. `null` = unpaid source or an empty cohort. */
   cpi?: number | null;
+  /** revenue / spend per window; `null` = unpaid, unspent or incomplete. */
+  roas?: {
+    d0: number | null;
+    d7: number | null;
+    d30: number | null;
+    lifetime: number | null;
+  } | null;
 };
 
 export type AcquisitionCost = NonNullable<
@@ -47,14 +61,21 @@ const inrCpi = new Intl.NumberFormat('en-IN', {
 });
 
 export function describeAcquisitionCost(cost: AcquisitionCost) {
+  const base = describeAcquisitionSpend(cost);
+  return cost.roasAvailable
+    ? `${base} · ROAS = cohort revenue / spend; D-n shown once day n has fully passed`
+    : `${base} · ROAS needs a revenue metric (Property Sum or Property Average)`;
+}
+
+function describeAcquisitionSpend(cost: AcquisitionCost) {
   const total = inr.format(cost.totalSpend);
   if (cost.mode === 'blended') {
-    return `Spend & CPI: blended Google + Meta + Apple Ads spend over every install in the cohort · ${total} in range`;
+    return `Spend, CPI & ROAS: blended paid ad spend (Google + Meta + Apple, only for the OS the cohort contains) over every install in the cohort · ${total} in range`;
   }
   const by = cost.breakdown
     ? getPropertyLabel(cost.breakdown)
     : cost.mode.replace('_', ' ');
-  return `Spend & CPI: matched by ${by} (${cost.mode === 'source' ? 'ad platform' : 'campaign'}) · ${inr.format(cost.attributedSpend)} of ${total} matched to the rows shown · organic rows have no CPI`;
+  return `Spend, CPI & ROAS: matched by ${by} (${cost.mode === 'source' ? 'ad platform' : 'campaign'}) · ${inr.format(cost.attributedSpend)} of ${total} matched to the rows shown · organic rows have no CPI`;
 }
 
 export interface CohortBreakdownGroup {
@@ -112,7 +133,6 @@ const CohortTable: React.FC<CohortTableProps> = ({
   overall,
   acquisitionCost,
 }) => {
-  const showCost = Boolean(acquisitionCost);
   const {
     report: { unit, options, breakdowns, series },
   } = useReportChartContext();
@@ -123,6 +143,43 @@ const CohortTable: React.FC<CohortTableProps> = ({
     (options.metric === 'property_average' ||
       options.metric === 'property_sum');
   const isPercentage = !isPropertyMeasure && unit === '%';
+  const roasAvailable = Boolean(acquisitionCost?.roasAvailable);
+  const savedColumns =
+    options?.type === 'retention' ? options.acquisitionColumns : undefined;
+  // Viewer-side tick boxes, seeded from the report's saved selection. They
+  // only change what this screen shows; the report editor's sidebar saves.
+  const [ticked, setTicked] = useState<Set<string>>(
+    () =>
+      new Set(
+        resolveAcquisitionColumns(savedColumns, true).map((c) => c.key)
+      )
+  );
+  const savedColumnsKey = JSON.stringify(savedColumns ?? null);
+  useEffect(() => {
+    setTicked(
+      new Set(
+        resolveAcquisitionColumns(
+          JSON.parse(savedColumnsKey) ?? undefined,
+          true
+        ).map((c) => c.key)
+      )
+    );
+  }, [savedColumnsKey]);
+  const costColumns: AcquisitionColumn[] = acquisitionCost
+    ? availableAcquisitionColumns(roasAvailable).filter((c) =>
+        ticked.has(c.key)
+      )
+    : [];
+  const toggleColumn = (key: string, on: boolean) =>
+    setTicked((current) => {
+      const next = new Set(current);
+      if (on) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
   const number = useNumber();
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set()
@@ -243,29 +300,54 @@ const CohortTable: React.FC<CohortTableProps> = ({
     });
   };
 
+  const renderCostCell = (row: CohortRow, column: AcquisitionColumn) => {
+    if (column.key === 'spend') {
+      return (
+        <div className="px-3 text-right font-mono text-muted-foreground">
+          {row.spend === null || row.spend === undefined
+            ? '—'
+            : inr.format(row.spend)}
+        </div>
+      );
+    }
+    if (column.key === 'cpi') {
+      return (
+        <div className="px-3 text-right font-medium font-mono">
+          {row.cpi === null || row.cpi === undefined
+            ? '—'
+            : inrCpi.format(row.cpi)}
+        </div>
+      );
+    }
+    const value = column.roas ? row.roas?.[column.roas] : null;
+    return (
+      <div
+        className={cn(
+          'px-3 text-right font-mono',
+          value !== null && value !== undefined && value >= 1
+            ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+            : 'font-medium'
+        )}
+      >
+        {formatRoas(value)}
+      </div>
+    );
+  };
+
   const renderMetricCells = (row: CohortRow, keyPrefix: string) => {
     const values = isPercentage ? row.percentages : row.values;
 
     return (
       <>
-        {showCost && (
-          <>
-            <td className="min-w-24 p-0" data-testid="retention-spend-cell">
-              <div className="px-3 text-right font-mono text-muted-foreground">
-                {row.spend === null || row.spend === undefined
-                  ? '—'
-                  : inr.format(row.spend)}
-              </div>
-            </td>
-            <td className="min-w-20 p-0" data-testid="retention-cpi-cell">
-              <div className="px-3 text-right font-medium font-mono">
-                {row.cpi === null || row.cpi === undefined
-                  ? '—'
-                  : inrCpi.format(row.cpi)}
-              </div>
-            </td>
-          </>
-        )}
+        {costColumns.map((column) => (
+          <td
+            className="min-w-20 p-0"
+            data-testid={`retention-${column.key.replace('_', '-')}-cell`}
+            key={`${keyPrefix}:${column.key}`}
+          >
+            {renderCostCell(row, column)}
+          </td>
+        ))}
         <td className="min-w-12 p-0">
           <div className="rounded px-3 font-medium font-mono">
             {number.format(row.sum)}
@@ -320,6 +402,37 @@ const CohortTable: React.FC<CohortTableProps> = ({
 
   return (
     <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
+    {acquisitionCost && (
+      <div
+        className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
+        data-testid="retention-acquisition-columns"
+      >
+        {availableAcquisitionColumns(roasAvailable).map((column) => {
+          const id = `${disclosureId}-col-${column.key}`;
+          const short =
+            column.minDay !== undefined &&
+            column.minDay > (acquisitionCost.roasMaxDay ?? 0);
+          return (
+            <label
+              className="flex cursor-pointer items-center gap-2"
+              htmlFor={id}
+              key={column.key}
+              title={column.title}
+            >
+              <Checkbox
+                checked={ticked.has(column.key)}
+                id={id}
+                onCheckedChange={(on) => toggleColumn(column.key, on === true)}
+              />
+              <span className={cn(short && 'text-muted-foreground')}>
+                {column.label}
+                {short && ' (range too short)'}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    )}
     <div className="card relative overflow-hidden">
       <div
         className={'absolute top-px right-0 left-0 h-10 border-b bg-def-100'}
@@ -336,22 +449,15 @@ const CohortTable: React.FC<CohortTableProps> = ({
                     </div>
                   </div>
                 </th>
-                {showCost && (
-                  <>
-                    <th
-                      className={cn(thClassName, 'px-3 text-right')}
-                      title="Paid ad spend for this cohort (INR)"
-                    >
-                      Spend
-                    </th>
-                    <th
-                      className={cn(thClassName, 'px-3 text-right')}
-                      title="Cost per install = spend / cohort size"
-                    >
-                      CPI
-                    </th>
-                  </>
-                )}
+                {costColumns.map((column) => (
+                  <th
+                    className={cn(thClassName, 'px-3 text-right')}
+                    key={column.key}
+                    title={column.title}
+                  >
+                    {column.label}
+                  </th>
+                ))}
                 <th className={cn(thClassName, 'pr-1')}>Total profiles</th>
                 {data[0]?.values.map((_column, index) => (
                   <th

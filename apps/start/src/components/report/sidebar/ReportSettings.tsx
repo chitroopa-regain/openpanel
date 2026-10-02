@@ -9,6 +9,7 @@ import {
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changePrevious,
+  changeRetentionAcquisitionColumns,
   changeRetentionAcquisitionCost,
   changeRetentionBreakdownSort,
   changeRetentionMetric,
@@ -25,6 +26,11 @@ import {
   changeStacked,
   changeUnit,
 } from '../reportSlice';
+import {
+  ACQUISITION_COLUMNS,
+  ALL_ACQUISITION_COLUMN_KEYS,
+} from '@/components/report-chart/retention/acquisition-columns';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Combobox } from '@/components/ui/combobox';
 import { ComboboxEvents } from '@/components/ui/combobox-events';
 import { InputEnter } from '@/components/ui/input-enter';
@@ -56,6 +62,8 @@ export function ReportSettings() {
   const retentionVisualization = retentionOptions?.visualization ?? 'curve';
   const retentionMetricStep = retentionOptions?.metricStep ?? 0;
   const retentionAcquisitionCost = !!retentionOptions?.acquisitionCost;
+  const retentionAcquisitionColumns =
+    retentionOptions?.acquisitionColumns ?? ALL_ACQUISITION_COLUMN_KEYS;
   const breakdownCount = useSelector((state) => state.report.breakdowns.length);
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
@@ -240,6 +248,43 @@ export function ReportSettings() {
             />
           </Label>
         )}
+        {fields.includes('retentionAcquisitionCost') &&
+          retentionAcquisitionCost && (
+            <div
+              className="col gap-2 pl-1"
+              data-testid="retention-acquisition-columns-settings"
+            >
+              <span className="text-muted-foreground text-sm">
+                Columns to show
+              </span>
+              {ACQUISITION_COLUMNS.map((column) => (
+                <Label
+                  className="mb-0 flex items-center gap-2 font-normal"
+                  key={column.key}
+                  title={column.title}
+                >
+                  <Checkbox
+                    checked={retentionAcquisitionColumns.includes(column.key)}
+                    onCheckedChange={(on) => {
+                      const next = ALL_ACQUISITION_COLUMN_KEYS.filter((key) =>
+                        key === column.key
+                          ? on === true
+                          : retentionAcquisitionColumns.includes(key)
+                      );
+                      dispatch(
+                        changeRetentionAcquisitionColumns(
+                          next.length === ALL_ACQUISITION_COLUMN_KEYS.length
+                            ? undefined
+                            : next
+                        )
+                      );
+                    }}
+                  />
+                  {column.label}
+                </Label>
+              ))}
+            </div>
+          )}
         {fields.includes('retentionVisualization') && (
           <div className="flex items-center justify-between gap-4">
             <Label className="mb-0 whitespace-nowrap font-medium">

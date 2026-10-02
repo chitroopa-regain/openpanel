@@ -346,6 +346,16 @@ export const zRetentionMeasure = z.enum([
   'property_average',
 ]);
 export const zRetentionVisualization = z.enum(['curve', 'metric']);
+/** Acquisition-cost columns a retention table can show beside each cohort. */
+export const zAcquisitionColumn = z.enum([
+  'spend',
+  'cpi',
+  'roas_d0',
+  'roas_d7',
+  'roas_d30',
+  'roas_lifetime',
+]);
+export type IAcquisitionColumn = z.infer<typeof zAcquisitionColumn>;
 export const zReportDisplayMode = z.enum(['both', 'chart', 'table']);
 
 // Report Options - Discriminated union based on chart type
@@ -413,6 +423,8 @@ export const zRetentionOptions = z.object({
    * campaign when the report breaks down by install source or campaign.
    */
   acquisitionCost: z.boolean().optional(),
+  /** Columns ticked for display. undefined = all of them. */
+  acquisitionColumns: z.array(zAcquisitionColumn).optional(),
 });
 
 export const zSankeyOptions = z.object({

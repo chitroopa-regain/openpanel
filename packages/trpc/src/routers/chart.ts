@@ -104,6 +104,7 @@ import {
   buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
+  buildRoasRevenueSelects,
   getConcreteEventNameWhereClause,
   getRetentionElapsedIntervalExpression,
   getRetentionIntervalMaturityExpression,
@@ -114,6 +115,8 @@ import {
   groupRetentionRowsByBreakdowns,
   isRetentionPropertyMeasure,
   type RawRetentionCohortRow,
+  type RoasRevenue,
+  readRoasRevenue,
 } from './chart-retention.utils';
 
 function utc(date: string | Date) {
@@ -1725,6 +1728,18 @@ export const chartRouter = createTRPCRouter({
         cohortExpression: 'cs.cohort_interval',
         asOfExpression: `toDate(now('${timezone}'))`,
       });
+      // Exact cumulative revenue per cohort row for ROAS, from the same
+      // population as the grid (breakdown, top-N, filters). Only when the
+      // report measures a revenue property; ARPU cells are rounded averages.
+      const roasRevenueSelect =
+        acquisitionCostEnabled && retentionPropertyExpr
+          ? `,\n${buildRoasRevenueSelects({
+              unit: retentionUnit,
+              diffInterval,
+              cohortExpression: 'cs.cohort_interval',
+              asOfExpression: `toDate(now('${timezone}'))`,
+            })}`
+          : '';
       const propertyAverageDenominatorSelect =
         retentionMetric === 'property_average' &&
         retentionPropertyExpr &&
@@ -2090,6 +2105,7 @@ export const chartRouter = createTRPCRouter({
             ${breakdownColumnsFromCohortSizes.replace(/^, /, '')}${breakdownColumnsFromCohortSizes ? ',' : ''}
             ${countsSelect}
             ${propertyAverageDenominatorSelect}
+            ${roasRevenueSelect}
           FROM cohort_sizes cs
           LEFT JOIN retention_matrix r ON cs.cohort_interval = r.cohort_interval${breakdownJoin}
           GROUP BY cs.display_interval, cs.cohort_interval, cs.total_first_event_count${breakdownColumnsFromCohortSizes}
@@ -2228,6 +2244,8 @@ export const chartRouter = createTRPCRouter({
               totalSpend: totalPaidSpend(loaded.spend),
               attributedSpend,
               currency: 'INR',
+              roasAvailable: Boolean(retentionPropertyExpr),
+              roasMaxDay: retentionUnit === 'day' ? diffInterval : 0,
             }
           : null;
 
@@ -2905,6 +2923,7 @@ function processCohortGroupData(
     valueWeights?: number[];
     percentages: Array<number | null>;
     maturedIntervals?: number;
+    revenue?: RoasRevenue;
   }> = data.map((row) => {
     const sum = row.total_first_event_count;
     const values = range(0, diffInterval + 1).map((index) => {
@@ -2930,6 +2949,7 @@ function processCohortGroupData(
       percentages: values.map((value) =>
         value === null ? null : sum > 0 ? round(value / sum, 4) : 0
       ),
+      revenue: readRoasRevenue(row),
     };
   });
 

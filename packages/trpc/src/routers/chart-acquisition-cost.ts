@@ -72,6 +72,10 @@ export interface AcquisitionCostSummary {
   /** The part of it assigned to rows on screen. */
   attributedSpend: number;
   currency: 'INR';
+  /** ROAS needs a revenue property measure (property_sum / property_average). */
+  roasAvailable: boolean;
+  /** Days of return window the range covers; D7/D30 need at least 7/30. */
+  roasMaxDay: number;
 }
 
 const PROFILE_PROPERTIES_PREFIX = /^profile\.properties\./;
@@ -359,16 +363,63 @@ function groupBySpendKey<T extends { cohort_interval: string }>(
   return groups.values();
 }
 
+export const ROAS_KEYS = ['d0', 'd7', 'd30', 'lifetime'] as const;
+export type RoasKey = (typeof ROAS_KEYS)[number];
+export type Roas = Record<RoasKey, number | null>;
+
 export interface CostRowInput {
   cohort_interval: string;
   sum: number;
   breakdowns?: Array<string | null | undefined>;
+  /** Cumulative cohort revenue per ROAS window (null = not yet complete). */
+  revenue?: Roas;
 }
 
 export type WithAcquisitionCost<T> = T & {
   spend: number | null;
   cpi: number | null;
+  /** revenue / spend per window; null when unpaid, unspent or incomplete. */
+  roas: Roas | null;
 };
+
+const ratio = (num: number, den: number) =>
+  den > 0 ? Math.round((num / den) * 1000) / 1000 : null;
+
+function rowRoas(revenue: Roas | undefined, spend: number): Roas | null {
+  if (!revenue) {
+    return null;
+  }
+  const out = {} as Roas;
+  for (const key of ROAS_KEYS) {
+    const value = revenue[key];
+    out[key] = value === null ? null : ratio(value, spend);
+  }
+  return out;
+}
+
+/** Summary ROAS per window over the cohorts whose window is complete. */
+function summaryRoas(
+  members: Array<{ revenue?: Roas; spend: number }>
+): Roas | null {
+  if (!members.some((m) => m.revenue)) {
+    return null;
+  }
+  const out = {} as Roas;
+  for (const key of ROAS_KEYS) {
+    let revenue = 0;
+    let spend = 0;
+    for (const m of members) {
+      const value = m.revenue?.[key];
+      if (value === null || value === undefined) {
+        continue;
+      }
+      revenue += value;
+      spend += m.spend;
+    }
+    out[key] = ratio(revenue, spend);
+  }
+  return out;
+}
 
 const AVERAGE_ROW = 'Weighted Average';
 
@@ -422,9 +473,17 @@ export function attachAcquisitionCost<T extends CostRowInput>(
 
   // Summary rows: their group's cohorts added up, CPI over the group's size.
   const groupSpend = new Map<string, number>();
+  const groupMembers = new Map<
+    string,
+    Array<{ revenue?: Roas; spend: number }>
+  >();
   for (const row of cohortRows) {
     const key = JSON.stringify(row.breakdowns ?? []);
-    groupSpend.set(key, (groupSpend.get(key) ?? 0) + (shares.get(row) ?? 0));
+    const share = shares.get(row) ?? 0;
+    groupSpend.set(key, (groupSpend.get(key) ?? 0) + share);
+    const members = groupMembers.get(key) ?? [];
+    members.push({ revenue: row.revenue, spend: share });
+    groupMembers.set(key, members);
   }
 
   const out = rows.map((row) => {
@@ -437,10 +496,18 @@ export function attachAcquisitionCost<T extends CostRowInput>(
       ? (groupSpend.get(JSON.stringify(row.breakdowns ?? [])) ?? 0)
       : (shares.get(row) ?? 0);
     const size = Number(row.sum);
+    const groupKey = JSON.stringify(row.breakdowns ?? []);
+    let roas: Roas | null = null;
+    if (!unpaid) {
+      roas = isAverage
+        ? summaryRoas(groupMembers.get(groupKey) ?? [])
+        : rowRoas(row.revenue, value);
+    }
     return {
       ...row,
       spend: unpaid ? null : round2(value),
       cpi: unpaid || size <= 0 ? null : round2(value / size),
+      roas,
     };
   });
   return { rows: out, attributedSpend: round2(attributedSpend) };

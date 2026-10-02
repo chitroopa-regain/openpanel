@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { processCohortData } from './chart';
 import {
+  addRoasRevenue,
   aggregateRetentionRowsByDisplayInterval,
+  buildRoasRevenueSelects,
   buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
@@ -744,5 +746,42 @@ describe('chart retention utils', () => {
         values: [17.5],
       },
     ]);
+  });
+
+  it('ROAS revenue windows: complete-only, cut at the report range, day unit only', () => {
+    const sql = buildRoasRevenueSelects({
+      unit: 'day',
+      diffInterval: 7,
+      cohortExpression: 'cs.cohort_interval',
+      asOfExpression: 'today_ist',
+    });
+    expect(sql).toContain(
+      'if(addDays(cs.cohort_interval, 1) <= today_ist, round(sumIf(ifNull(r.retention_property_value, 0), r.x_after_cohort <= 0), 2), NULL) AS roas_rev_d0'
+    );
+    expect(sql).toContain(
+      'if(addDays(cs.cohort_interval, 8) <= today_ist, round(sumIf(ifNull(r.retention_property_value, 0), r.x_after_cohort <= 7), 2), NULL) AS roas_rev_d7'
+    );
+    // A 7-day report cannot see day 30.
+    expect(sql).toContain("CAST(NULL, 'Nullable(Float64)') AS roas_rev_d30");
+    expect(sql).toContain(
+      'round(sum(ifNull(r.retention_property_value, 0)), 2) AS roas_rev_lifetime'
+    );
+    const weekly = buildRoasRevenueSelects({
+      unit: 'week',
+      diffInterval: 8,
+      cohortExpression: 'c',
+      asOfExpression: 'n',
+    });
+    expect(weekly).toContain("CAST(NULL, 'Nullable(Float64)') AS roas_rev_d0");
+  });
+
+  it('rolls ROAS revenue up only when every member window is known', () => {
+    expect(
+      addRoasRevenue(
+        { d0: 1, d7: 2, d30: null, lifetime: 3 },
+        { d0: 1.5, d7: null, d30: null, lifetime: 4 }
+      )
+    ).toEqual({ d0: 2.5, d7: null, d30: null, lifetime: 7 });
+    expect(addRoasRevenue(undefined, { d0: 1, d7: 1, d30: 1, lifetime: 1 })).toEqual({ d0: 1, d7: 1, d30: 1, lifetime: 1 });
   });
 });
