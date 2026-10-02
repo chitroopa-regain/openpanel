@@ -143,14 +143,20 @@ describe('retention breakdown table groups', () => {
     );
     expect(controlledRows?.hidden).toBe(true);
     expect(priceHalfRows?.hidden).toBe(true);
+    // Collapsed groups must not build their date rows at all (phone DOM size).
+    expect(controlledRows?.querySelectorAll('tr')).toHaveLength(0);
+    expect(priceHalfRows?.querySelectorAll('tr')).toHaveLength(0);
 
     fireEvent.click(control);
     expect(control.getAttribute('aria-expanded')).toBe('true');
     expect(controlledRows?.hidden).toBe(false);
+    expect(controlledRows?.textContent).toContain('2026-07-21');
     expect(priceHalfRows?.hidden).toBe(true);
+    expect(priceHalfRows?.querySelectorAll('tr')).toHaveLength(0);
 
     fireEvent.click(control);
     expect(controlledRows?.hidden).toBe(true);
+    expect(controlledRows?.querySelectorAll('tr')).toHaveLength(0);
   });
 
   it('uses the displayed rows to preserve no-breakdown rendering', () => {

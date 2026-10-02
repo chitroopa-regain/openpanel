@@ -684,19 +684,22 @@ const CohortTable: React.FC<CohortTableProps> = ({
                         </tr>
                       </tbody>
                       <tbody hidden={!isExpanded} id={cohortRowsId}>
-                        {group.cohorts.map((row) => (
-                          <tr key={`${group.key}:${row.cohort_interval}`}>
-                            <td className="sticky left-0 z-10 min-w-52 bg-card p-0">
-                              <div className="flex h-10 items-center pr-4 pl-12 font-medium text-muted-foreground">
-                                {row.cohort_interval}
-                              </div>
-                            </td>
-                            {renderMetricCells(
-                              row,
-                              `${group.key}:${row.cohort_interval}`
-                            )}
-                          </tr>
-                        ))}
+                        {/* Collapsed groups render no rows: a 30-day x 20-bucket
+                            breakdown was ~90k hidden DOM nodes on phones. */}
+                        {isExpanded &&
+                          group.cohorts.map((row) => (
+                            <tr key={`${group.key}:${row.cohort_interval}`}>
+                              <td className="sticky left-0 z-10 min-w-52 bg-card p-0">
+                                <div className="flex h-10 items-center pr-4 pl-12 font-medium text-muted-foreground">
+                                  {row.cohort_interval}
+                                </div>
+                              </td>
+                              {renderMetricCells(
+                                row,
+                                `${group.key}:${row.cohort_interval}`
+                              )}
+                            </tr>
+                          ))}
                       </tbody>
                     </Fragment>
                   );
