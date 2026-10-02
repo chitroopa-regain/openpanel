@@ -266,9 +266,10 @@ export function buildExternalInstallsQuery({
   startDay: string;
   endDay: string;
 }) {
-  return `SELECT toString(day) AS day, device_installs AS installs
-FROM play_installs_daily FINAL
-WHERE project_id = ${sqlstring.escape(projectId)} AND day BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
+  // Qualified p.day: an unqualified `day` would resolve to the String alias.
+  return `SELECT toString(p.day) AS day, p.device_installs AS installs
+FROM play_installs_daily AS p FINAL
+WHERE p.project_id = ${sqlstring.escape(projectId)} AND p.day BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
 }
 
 /** OS mix of the cohort's first event over the report range (sorting-key scan). */

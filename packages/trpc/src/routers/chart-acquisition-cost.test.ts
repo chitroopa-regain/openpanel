@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   attachAcquisitionCost,
+  buildExternalInstallsQuery,
   buildSpendFilter,
   buildSpendQuery,
   cohortIntervalKey,
@@ -621,6 +622,12 @@ describe('acquisition cost', () => {
     expect(rows[2]).toMatchObject({ spend: 382_000 });
     // Summary = tracked rows only.
     expect(rows[0]).toMatchObject({ spend: 382_000, cpi: 127.33 });
+  });
+
+  it('Play installs query filters on the column, not its String alias', () => {
+    const sql = buildExternalInstallsQuery({ projectId: 'regain-app', startDay: '2025-10-01', endDay: '2026-10-02' });
+    expect(sql).toContain('toString(p.day) AS day');
+    expect(sql).toContain("p.day BETWEEN toDate('2025-10-01')");
   });
 
   it('reads only the latest sync batch per platform-day', () => {
