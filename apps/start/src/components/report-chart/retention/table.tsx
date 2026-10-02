@@ -12,6 +12,7 @@ import {
   formatRoas,
   resolveAcquisitionColumns,
 } from './acquisition-columns';
+import { buildTotalRow, TOTAL_ROW } from './total-row';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useNumber } from '@/hooks/use-numer-formatter';
 import { getPropertyLabel } from '@/translations/properties';
@@ -40,7 +41,7 @@ export type CohortRow = CohortData[number] & {
   externalInstalls?: number;
   playInstalls?: number | null;
   lifetimeRevenue?: number | null;
-  revenueBasis?: 'cohort' | 'booked';
+  revenueBasis?: 'cohort' | 'booked' | 'total';
   /** revenue / spend per window; `null` = unpaid, unspent or incomplete. */
   roas?: {
     d0: number | null;
@@ -172,6 +173,16 @@ export function getCohortBreakdownGroups(
   });
 }
 
+function revenueTitle(basis: CohortRow['revenueBasis']) {
+  if (basis === 'booked') {
+    return 'Before install tracking: revenue booked in this period (incl. renewals of earlier users)';
+  }
+  if (basis === 'total') {
+    return 'Sum of every row: cohort revenue after tracking began, booked revenue before';
+  }
+  return 'Everything this cohort has paid so far';
+}
+
 function roasTitle(soFar: boolean, booked: boolean) {
   if (soFar) {
     return 'Today is still running: revenue so far / spend so far';
@@ -209,6 +220,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
       options.metric === 'property_sum');
   const isPercentage = !isPropertyMeasure && unit === '%';
   const roasAvailable = Boolean(acquisitionCost?.roasAvailable);
+  const totalRow = acquisitionCost ? buildTotalRow(data) : null;
   const savedColumns =
     options?.type === 'retention' ? options.acquisitionColumns : undefined;
   // Viewer-side tick boxes, seeded from the report's saved selection. They
@@ -374,17 +386,12 @@ const CohortTable: React.FC<CohortTableProps> = ({
   );
 
   const renderRevenueCell = (row: CohortRow) => {
-    const booked = row.revenueBasis === 'booked';
     const hasValue =
       row.lifetimeRevenue !== null && row.lifetimeRevenue !== undefined;
     return (
       <div
         className="px-3 text-right font-mono"
-        title={
-          booked
-            ? 'Before install tracking: revenue booked in this period (incl. renewals of earlier users)'
-            : 'Everything this cohort has paid so far'
-        }
+        title={revenueTitle(row.revenueBasis)}
       >
         {hasValue ? inr.format(row.lifetimeRevenue ?? 0) : '—'}
       </div>
@@ -670,6 +677,23 @@ const CohortTable: React.FC<CohortTableProps> = ({
               })
             ) : (
               <tbody>
+                {totalRow && (
+                  <tr
+                    className="border-b bg-def-50"
+                    data-testid="retention-total-row"
+                    key={TOTAL_ROW}
+                  >
+                    <td className="sticky left-0 z-10 w-36 bg-def-50 p-0">
+                      <div
+                        className="center-center h-10 px-4 font-semibold"
+                        title="Sums over every row in the range; CPI and Lifetime ROAS are total spend / total installs and total revenue / total spend"
+                      >
+                        {TOTAL_ROW}
+                      </div>
+                    </td>
+                    {renderMetricCells(totalRow, TOTAL_ROW)}
+                  </tr>
+                )}
                 {data.map((row) => (
                   <tr key={row.cohort_interval}>
                     <td className="sticky left-0 z-10 w-36 bg-card p-0">
