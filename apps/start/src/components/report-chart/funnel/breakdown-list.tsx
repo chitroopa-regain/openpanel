@@ -377,6 +377,7 @@ export function BreakdownList({
           includeDropped: true,
           projectId: report.projectId,
           screenshotContexts,
+          screenshotsOnly: true,
         },
         {
           enabled: screenshotContexts.length > 0,

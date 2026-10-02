@@ -268,6 +268,7 @@ export function ReportTable({
           includeDropped: true,
           projectId: report.projectId,
           screenshotContexts,
+          screenshotsOnly: true,
         },
         {
           enabled: screenshotContexts.length > 0,

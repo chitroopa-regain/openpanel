@@ -2,10 +2,18 @@ import type { Dashboard, Prisma } from '../prisma-client';
 import { db } from '../prisma-client';
 
 export type IServiceDashboard = Dashboard;
+// The sidebar and dashboards list only show each dashboard's reports by name
+// and type. Returning full report rows (series, filters, options for 1,000+
+// reports) made this list 1.3 MB, refetched on every page.
+const dashboardListReportSelect = {
+  id: true,
+  name: true,
+  chartType: true,
+} as const;
+
 export type IServiceDashboards = Prisma.DashboardGetPayload<{
   include: {
-    project: true;
-    reports: true;
+    reports: { select: typeof dashboardListReportSelect };
   };
 }>[];
 
@@ -33,8 +41,7 @@ export function getDashboardsByProjectId(projectId: string) {
       projectId,
     },
     include: {
-      project: true,
-      reports: true,
+      reports: { select: dashboardListReportSelect },
     },
     orderBy: [
       { pinnedAt: { sort: 'desc', nulls: 'last' } },

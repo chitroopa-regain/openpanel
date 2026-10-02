@@ -480,15 +480,49 @@ export const chartRouter = createTRPCRouter({
           .array(screenshotMatchContextSchema)
           .max(50)
           .default([]),
+        /**
+         * Return only the events named in screenshotContexts (with their
+         * screenshots), not the whole catalog. Report widgets only need the
+         * screenshots; the full catalog was ~590 KB per widget per refresh.
+         */
+        screenshotsOnly: z.boolean().default(false),
       })
     )
     .query(
-      async ({ input: { projectId, includeDropped, screenshotContexts } }) => {
+      async ({
+        input: { projectId, includeDropped, screenshotContexts, screenshotsOnly },
+      }) => {
         const PROTECTED_EVENTS = [
           'session_start',
           'session_end',
           'screen_view',
         ];
+
+        if (screenshotsOnly) {
+          const names = getScreenshotLookupEventNames(screenshotContexts);
+          const [meta, screenshots] = await Promise.all([
+            getEventMetasCached(projectId),
+            process.env.EVENT_SCREENSHOT_PROJECT_ID === projectId &&
+            names.length > 0
+              ? fetchEventScreenshots(names, screenshotContexts)
+              : Promise.resolve(new Map<string, EventScreenshot[]>()),
+          ]);
+          return names.map((name) => {
+            const eventMeta = meta.find((m) => m.name === name);
+            return {
+              name,
+              count: 0,
+              meta: eventMeta,
+              isCustomEvent: false as const,
+              customEventId: undefined as string | undefined,
+              isProtected: PROTECTED_EVENTS.includes(name),
+              droppedAt: eventMeta?.droppedAt ?? null,
+              clearedAt: eventMeta?.clearedAt ?? null,
+              screenshots: screenshots.get(name),
+              screenshotContextRequested: true,
+            };
+          });
+        }
 
         const [events, meta, customEvents] = await Promise.all([
           chQuery<{ name: string; count: number }>(
