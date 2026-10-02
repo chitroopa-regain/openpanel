@@ -57,6 +57,8 @@ export interface SpendRow {
   campaign_id: string;
   campaign_name: string;
   spend_inr: number;
+  /** Device OS the campaign buys installs on: Apple Ads or `iOS` in the name = ios. */
+  os: 'ios' | 'android';
 }
 
 export type AcquisitionCostMode = 'blended' | AttributionKind;
@@ -178,13 +180,64 @@ export function buildSpendQuery({
   // Output column is `day`, not `spend_date`: aliasing toString(spend_date)
   // back to its own name makes ClickHouse resolve the WHERE against the
   // String alias (NO_COMMON_TYPE with the Date bounds).
-  return `SELECT toString(spend_date) AS day, platform, campaign_id, any(campaign_name) AS campaign_name, sum(spend_inr) AS spend_inr
+  return `SELECT toString(spend_date) AS day, platform, campaign_id, campaign_name, sum(spend_inr) AS spend_inr,
+  if(platform = 'apple_ads' OR match(campaign_name, '(?i)(^|[^a-z])ios([^a-z]|$)'), 'ios', 'android') AS os
 FROM ${AD_SPEND_TABLE} FINAL
 WHERE ${where}
   AND (spend_date, platform, synced_at) IN (
     SELECT spend_date, platform, max(synced_at) FROM ${AD_SPEND_TABLE} WHERE ${where} GROUP BY spend_date, platform
   )
-GROUP BY spend_date, platform, campaign_id`;
+GROUP BY spend_date, platform, campaign_id, campaign_name`;
+}
+
+/** OS mix of the cohort's first event over the report range (sorting-key scan). */
+export function buildCohortOsQuery({
+  projectId,
+  eventNames,
+  startDay,
+  endDay,
+  timezone,
+}: {
+  projectId: string;
+  eventNames: string[];
+  startDay: string;
+  endDay: string;
+  timezone: string;
+}) {
+  const tz = sqlstring.escape(timezone);
+  return `SELECT lower(os) AS os, count() AS events
+FROM events
+WHERE project_id = ${sqlstring.escape(projectId)}
+  AND name IN (${eventNames.map((n) => sqlstring.escape(n)).join(', ')})
+  AND created_at >= toDateTime(${sqlstring.escape(`${startDay} 00:00:00`)}, ${tz})
+  AND created_at < toDateTime(${sqlstring.escape(`${endDay} 00:00:00`)}, ${tz}) + INTERVAL 1 DAY
+GROUP BY os`;
+}
+
+/** Below this share an OS is noise (a QA device), not an acquisition channel. */
+const MIN_OS_SHARE = 0.01;
+
+/**
+ * Only spend that bought installs the cohort can contain. Regain's install
+ * events are Android-only, so Meta iOS campaigns and Apple Ads must not be
+ * charged to them — doing so inflated Meta's Android CPI by 30-50%. With no
+ * android/ios signal at all, spend is left unfiltered.
+ */
+export function spendForCohortOs(
+  spend: SpendRow[],
+  osCounts: Array<{ os: string; events: number | string }>
+) {
+  const known = osCounts.filter((r) => r.os === 'android' || r.os === 'ios');
+  const total = known.reduce((acc, r) => acc + Number(r.events), 0);
+  if (total === 0) {
+    return spend;
+  }
+  const present = new Set(
+    known
+      .filter((r) => Number(r.events) / total >= MIN_OS_SHARE)
+      .map((r) => r.os)
+  );
+  return spend.filter((s) => present.has(s.os));
 }
 
 /**

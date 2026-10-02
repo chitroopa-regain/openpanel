@@ -7,6 +7,7 @@ import {
   findAttributionBreakdown,
   type SpendRow,
   sourceValueToPlatform,
+  spendForCohortOs,
   totalPaidSpend,
 } from './chart-acquisition-cost';
 
@@ -17,6 +18,7 @@ const spend: SpendRow[] = [
     campaign_id: 'g1',
     campaign_name: 'Google Scale',
     spend_inr: 150_000,
+    os: 'android',
   },
   {
     day: '2026-09-29',
@@ -24,6 +26,7 @@ const spend: SpendRow[] = [
     campaign_id: 'm1',
     campaign_name: 'Meta CBO 06',
     spend_inr: 100_000,
+    os: 'android',
   },
   {
     day: '2026-09-29',
@@ -31,6 +34,7 @@ const spend: SpendRow[] = [
     campaign_id: 'm2',
     campaign_name: 'Meta ABO',
     spend_inr: 30_000,
+    os: 'android',
   },
   {
     day: '2026-09-29',
@@ -38,6 +42,7 @@ const spend: SpendRow[] = [
     campaign_id: 'a1',
     campaign_name: 'iOS',
     spend_inr: 2000,
+    os: 'ios',
   },
   // Not a paid ad platform: never part of CPI.
   {
@@ -46,6 +51,7 @@ const spend: SpendRow[] = [
     campaign_id: 'ugc',
     campaign_name: 'UGC',
     spend_inr: 9999,
+    os: 'android',
   },
   {
     day: '2026-09-30',
@@ -53,6 +59,7 @@ const spend: SpendRow[] = [
     campaign_id: 'g1',
     campaign_name: 'Google Scale',
     spend_inr: 100_000,
+    os: 'android',
   },
 ];
 
@@ -219,6 +226,40 @@ describe('acquisition cost', () => {
       { interval: 'day', attribution: null }
     );
     expect(rows[0]).toMatchObject({ spend: 100_000, cpi: null });
+  });
+
+  it('drops spend for an OS the cohort does not contain', () => {
+    const withIosMeta: SpendRow[] = [
+      ...spend,
+      {
+        day: '2026-09-29',
+        platform: 'meta_ads',
+        campaign_id: 'm9',
+        campaign_name: 'Regain - IN - 04 - IOS - Purchase - CBO',
+        spend_inr: 36_000,
+        os: 'ios',
+      },
+    ];
+    const androidOnly = spendForCohortOs(withIosMeta, [
+      { os: 'android', events: 99_327 },
+      { os: '', events: 3 },
+    ]);
+    expect(androidOnly.some((s) => s.os === 'ios')).toBe(false);
+    expect(totalPaidSpend(androidOnly)).toBe(380_000);
+    // A stray iOS QA install does not pull iOS spend in.
+    expect(
+      spendForCohortOs(withIosMeta, [
+        { os: 'android', events: 10_000 },
+        { os: 'ios', events: 3 },
+      ]).some((s) => s.os === 'ios')
+    ).toBe(false);
+    expect(
+      spendForCohortOs(withIosMeta, [
+        { os: 'android', events: 900 },
+        { os: 'ios', events: 100 },
+      ])
+    ).toHaveLength(withIosMeta.length);
+    expect(spendForCohortOs(withIosMeta, [])).toHaveLength(withIosMeta.length);
   });
 
   it('reads only the latest sync batch per platform-day', () => {

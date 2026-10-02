@@ -81,10 +81,12 @@ import {
   type AcquisitionCostSummary,
   attachAcquisitionCost,
   buildCampaignNameMapQuery,
+  buildCohortOsQuery,
   buildSpendQuery,
   cohortSizesByInterval,
   findAttributionBreakdown,
   type SpendRow,
+  spendForCohortOs,
   spendWindowStart,
   totalPaidSpend,
 } from './chart-acquisition-cost';
@@ -2162,8 +2164,17 @@ export const chartRouter = createTRPCRouter({
           breakdowns.map((b) => b.name)
         );
         try {
-          const [spend, nameRows] = await Promise.all([
+          const [spend, osCounts, nameRows] = await Promise.all([
             chQuery<SpendRow>(buildSpendQuery({ projectId, startDay, endDay })),
+            chQuery<{ os: string; events: number }>(
+              buildCohortOsQuery({
+                projectId,
+                eventNames: firstEvent,
+                startDay,
+                endDay,
+                timezone,
+              })
+            ),
             attribution?.kind === 'campaign_name'
               ? chQuery<{ name: string; ids: string[] }>(
                   buildCampaignNameMapQuery({
@@ -2174,7 +2185,7 @@ export const chartRouter = createTRPCRouter({
               : Promise.resolve([]),
           ]);
           return {
-            spend,
+            spend: spendForCohortOs(spend, osCounts),
             attribution,
             campaignNameToIds: new Map(nameRows.map((r) => [r.name, r.ids])),
           };
