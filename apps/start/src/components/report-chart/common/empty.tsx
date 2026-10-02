@@ -51,9 +51,12 @@ export function ReportChartEmpty({
         isEditMode && 'card p-4',
       )}
     >
+      {/* Static on purpose: an endlessly pulsing SVG re-layerizes the whole
+          dashboard every frame (~50 s of main-thread time per minute on a
+          throttled phone with two empty widgets). */}
       <BirdIcon
         strokeWidth={1.2}
-        className="mb-4 size-1/3 animate-pulse text-muted-foreground"
+        className="mb-4 size-1/3 text-muted-foreground"
       />
       <div className="font-medium text-muted-foreground">{title}</div>
       <div className="text-muted-foreground mt-2">{children}</div>

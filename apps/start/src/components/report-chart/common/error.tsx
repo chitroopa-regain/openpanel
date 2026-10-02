@@ -13,7 +13,7 @@ export function ReportChartError() {
     >
       <ServerCrashIcon
         strokeWidth={1.2}
-        className="mb-4 size-10 animate-pulse text-muted-foreground"
+        className="mb-4 size-10 text-muted-foreground"
       />
       <div className="text-sm font-medium text-muted-foreground">
         There was an error loading this chart.
