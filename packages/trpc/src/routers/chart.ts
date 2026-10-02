@@ -77,6 +77,17 @@ import {
   protectedProcedure,
   publicProcedure,
 } from '../trpc';
+import {
+  type AcquisitionCostSummary,
+  attachAcquisitionCost,
+  buildCampaignNameMapQuery,
+  buildSpendQuery,
+  cohortSizesByInterval,
+  findAttributionBreakdown,
+  type SpendRow,
+  spendWindowStart,
+  totalPaidSpend,
+} from './chart-acquisition-cost';
 import { buildEventNamesQuery } from './chart-event-names.utils';
 import type { EventScreenshot } from './chart-events.utils';
 import {
@@ -1415,6 +1426,7 @@ export const chartRouter = createTRPCRouter({
         topN: z.number().int().positive().max(20).default(20),
         breakdownSort: zRetentionBreakdownSort.default('profile_count_desc'),
         breakdowns: zChartBreakdowns.default([]),
+        acquisitionCost: z.boolean().optional(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         interval: zTimeInterval.default('day'),
@@ -1449,6 +1461,7 @@ export const chartRouter = createTRPCRouter({
       let topN = input.topN;
       let breakdownSort = input.breakdownSort;
       let breakdowns: IChartBreakdown[] = input.breakdowns;
+      let acquisitionCostEnabled = !!input.acquisitionCost;
       const dateRange = ctx.report
         ? (input.range ?? ctx.report.range)
         : input.range;
@@ -1533,6 +1546,8 @@ export const chartRouter = createTRPCRouter({
         retentionUnit = retentionOptions?.retentionUnit ?? retentionUnit;
         topN = retentionOptions?.topN ?? topN;
         breakdownSort = retentionOptions?.breakdownSort ?? breakdownSort;
+        acquisitionCostEnabled =
+          retentionOptions?.acquisitionCost ?? acquisitionCostEnabled;
         breakdowns = ctx.report.breakdowns;
 
         const firstItem = ctx.report.series[0];
@@ -2132,6 +2147,79 @@ export const chartRouter = createTRPCRouter({
         return { data: run.data, query: run.query };
       };
 
+      // Spend / CPI beside each cohort (see chart-acquisition-cost.ts). Loaded
+      // once per request; a missing or unreachable spend table degrades to no
+      // columns rather than failing the report.
+      const loadAcquisitionSpend = async () => {
+        if (!acquisitionCostEnabled) return null;
+        const startDay = spendWindowStart(dates.startDate, interval);
+        const end = new Date(`${dates.endDate.slice(0, 10)}T00:00:00Z`);
+        if (dates.endDate.slice(11, 19) === '00:00:00') {
+          end.setUTCDate(end.getUTCDate() - 1);
+        }
+        const endDay = end.toISOString().slice(0, 10);
+        const attribution = findAttributionBreakdown(
+          breakdowns.map((b) => b.name)
+        );
+        try {
+          const [spend, nameRows] = await Promise.all([
+            chQuery<SpendRow>(buildSpendQuery({ projectId, startDay, endDay })),
+            attribution?.kind === 'campaign_name'
+              ? chQuery<{ name: string; ids: string[] }>(
+                  buildCampaignNameMapQuery({
+                    projectId,
+                    key: attribution.key,
+                  })
+                )
+              : Promise.resolve([]),
+          ]);
+          return {
+            spend,
+            attribution,
+            campaignNameToIds: new Map(nameRows.map((r) => [r.name, r.ids])),
+          };
+        } catch (error) {
+          console.error('[retention] acquisition cost spend load failed', error);
+          return null;
+        }
+      };
+      type CohortRows = Awaited<ReturnType<typeof runRetention>>['data'];
+      const withAcquisitionCost = (
+        loaded: Awaited<ReturnType<typeof loadAcquisitionSpend>>,
+        rows: CohortRows,
+        options: { blended: boolean; overallRows?: CohortRows | null }
+      ) => {
+        if (!loaded) return { rows, attributedSpend: 0 };
+        return attachAcquisitionCost(rows, loaded.spend, {
+          interval,
+          attribution: options.blended ? null : loaded.attribution,
+          campaignNameToIds: loaded.campaignNameToIds,
+          overallSums: options.overallRows
+            ? cohortSizesByInterval(options.overallRows)
+            : undefined,
+        });
+      };
+      const acquisitionSummary = (
+        loaded: Awaited<ReturnType<typeof loadAcquisitionSpend>>,
+        attributedSpend: number,
+        blended: boolean
+      ): AcquisitionCostSummary | null =>
+        loaded
+          ? {
+              mode:
+                blended || !loaded.attribution
+                  ? 'blended'
+                  : loaded.attribution.kind,
+              breakdown:
+                blended || !loaded.attribution
+                  ? null
+                  : (breakdowns[loaded.attribution.index]?.name ?? null),
+              totalSpend: totalPaidSpend(loaded.spend),
+              attributedSpend,
+              currency: 'INR',
+            }
+          : null;
+
       if (retentionCohortBuckets.length > 0) {
         const results: Array<{
           cohortId: string;
@@ -2141,8 +2229,9 @@ export const chartRouter = createTRPCRouter({
           query: string;
         }> = new Array(retentionCohortBuckets.length);
         let cursor = 0;
-        const [overall] = await Promise.all([
+        const [overall, acquisition] = await Promise.all([
           runOverallRetention(),
+          loadAcquisitionSpend(),
           ...Array.from(
             { length: Math.min(2, retentionCohortBuckets.length) },
             async () => {
@@ -2171,6 +2260,21 @@ export const chartRouter = createTRPCRouter({
           ),
         ]);
 
+        // Cohort buckets are audiences, not acquisition channels: every bucket
+        // reads the blended CPI, shared against the whole population.
+        let bucketSpend = 0;
+        const costedResults = results.map((result) => {
+          const costed = withAcquisitionCost(acquisition, result.data, {
+            blended: true,
+            overallRows: overall?.data,
+          });
+          bucketSpend += costed.attributedSpend;
+          return { ...result, data: costed.rows };
+        });
+        const costedOverall = overall
+          ? withAcquisitionCost(acquisition, overall.data, { blended: true })
+          : null;
+
         return {
           // Deliberately EMPTY when buckets are present. Mirroring the first
           // bucket here made an empty `In 'X'` look like an empty report and
@@ -2178,32 +2282,54 @@ export const chartRouter = createTRPCRouter({
           // read `buckets` would render one bucket's numbers as if they were
           // the whole report. With no legacy consumers left, the honest shape
           // is to make `buckets` the only answer.
-          data: [] as (typeof results)[number]['data'],
-          buckets: results,
+          data: [] as (typeof costedResults)[number]['data'],
+          buckets: costedResults,
           queries: [
             ...results.map((r) => r.query),
             ...(overall ? [overall.query] : []),
           ],
-          overall: overall?.data ?? null,
+          overall: costedOverall?.rows ?? null,
+          acquisitionCost: acquisitionSummary(
+            acquisition,
+            costedOverall?.attributedSpend ?? bucketSpend,
+            true
+          ),
           timezone,
           membershipAsOf,
         };
       }
 
-      const [single, overall] = await Promise.all([
+      const [single, overall, acquisition] = await Promise.all([
         runRetention(retentionAudienceClause),
         runOverallRetention(),
+        loadAcquisitionSpend(),
       ]);
+      const costedSingle = withAcquisitionCost(acquisition, single.data, {
+        blended: false,
+        overallRows: overall?.data,
+      });
+      const costedOverall = overall
+        ? withAcquisitionCost(acquisition, overall.data, { blended: true })
+        : null;
 
       return {
-        data: single.data,
+        data: costedSingle.rows,
         queries: [single.query, ...(overall ? [overall.query] : [])],
         /**
          * Whole-population retention for the same report, present only when a
          * property or cohort breakdown is set; `null` otherwise (then `data`
          * already is the overall).
          */
-        overall: overall?.data ?? null,
+        overall: costedOverall?.rows ?? null,
+        /**
+         * Spend matched to the rows, present when the report enables
+         * acquisition cost. Rows then carry `spend` / `cpi` (INR).
+         */
+        acquisitionCost: acquisitionSummary(
+          acquisition,
+          costedSingle.attributedSpend,
+          false
+        ),
         timezone,
         // The instant membership was evaluated at, returned for the same reason
         // the chart path returns it: a drill-down must reproduce this exact

@@ -1,0 +1,417 @@
+import sqlstring from 'sqlstring';
+
+/**
+ * Acquisition cost (Spend / CPI) beside retention cohorts.
+ *
+ * Spend lives in `ad_spend_campaign_daily` (one row per ad-platform campaign
+ * per account-local day, written hourly by the Regain marketing sync). A
+ * cohort row is matched to spend through its breakdown:
+ *
+ * - no attribution breakdown: blended — every cohort carries the date's TOTAL
+ *   paid spend, shared pro-rata by cohort size when there are several rows
+ *   (so each row reads the blended CPI);
+ * - a source breakdown (`install_source`, `utm_source`, …): the row's value is
+ *   mapped to a platform (google_ads / meta_ads / apple_ads); organic and
+ *   other unpaid sources carry no spend;
+ * - a campaign breakdown (`fb_campaign_group_id`, `gad_campaignid`,
+ *   `fb_campaign_group_name`, …): matched to the campaign's spend by id. Names
+ *   are resolved to ids first, because Meta campaigns get renamed and the
+ *   install-time name no longer equals the name the spend is stored under.
+ *
+ * Rows that share one spend key in one interval (e.g. `instagram` and
+ * `facebook` both map to Meta) split that spend pro-rata by cohort size.
+ */
+
+export const AD_SPEND_TABLE = 'ad_spend_campaign_daily';
+
+/** Platform-level spend on a cohort can only come from these. */
+export const PAID_PLATFORMS = ['google_ads', 'meta_ads', 'apple_ads'] as const;
+
+const CAMPAIGN_ID_KEYS = new Set([
+  'fb_campaign_group_id',
+  'gad_campaignid',
+  'install_referrer_gad_campaignid',
+  'campaign_id',
+]);
+const CAMPAIGN_NAME_KEYS = new Set(['fb_campaign_group_name', 'campaign_name']);
+const SOURCE_KEYS = new Set([
+  'install_source',
+  'first_install_source',
+  'utm_source',
+  'install_referrer_utm_source',
+  'platform',
+]);
+
+export type AttributionKind = 'source' | 'campaign_id' | 'campaign_name';
+
+export interface AttributionBreakdown {
+  index: number;
+  kind: AttributionKind;
+  key: string;
+}
+
+export interface SpendRow {
+  /** Account-local spend day, `YYYY-MM-DD`. */
+  day: string;
+  platform: string;
+  campaign_id: string;
+  campaign_name: string;
+  spend_inr: number;
+}
+
+export type AcquisitionCostMode = 'blended' | AttributionKind;
+
+export interface AcquisitionCostSummary {
+  mode: AcquisitionCostMode;
+  /** The breakdown the spend was matched on, e.g. `properties.install_source`. */
+  breakdown: string | null;
+  /** Paid spend in the report's date range. */
+  totalSpend: number;
+  /** The part of it assigned to rows on screen. */
+  attributedSpend: number;
+  currency: 'INR';
+}
+
+const PROFILE_PROPERTIES_PREFIX = /^profile\.properties\./;
+const PROPERTIES_PREFIX = /^properties\./;
+
+/** `properties.x` / `profile.properties.x` / `x` → `x`. */
+export function getBreakdownKey(name: string) {
+  return name
+    .replace(PROFILE_PROPERTIES_PREFIX, '')
+    .replace(PROPERTIES_PREFIX, '');
+}
+
+function attributionKindOf(key: string): AttributionKind | null {
+  if (CAMPAIGN_ID_KEYS.has(key)) {
+    return 'campaign_id';
+  }
+  if (CAMPAIGN_NAME_KEYS.has(key)) {
+    return 'campaign_name';
+  }
+  return SOURCE_KEYS.has(key) ? 'source' : null;
+}
+
+/**
+ * The breakdown spend is matched on. Campaign beats source (it is the finer
+ * grain); among equals the first one wins. `null` = no attribution breakdown,
+ * so spend is blended.
+ */
+export function findAttributionBreakdown(
+  breakdownNames: string[]
+): AttributionBreakdown | null {
+  const candidates = breakdownNames.map((name, index) => {
+    const key = getBreakdownKey(name);
+    const kind = attributionKindOf(key);
+    return kind ? { index, kind, key } : null;
+  });
+  const rank: Record<AttributionKind, number> = {
+    campaign_id: 0,
+    campaign_name: 1,
+    source: 2,
+  };
+  return (
+    candidates
+      .filter((c): c is AttributionBreakdown => c !== null)
+      .sort((a, b) => rank[a.kind] - rank[b.kind] || a.index - b.index)[0] ??
+    null
+  );
+}
+
+/** An install-source / utm_source value → the ad platform that paid for it. */
+export function sourceValueToPlatform(value: string | null | undefined) {
+  const v = (value ?? '').trim().toLowerCase();
+  if (!v) {
+    return null;
+  }
+  if (v === 'google_ads' || v === 'google-ads' || v === 'googleads') {
+    return 'google_ads';
+  }
+  if (
+    v === 'instagram' ||
+    v === 'facebook' ||
+    v === 'meta' ||
+    v === 'meta_ads' ||
+    v === 'meta-ads' ||
+    v === 'apps.instagram.com' ||
+    v === 'apps.facebook.com'
+  ) {
+    return 'meta_ads';
+  }
+  if (v === 'apple_ads' || v === 'apple-ads' || v === 'apple_search_ads') {
+    return 'apple_ads';
+  }
+  return null;
+}
+
+/** Start of the cohort interval a `YYYY-MM-DD` day falls in (week = Sunday). */
+export function cohortIntervalKey(
+  day: string,
+  interval: string | undefined
+): string {
+  const date = new Date(`${day.slice(0, 10)}T00:00:00Z`);
+  if (interval === 'week') {
+    date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  } else if (interval === 'month') {
+    date.setUTCDate(1);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+/** First day of the spend window: snapped back to the first cohort interval. */
+export function spendWindowStart(startDate: string, interval?: string) {
+  return cohortIntervalKey(startDate.slice(0, 10), interval);
+}
+
+export function buildSpendQuery({
+  projectId,
+  startDay,
+  endDay,
+}: {
+  projectId: string;
+  startDay: string;
+  endDay: string;
+}) {
+  const where = `project_id = ${sqlstring.escape(projectId)} AND spend_date BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
+  // Each sync writes a whole platform-day batch under one synced_at; only the
+  // latest batch is live, so a campaign missing from a refetch stops counting.
+  // Output column is `day`, not `spend_date`: aliasing toString(spend_date)
+  // back to its own name makes ClickHouse resolve the WHERE against the
+  // String alias (NO_COMMON_TYPE with the Date bounds).
+  return `SELECT toString(spend_date) AS day, platform, campaign_id, any(campaign_name) AS campaign_name, sum(spend_inr) AS spend_inr
+FROM ${AD_SPEND_TABLE} FINAL
+WHERE ${where}
+  AND (spend_date, platform, synced_at) IN (
+    SELECT spend_date, platform, max(synced_at) FROM ${AD_SPEND_TABLE} WHERE ${where} GROUP BY spend_date, platform
+  )
+GROUP BY spend_date, platform, campaign_id`;
+}
+
+/**
+ * Campaign name → ids, from profile traits (names change; ids do not). The
+ * events table is the wrong source: an unindexed property scan over the
+ * report range read ~940M rows / 5 min on regain-app, the traits pair ~2 s.
+ */
+export function buildCampaignNameMapQuery({
+  projectId,
+  key,
+}: {
+  projectId: string;
+  key: string;
+}) {
+  const idKey =
+    key === 'fb_campaign_group_name' ? 'fb_campaign_group_id' : 'campaign_id';
+  const latest = (traitKey: string) =>
+    `SELECT profile_id, argMax(value, updated_at) AS value FROM profile_traits WHERE project_id = ${sqlstring.escape(projectId)} AND key = ${sqlstring.escape(traitKey)} GROUP BY profile_id`;
+  return `SELECT n.value AS name, groupUniqArray(20)(i.value) AS ids
+FROM (${latest(key)}) AS n
+INNER JOIN (${latest(idKey)}) AS i ON i.profile_id = n.profile_id
+WHERE n.value != '' AND i.value != ''
+GROUP BY name`;
+}
+
+type Matcher =
+  | { kind: 'all' }
+  | { kind: 'platform'; platform: string }
+  | { kind: 'campaign'; ids: string[] }
+  | { kind: 'unpaid' };
+
+function matcherKey(m: Matcher) {
+  if (m.kind === 'platform') {
+    return `platform:${m.platform}`;
+  }
+  if (m.kind === 'campaign') {
+    return `campaign:${[...m.ids].sort().join(',')}`;
+  }
+  return m.kind;
+}
+
+function matcherFor(
+  breakdowns: Array<string | null | undefined>,
+  attribution: AttributionBreakdown | null,
+  campaignNameToIds: Map<string, string[]>
+): Matcher {
+  if (!attribution) {
+    return { kind: 'all' };
+  }
+  const value = (breakdowns[attribution.index] ?? '').trim();
+  if (!value || value === '(not set)') {
+    return { kind: 'unpaid' };
+  }
+  if (attribution.kind === 'source') {
+    const platform = sourceValueToPlatform(value);
+    return platform ? { kind: 'platform', platform } : { kind: 'unpaid' };
+  }
+  if (attribution.kind === 'campaign_id') {
+    return { kind: 'campaign', ids: [value] };
+  }
+  const ids = campaignNameToIds.get(value) ?? [];
+  // Unresolvable names fall back to matching the stored campaign name.
+  return { kind: 'campaign', ids: ids.length > 0 ? ids : [`name:${value}`] };
+}
+
+function spendMatches(row: SpendRow, m: Matcher) {
+  if (!(PAID_PLATFORMS as readonly string[]).includes(row.platform)) {
+    return false;
+  }
+  switch (m.kind) {
+    case 'all':
+      return true;
+    case 'platform':
+      return row.platform === m.platform;
+    case 'campaign':
+      return m.ids.some((id) =>
+        id.startsWith('name:')
+          ? row.campaign_name === id.slice(5)
+          : row.campaign_id === id
+      );
+    default:
+      return false;
+  }
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** (cohort interval, matcher) → matching paid spend, summed. */
+function buildSpendLookup(spend: SpendRow[], interval: string | undefined) {
+  const spendByInterval = new Map<string, SpendRow[]>();
+  for (const s of spend) {
+    const key = cohortIntervalKey(s.day, interval);
+    const list = spendByInterval.get(key) ?? [];
+    list.push(s);
+    spendByInterval.set(key, list);
+  }
+  return (cohortInterval: string, m: Matcher) =>
+    (spendByInterval.get(cohortInterval) ?? [])
+      .filter((s) => spendMatches(s, m))
+      .reduce((acc, s) => acc + Number(s.spend_inr), 0);
+}
+
+/** Rows sharing one spend key in one interval split that spend. Unpaid rows are left out. */
+function groupBySpendKey<T extends { cohort_interval: string }>(
+  rows: T[],
+  matcherOf: (row: T) => Matcher
+) {
+  const groups = new Map<string, { m: Matcher; rows: T[] }>();
+  for (const row of rows) {
+    const m = matcherOf(row);
+    if (m.kind === 'unpaid') {
+      continue;
+    }
+    const key = `${row.cohort_interval}|${matcherKey(m)}`;
+    const group = groups.get(key) ?? { m, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+  return groups.values();
+}
+
+export interface CostRowInput {
+  cohort_interval: string;
+  sum: number;
+  breakdowns?: Array<string | null | undefined>;
+}
+
+export type WithAcquisitionCost<T> = T & {
+  spend: number | null;
+  cpi: number | null;
+};
+
+const AVERAGE_ROW = 'Weighted Average';
+
+/**
+ * Stamp `spend` / `cpi` on retention rows (one breakdown group or many).
+ *
+ * `overallSums` (interval → cohort size of the whole population) is the
+ * pro-rata denominator for BLENDED rows when the rows on screen are only part
+ * of the population (top-N breakdowns, cohort buckets). Without it the rows'
+ * own sizes are used.
+ */
+export function attachAcquisitionCost<T extends CostRowInput>(
+  rows: T[],
+  spend: SpendRow[],
+  {
+    interval,
+    attribution,
+    campaignNameToIds = new Map(),
+    overallSums,
+  }: {
+    interval: string | undefined;
+    attribution: AttributionBreakdown | null;
+    campaignNameToIds?: Map<string, string[]>;
+    overallSums?: Map<string, number>;
+  }
+): { rows: WithAcquisitionCost<T>[]; attributedSpend: number } {
+  const spendFor = buildSpendLookup(spend, interval);
+  const cohortRows = rows.filter((r) => r.cohort_interval !== AVERAGE_ROW);
+  const shares = new Map<T, number>();
+  const groups = groupBySpendKey(cohortRows, (row) =>
+    matcherFor(row.breakdowns ?? [], attribution, campaignNameToIds)
+  );
+
+  let attributedSpend = 0;
+  for (const { m, rows: groupRows } of groups) {
+    const cohortInterval = groupRows[0]!.cohort_interval;
+    const total = spendFor(cohortInterval, m);
+    const ownSize = groupRows.reduce((acc, r) => acc + Number(r.sum), 0);
+    const overall =
+      m.kind === 'all' ? overallSums?.get(cohortInterval) : undefined;
+    const denominator = Math.max(overall ?? 0, ownSize);
+    for (const row of groupRows) {
+      const share =
+        denominator > 0
+          ? (total * Number(row.sum)) / denominator
+          : total / groupRows.length;
+      shares.set(row, share);
+      attributedSpend += share;
+    }
+  }
+
+  // Summary rows: their group's cohorts added up, CPI over the group's size.
+  const groupSpend = new Map<string, number>();
+  for (const row of cohortRows) {
+    const key = JSON.stringify(row.breakdowns ?? []);
+    groupSpend.set(key, (groupSpend.get(key) ?? 0) + (shares.get(row) ?? 0));
+  }
+
+  const out = rows.map((row) => {
+    const isAverage = row.cohort_interval === AVERAGE_ROW;
+    // Organic / unattributed rows have no acquisition cost, not a zero one.
+    const unpaid =
+      matcherFor(row.breakdowns ?? [], attribution, campaignNameToIds).kind ===
+      'unpaid';
+    const value = isAverage
+      ? (groupSpend.get(JSON.stringify(row.breakdowns ?? [])) ?? 0)
+      : (shares.get(row) ?? 0);
+    const size = Number(row.sum);
+    return {
+      ...row,
+      spend: unpaid ? null : round2(value),
+      cpi: unpaid || size <= 0 ? null : round2(value / size),
+    };
+  });
+  return { rows: out, attributedSpend: round2(attributedSpend) };
+}
+
+/** interval → cohort size, from the whole-population rows. */
+export function cohortSizesByInterval(rows: CostRowInput[]) {
+  const sizes = new Map<string, number>();
+  for (const row of rows) {
+    if (row.cohort_interval === AVERAGE_ROW) {
+      continue;
+    }
+    sizes.set(
+      row.cohort_interval,
+      (sizes.get(row.cohort_interval) ?? 0) + Number(row.sum)
+    );
+  }
+  return sizes;
+}
+
+export function totalPaidSpend(spend: SpendRow[]) {
+  return round2(
+    spend
+      .filter((s) => (PAID_PLATFORMS as readonly string[]).includes(s.platform))
+      .reduce((acc, s) => acc + Number(s.spend_inr), 0)
+  );
+}

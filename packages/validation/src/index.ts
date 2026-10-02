@@ -407,6 +407,12 @@ export const zRetentionOptions = z.object({
   visualization: zRetentionVisualization.optional(),
   /** 0-based retention step the metric visualization reads. undefined = 0. */
   metricStep: z.number().int().nonnegative().optional(),
+  /**
+   * Show ad Spend and CPI beside each cohort (INR, from
+   * `ad_spend_campaign_daily`). Blended by default; matched per platform or
+   * campaign when the report breaks down by install source or campaign.
+   */
+  acquisitionCost: z.boolean().optional(),
 });
 
 export const zSankeyOptions = z.object({

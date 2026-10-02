@@ -168,6 +168,47 @@ describe('retention breakdown table groups', () => {
     expect(screen.getByText('2026-07-22')).toBeTruthy();
   });
 
+  it('shows Spend and CPI before Total profiles only when acquisition cost is on', () => {
+    const data = [
+      { ...row('Weighted Average', [], 3000), spend: 382000, cpi: 127.33 },
+      { ...row('2026-09-29', [], 2000), spend: 282000, cpi: 141 },
+      { ...row('2026-09-30', [], 0), spend: 100000, cpi: null },
+    ];
+
+    render(
+      createElement(CohortTable, {
+        data,
+        acquisitionCost: {
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 382000,
+          attributedSpend: 382000,
+          currency: 'INR',
+        },
+      })
+    );
+
+    const headers = screen
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent);
+    expect(headers.slice(1, 4)).toEqual(['Spend', 'CPI', 'Total profiles']);
+    const cpi = screen
+      .getAllByTestId('retention-cpi-cell')
+      .map((cell) => cell.textContent);
+    expect(cpi).toEqual(['₹127.3', '₹141', '—']);
+    expect(
+      screen.getAllByTestId('retention-spend-cell')[1]?.textContent
+    ).toBe('₹2,82,000');
+    expect(
+      screen.getByTestId('retention-acquisition-cost-note').textContent
+    ).toContain('blended');
+    cleanup();
+
+    render(createElement(CohortTable, { data }));
+    expect(screen.queryByText('CPI')).toBeNull();
+    expect(screen.queryByTestId('retention-acquisition-cost-note')).toBeNull();
+  });
+
   it('renders immature intervals as unavailable instead of zero', () => {
     const data: CohortData = [
       {

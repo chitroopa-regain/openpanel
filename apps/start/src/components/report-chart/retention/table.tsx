@@ -24,7 +24,38 @@ export type CohortData = RouterOutputs['chart']['cohort']['data'];
 export type CohortRow = CohortData[number] & {
   cohortKey?: string;
   cohortLabel?: string;
+  /** Ad spend (INR) matched to this cohort; present with acquisition cost on. */
+  spend?: number | null;
+  /** spend / cohort size. `null` = unpaid source or an empty cohort. */
+  cpi?: number | null;
 };
+
+export type AcquisitionCost = NonNullable<
+  RouterOutputs['chart']['cohort']['acquisitionCost']
+>;
+
+const inr = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  maximumFractionDigits: 0,
+});
+const inrCpi = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+});
+
+export function describeAcquisitionCost(cost: AcquisitionCost) {
+  const total = inr.format(cost.totalSpend);
+  if (cost.mode === 'blended') {
+    return `Spend & CPI: blended Google + Meta + Apple Ads spend over every install in the cohort · ${total} in range`;
+  }
+  const by = cost.breakdown
+    ? getPropertyLabel(cost.breakdown)
+    : cost.mode.replace('_', ' ');
+  return `Spend & CPI: matched by ${by} (${cost.mode === 'source' ? 'ad platform' : 'campaign'}) · ${inr.format(cost.attributedSpend)} of ${total} matched to the rows shown · organic rows have no CPI`;
+}
 
 export interface CohortBreakdownGroup {
   key: string;
@@ -67,6 +98,8 @@ export function getCohortBreakdownGroups(
 
 interface CohortTableProps {
   data: CohortRow[];
+  /** Present when the report shows ad Spend / CPI columns. */
+  acquisitionCost?: AcquisitionCost | null;
   /** Whole-population rows, present only with a breakdown. See index.tsx. */
   overall?: CohortRow[] | null;
 }
@@ -74,7 +107,12 @@ interface CohortTableProps {
 /** Group key reserved for the pinned whole-population row. */
 export const OVERALL_GROUP_KEY = '__overall__';
 
-const CohortTable: React.FC<CohortTableProps> = ({ data, overall }) => {
+const CohortTable: React.FC<CohortTableProps> = ({
+  data,
+  overall,
+  acquisitionCost,
+}) => {
+  const showCost = Boolean(acquisitionCost);
   const {
     report: { unit, options, breakdowns, series },
   } = useReportChartContext();
@@ -210,6 +248,24 @@ const CohortTable: React.FC<CohortTableProps> = ({ data, overall }) => {
 
     return (
       <>
+        {showCost && (
+          <>
+            <td className="min-w-24 p-0" data-testid="retention-spend-cell">
+              <div className="px-3 text-right font-mono text-muted-foreground">
+                {row.spend === null || row.spend === undefined
+                  ? '—'
+                  : inr.format(row.spend)}
+              </div>
+            </td>
+            <td className="min-w-20 p-0" data-testid="retention-cpi-cell">
+              <div className="px-3 text-right font-medium font-mono">
+                {row.cpi === null || row.cpi === undefined
+                  ? '—'
+                  : inrCpi.format(row.cpi)}
+              </div>
+            </td>
+          </>
+        )}
         <td className="min-w-12 p-0">
           <div className="rounded px-3 font-medium font-mono">
             {number.format(row.sum)}
@@ -280,6 +336,22 @@ const CohortTable: React.FC<CohortTableProps> = ({ data, overall }) => {
                     </div>
                   </div>
                 </th>
+                {showCost && (
+                  <>
+                    <th
+                      className={cn(thClassName, 'px-3 text-right')}
+                      title="Paid ad spend for this cohort (INR)"
+                    >
+                      Spend
+                    </th>
+                    <th
+                      className={cn(thClassName, 'px-3 text-right')}
+                      title="Cost per install = spend / cohort size"
+                    >
+                      CPI
+                    </th>
+                  </>
+                )}
                 <th className={cn(thClassName, 'pr-1')}>Total profiles</th>
                 {data[0]?.values.map((_column, index) => (
                   <th
@@ -390,6 +462,14 @@ const CohortTable: React.FC<CohortTableProps> = ({ data, overall }) => {
           </table>
         </div>
       </div>
+      {acquisitionCost && (
+        <div
+          className="border-t px-4 py-2 text-muted-foreground text-xs"
+          data-testid="retention-acquisition-cost-note"
+        >
+          {describeAcquisitionCost(acquisitionCost)}
+        </div>
+      )}
     </div>
     </ReportSeriesScreenshotsProvider>
   );

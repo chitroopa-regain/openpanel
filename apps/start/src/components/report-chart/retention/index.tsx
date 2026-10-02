@@ -96,6 +96,7 @@ export function ReportRetentionChart() {
     topN,
     breakdownSort,
     breakdowns: report.breakdowns,
+    acquisitionCost: retentionOptions?.acquisitionCost,
     interval: report.interval,
     // Retention builds its own input for chart.cohort rather than passing the
     // whole report, so the cohort filter has to be forwarded explicitly.
@@ -241,7 +242,11 @@ export function ReportRetentionChart() {
           <div
             className={isDashboardLayout ? 'min-h-0 overflow-auto' : undefined}
           >
-            <CohortTable data={rows} overall={overall} />
+            <CohortTable
+              acquisitionCost={res.data.acquisitionCost ?? null}
+              data={rows}
+              overall={overall}
+            />
           </div>
         )}
       </div>

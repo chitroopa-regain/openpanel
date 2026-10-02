@@ -9,6 +9,7 @@ import {
   changeFunnelWindow,
   changeFunnelWindowUnit,
   changePrevious,
+  changeRetentionAcquisitionCost,
   changeRetentionBreakdownSort,
   changeRetentionMetric,
   changeRetentionMetricStep,
@@ -54,6 +55,7 @@ export function ReportSettings() {
     retentionOptions?.breakdownSort ?? 'profile_count_desc';
   const retentionVisualization = retentionOptions?.visualization ?? 'curve';
   const retentionMetricStep = retentionOptions?.metricStep ?? 0;
+  const retentionAcquisitionCost = !!retentionOptions?.acquisitionCost;
   const breakdownCount = useSelector((state) => state.report.breakdowns.length);
 
   const funnelOptions = options?.type === 'funnel' ? options : undefined;
@@ -127,6 +129,7 @@ export function ReportSettings() {
 
     if (chartType === 'retention') {
       fields.push('retentionVisualization');
+      fields.push('retentionAcquisitionCost');
       fields.push('criteria');
       fields.push('retentionUnit');
       fields.push('retentionMetric');
@@ -224,6 +227,18 @@ export function ReportSettings() {
               value={criteria}
             />
           </div>
+        )}
+        {fields.includes('retentionAcquisitionCost') && (
+          <Label className="mb-0 flex items-center justify-between">
+            <span className="whitespace-nowrap">Show ad spend &amp; CPI</span>
+            <Switch
+              checked={retentionAcquisitionCost}
+              data-testid="retention-acquisition-cost-switch"
+              onCheckedChange={(val) =>
+                dispatch(changeRetentionAcquisitionCost(!!val))
+              }
+            />
+          </Label>
         )}
         {fields.includes('retentionVisualization') && (
           <div className="flex items-center justify-between gap-4">

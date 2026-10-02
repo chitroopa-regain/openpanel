@@ -687,6 +687,19 @@ export const reportSlice = createSlice({
       }
     },
 
+    changeRetentionAcquisitionCost(state, action: PayloadAction<boolean>) {
+      state.dirty = true;
+      if (!state.options || state.options.type !== 'retention') {
+        state.options = {
+          displayMode: state.options?.displayMode,
+          type: 'retention',
+          acquisitionCost: action.payload || undefined,
+        };
+      } else {
+        state.options.acquisitionCost = action.payload || undefined;
+      }
+    },
+
     changeFunnelGroup(state, action: PayloadAction<string | undefined>) {
       state.dirty = true;
       if (!state.options || state.options.type !== 'funnel') {
@@ -938,6 +951,7 @@ export const {
   changeRetentionBreakdownSort,
   changeRetentionVisualization,
   changeRetentionMetricStep,
+  changeRetentionAcquisitionCost,
   changeFunnelGroup,
   changeFunnelWindow,
   changeFunnelWindowUnit,
