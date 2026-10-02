@@ -78,6 +78,7 @@ import {
   publicProcedure,
 } from '../trpc';
 import {
+  ATTRIBUTION_COVERAGE_FROM,
   type AcquisitionCostSummary,
   attachAcquisitionCost,
   buildCampaignNameMapQuery,
@@ -2224,6 +2225,7 @@ export const chartRouter = createTRPCRouter({
           overallSums: options.overallRows
             ? cohortSizesByInterval(options.overallRows)
             : undefined,
+          coverageFrom: ATTRIBUTION_COVERAGE_FROM[projectId] ?? {},
         });
       };
       const acquisitionSummary = (
@@ -2246,6 +2248,10 @@ export const chartRouter = createTRPCRouter({
               currency: 'INR',
               roasAvailable: Boolean(retentionPropertyExpr),
               roasMaxDay: retentionUnit === 'day' ? diffInterval : 0,
+              coverageFrom:
+                blended || !loaded.attribution
+                  ? {}
+                  : (ATTRIBUTION_COVERAGE_FROM[projectId] ?? {}),
             }
           : null;
 

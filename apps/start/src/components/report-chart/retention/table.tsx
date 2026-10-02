@@ -67,6 +67,25 @@ export function describeAcquisitionCost(cost: AcquisitionCost) {
     : `${base} · ROAS needs a revenue metric (Property Sum or Property Average)`;
 }
 
+const PLATFORM_LABEL: Record<string, string> = {
+  google_ads: 'Google',
+  meta_ads: 'Meta',
+  apple_ads: 'Apple',
+};
+
+function describeCoverage(cost: AcquisitionCost) {
+  const entries = Object.entries(cost.coverageFrom ?? {});
+  if (entries.length === 0) {
+    return '';
+  }
+  return ` · ${entries
+    .map(
+      ([platform, from]) =>
+        `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
+    )
+    .join(', ')}`;
+}
+
 function describeAcquisitionSpend(cost: AcquisitionCost) {
   const total = inr.format(cost.totalSpend);
   if (cost.mode === 'blended') {
@@ -75,7 +94,7 @@ function describeAcquisitionSpend(cost: AcquisitionCost) {
   const by = cost.breakdown
     ? getPropertyLabel(cost.breakdown)
     : cost.mode.replace('_', ' ');
-  return `Spend, CPI & ROAS: matched by ${by} (${cost.mode === 'source' ? 'ad platform' : 'campaign'}) · ${inr.format(cost.attributedSpend)} of ${total} matched to the rows shown · organic rows have no CPI`;
+  return `Spend, CPI & ROAS: matched by ${by} (${cost.mode === 'source' ? 'ad platform' : 'campaign'}) · ${inr.format(cost.attributedSpend)} of ${total} matched to the rows shown · organic rows have no CPI${describeCoverage(cost)}`;
 }
 
 export interface CohortBreakdownGroup {

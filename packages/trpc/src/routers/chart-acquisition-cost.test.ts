@@ -338,6 +338,64 @@ describe('acquisition cost', () => {
     expect(rows[2]?.roas).toBeNull();
   });
 
+  it('matched rows before a platform is attributable read blank, and stay out of the summary', () => {
+    const lateSpend: SpendRow[] = [
+      ...spend,
+      {
+        day: '2026-09-05',
+        platform: 'meta_ads',
+        campaign_id: 'm1',
+        campaign_name: 'Meta CBO 06',
+        spend_inr: 200_000,
+        os: 'android',
+      },
+    ];
+    const { rows, attributedSpend } = attachAcquisitionCost(
+      [
+        avg(1200, ['instagram']),
+        // 09-05: only 200 labelled Meta installs against 2 lakh of spend.
+        {
+          cohort_interval: '2026-09-05',
+          sum: 200,
+          breakdowns: ['instagram'],
+          revenue: { d0: 1000, d7: null, d30: null, lifetime: 1000 },
+        },
+        {
+          cohort_interval: '2026-09-29',
+          sum: 1000,
+          breakdowns: ['instagram'],
+          revenue: { d0: 65_000, d7: null, d30: null, lifetime: 65_000 },
+        },
+        { cohort_interval: '2026-09-05', sum: 900, breakdowns: ['google_ads'] },
+      ],
+      lateSpend,
+      {
+        interval: 'day',
+        attribution: findAttributionBreakdown(['properties.install_source']),
+        coverageFrom: { meta_ads: '2026-09-06' },
+      }
+    );
+    expect(rows[1]).toMatchObject({ spend: null, cpi: null, roas: null });
+    expect(rows[2]).toMatchObject({ spend: 130_000, cpi: 130 });
+    // Summary = the covered 09-29 cohort only, not 09-05's installs or spend.
+    expect(rows[0]).toMatchObject({ spend: 130_000, cpi: 130 });
+    expect(rows[0]?.roas?.d0).toBe(0.5);
+    // Google is unaffected by Meta's cutoff (no Google spend on 09-05 here).
+    expect(rows[3]).toMatchObject({ spend: 0, cpi: 0 });
+    expect(attributedSpend).toBe(130_000);
+    // Blended ignores coverage.
+    const blended = attachAcquisitionCost(
+      [{ cohort_interval: '2026-09-05', sum: 1000, breakdowns: [] }],
+      lateSpend,
+      {
+        interval: 'day',
+        attribution: null,
+        coverageFrom: { meta_ads: '2026-09-06' },
+      }
+    );
+    expect(blended.rows[0]).toMatchObject({ spend: 200_000, cpi: 200 });
+  });
+
   it('reads only the latest sync batch per platform-day', () => {
     const sql = buildSpendQuery({
       projectId: "regain-app'",

@@ -24,6 +24,21 @@ import sqlstring from 'sqlstring';
 
 export const AD_SPEND_TABLE = 'ad_spend_campaign_daily';
 
+/**
+ * First cohort day each platform's installs can be told apart by source or
+ * campaign. Before it, matched rows read "—" instead of piling the platform's
+ * whole spend onto the handful of installs that happened to be labelled.
+ * Regain: Meta's install referrer only decodes to instagram/facebook +
+ * fb_campaign_* at scale from 2026-09-06 (120-400 labelled installs a week
+ * against Rs 1-2.4 lakh of Meta Android spend before it).
+ */
+export const ATTRIBUTION_COVERAGE_FROM: Record<
+  string,
+  Partial<Record<string, string>>
+> = {
+  'regain-app': { meta_ads: '2026-09-06' },
+};
+
 /** Platform-level spend on a cohort can only come from these. */
 export const PAID_PLATFORMS = ['google_ads', 'meta_ads', 'apple_ads'] as const;
 
@@ -76,6 +91,8 @@ export interface AcquisitionCostSummary {
   roasAvailable: boolean;
   /** Days of return window the range covers; D7/D30 need at least 7/30. */
   roasMaxDay: number;
+  /** Matched modes only: platform → first attributable cohort day. */
+  coverageFrom: Partial<Record<string, string>>;
 }
 
 const PROFILE_PROPERTIES_PREFIX = /^profile\.properties\./;
@@ -344,6 +361,17 @@ function buildSpendLookup(spend: SpendRow[], interval: string | undefined) {
       .reduce((acc, s) => acc + Number(s.spend_inr), 0);
 }
 
+/** The ad platform a matched row's spend comes from. */
+function matcherPlatform(m: Matcher, spend: SpendRow[]) {
+  if (m.kind === 'platform') {
+    return m.platform;
+  }
+  if (m.kind === 'campaign') {
+    return spend.find((s) => spendMatches(s, m))?.platform ?? null;
+  }
+  return null;
+}
+
 /** Rows sharing one spend key in one interval split that spend. Unpaid rows are left out. */
 function groupBySpendKey<T extends { cohort_interval: string }>(
   rows: T[],
@@ -431,29 +459,42 @@ const AVERAGE_ROW = 'Weighted Average';
  * of the population (top-N breakdowns, cohort buckets). Without it the rows'
  * own sizes are used.
  */
-export function attachAcquisitionCost<T extends CostRowInput>(
-  rows: T[],
-  spend: SpendRow[],
-  {
-    interval,
-    attribution,
-    campaignNameToIds = new Map(),
-    overallSums,
-  }: {
-    interval: string | undefined;
-    attribution: AttributionBreakdown | null;
-    campaignNameToIds?: Map<string, string[]>;
-    overallSums?: Map<string, number>;
-  }
-): { rows: WithAcquisitionCost<T>[]; attributedSpend: number } {
-  const spendFor = buildSpendLookup(spend, interval);
-  const cohortRows = rows.filter((r) => r.cohort_interval !== AVERAGE_ROW);
-  const shares = new Map<T, number>();
-  const groups = groupBySpendKey(cohortRows, (row) =>
-    matcherFor(row.breakdowns ?? [], attribution, campaignNameToIds)
-  );
+interface GroupSummary {
+  spend: number;
+  size: number;
+  members: Array<{ revenue?: Roas; spend: number }>;
+}
 
-  let attributedSpend = 0;
+/** Per breakdown group: covered cohorts' spend, installs and revenue. */
+function summarizeGroups<T extends CostRowInput>(
+  cohortRows: T[],
+  shares: Map<T, number>,
+  uncovered: Set<T>
+) {
+  const groups = new Map<string, GroupSummary>();
+  for (const row of cohortRows) {
+    if (uncovered.has(row)) {
+      continue;
+    }
+    const key = JSON.stringify(row.breakdowns ?? []);
+    const group = groups.get(key) ?? { spend: 0, size: 0, members: [] };
+    const share = shares.get(row) ?? 0;
+    group.spend += share;
+    group.size += Number(row.sum);
+    group.members.push({ revenue: row.revenue, spend: share });
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+/** Split each spend group's money across its rows by cohort size. */
+function allocateShares<T extends CostRowInput>(
+  groups: Iterable<{ m: Matcher; rows: T[] }>,
+  spendFor: (cohortInterval: string, m: Matcher) => number,
+  overallSums: Map<string, number> | undefined
+) {
+  const shares = new Map<T, number>();
+  let attributed = 0;
   for (const { m, rows: groupRows } of groups) {
     const cohortInterval = groupRows[0]!.cohort_interval;
     const total = spendFor(cohortInterval, m);
@@ -467,50 +508,99 @@ export function attachAcquisitionCost<T extends CostRowInput>(
           ? (total * Number(row.sum)) / denominator
           : total / groupRows.length;
       shares.set(row, share);
-      attributedSpend += share;
+      attributed += share;
     }
   }
+  return { shares, attributed };
+}
 
-  // Summary rows: their group's cohorts added up, CPI over the group's size.
-  const groupSpend = new Map<string, number>();
-  const groupMembers = new Map<
-    string,
-    Array<{ revenue?: Roas; spend: number }>
-  >();
-  for (const row of cohortRows) {
-    const key = JSON.stringify(row.breakdowns ?? []);
-    const share = shares.get(row) ?? 0;
-    groupSpend.set(key, (groupSpend.get(key) ?? 0) + share);
-    const members = groupMembers.get(key) ?? [];
-    members.push({ revenue: row.revenue, spend: share });
-    groupMembers.set(key, members);
+function costCells(
+  unpaid: boolean,
+  value: number,
+  size: number,
+  roas: () => Roas | null
+) {
+  if (unpaid) {
+    return { spend: null, cpi: null, roas: null };
   }
+  return {
+    spend: round2(value),
+    cpi: size > 0 ? round2(value / size) : null,
+    roas: roas(),
+  };
+}
+
+/**
+ * Stamp `spend` / `cpi` / `roas` on retention rows (one breakdown group or
+ * many).
+ *
+ * `overallSums` (interval → cohort size of the whole population) is the
+ * pro-rata denominator for BLENDED rows when the rows on screen are only part
+ * of the population (top-N breakdowns, cohort buckets). Without it the rows'
+ * own sizes are used.
+ */
+export function attachAcquisitionCost<T extends CostRowInput>(
+  rows: T[],
+  spend: SpendRow[],
+  {
+    interval,
+    attribution,
+    campaignNameToIds = new Map(),
+    overallSums,
+    coverageFrom = {},
+  }: {
+    interval: string | undefined;
+    attribution: AttributionBreakdown | null;
+    campaignNameToIds?: Map<string, string[]>;
+    overallSums?: Map<string, number>;
+    /** platform → first covered cohort day; see ATTRIBUTION_COVERAGE_FROM. */
+    coverageFrom?: Partial<Record<string, string>>;
+  }
+): { rows: WithAcquisitionCost<T>[]; attributedSpend: number } {
+  const cohortRows = rows.filter((r) => r.cohort_interval !== AVERAGE_ROW);
+  const rowMatcher = (row: T) =>
+    matcherFor(row.breakdowns ?? [], attribution, campaignNameToIds);
+  // Matched rows whose cohort starts before their platform is attributable.
+  const uncovered = new Set<T>();
+  const matcherOfRow = (row: T): Matcher => {
+    const m = rowMatcher(row);
+    const platform = attribution ? matcherPlatform(m, spend) : null;
+    const from = platform ? coverageFrom[platform] : undefined;
+    if (from && row.cohort_interval < from) {
+      uncovered.add(row);
+      return { kind: 'unpaid' };
+    }
+    return m;
+  };
+  const { shares, attributed } = allocateShares(
+    groupBySpendKey(cohortRows, matcherOfRow),
+    buildSpendLookup(spend, interval),
+    overallSums
+  );
+  const summaries = summarizeGroups(cohortRows, shares, uncovered);
 
   const out = rows.map((row) => {
-    const isAverage = row.cohort_interval === AVERAGE_ROW;
-    // Organic / unattributed rows have no acquisition cost, not a zero one.
-    const unpaid =
-      matcherFor(row.breakdowns ?? [], attribution, campaignNameToIds).kind ===
-      'unpaid';
-    const value = isAverage
-      ? (groupSpend.get(JSON.stringify(row.breakdowns ?? [])) ?? 0)
-      : (shares.get(row) ?? 0);
-    const size = Number(row.sum);
-    const groupKey = JSON.stringify(row.breakdowns ?? []);
-    let roas: Roas | null = null;
-    if (!unpaid) {
-      roas = isAverage
-        ? summaryRoas(groupMembers.get(groupKey) ?? [])
-        : rowRoas(row.revenue, value);
+    // Organic / unattributed rows have no acquisition cost, not a zero one;
+    // neither do matched rows from before their platform is attributable.
+    const unpaid = uncovered.has(row) || rowMatcher(row).kind === 'unpaid';
+    if (row.cohort_interval === AVERAGE_ROW) {
+      const group = summaries.get(JSON.stringify(row.breakdowns ?? []));
+      return {
+        ...row,
+        ...costCells(unpaid, group?.spend ?? 0, group?.size ?? 0, () =>
+          summaryRoas(group?.members ?? [])
+        ),
+      };
     }
+    const value = shares.get(row) ?? 0;
     return {
       ...row,
-      spend: unpaid ? null : round2(value),
-      cpi: unpaid || size <= 0 ? null : round2(value / size),
-      roas,
+      ...costCells(unpaid, value, Number(row.sum), () =>
+        rowRoas(row.revenue, value)
+      ),
     };
   });
-  return { rows: out, attributedSpend: round2(attributedSpend) };
+  return { rows: out, attributedSpend: round2(attributed) };
 }
 
 /** interval → cohort size, from the whole-population rows. */
