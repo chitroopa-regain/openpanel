@@ -82,6 +82,7 @@ const PLATFORM_LABEL: Record<string, string> = {
   google_ads: 'Google',
   meta_ads: 'Meta',
   apple_ads: 'Apple',
+  ugc: 'UGC creators',
 };
 
 function describeCoverage(cost: AcquisitionCost) {
@@ -126,7 +127,7 @@ function describePending(cost: AcquisitionCost) {
 function describeAcquisitionSpend(cost: AcquisitionCost) {
   const total = inr.format(cost.totalSpend);
   if (cost.mode === 'blended') {
-    return `Spend, CPI & ROAS: blended paid ad spend (Google + Meta + Apple, only for the OS the cohort contains) over every install in the cohort · ${total} in range`;
+    return `Spend, CPI & ROAS: blended paid spend (Google + Meta + Apple ads + UGC creators, only for the OS the cohort contains) over every install in the cohort · ${total} in range`;
   }
   const by = cost.breakdown
     ? getPropertyLabel(cost.breakdown)

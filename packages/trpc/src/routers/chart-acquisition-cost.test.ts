@@ -48,10 +48,10 @@ const spend: SpendRow[] = [
     spend_inr: 2000,
     os: 'ios',
   },
-  // Not a paid ad platform: never part of CPI.
+  // Not a known spend platform: never part of CPI.
   {
     day: '2026-09-29',
-    platform: 'ugc',
+    platform: 'unknown_network',
     campaign_id: 'ugc',
     campaign_name: 'UGC',
     spend_inr: 9999,
@@ -699,6 +699,52 @@ describe('acquisition cost', () => {
       }
     );
     expect(matched.rows[0]?.playInstalls).toBeUndefined();
+  });
+
+  it('UGC creator spend counts in blended CPI and maps to creator sources', () => {
+    const withUgc: SpendRow[] = [
+      ...spend,
+      {
+        day: '2026-09-29',
+        platform: 'ugc',
+        campaign_id: 'ugc',
+        campaign_name: 'UGC creators',
+        spend_inr: 18_000,
+        os: 'android',
+      },
+    ];
+    expect(totalPaidSpend(withUgc)).toBe(382_000 + 18_000);
+    expect(sourceValueToPlatform('creator')).toBe('ugc');
+    expect(sourceValueToPlatform('social-media')).toBe('ugc');
+    const { rows } = attachAcquisitionCost(
+      [
+        { cohort_interval: '2026-09-29', sum: 100, breakdowns: ['creator'] },
+        { cohort_interval: '2026-09-29', sum: 2000, breakdowns: ['organic'] },
+      ],
+      withUgc,
+      {
+        interval: 'day',
+        attribution: findAttributionBreakdown(['properties.install_source']),
+      }
+    );
+    expect(rows[0]).toMatchObject({ spend: 18_000, cpi: 180 });
+    expect(rows[1]).toMatchObject({ spend: null, cpi: null });
+    // A day without UGC is not "pending".
+    expect(
+      spendPendingToday(
+        [
+          {
+            day: '2026-10-01',
+            platform: 'ugc',
+            campaign_id: 'ugc',
+            campaign_name: 'UGC creators',
+            spend_inr: 14_050,
+            os: 'android',
+          },
+        ],
+        '2026-10-02'
+      )
+    ).toEqual([]);
   });
 
   it('reads only the latest sync batch per platform-day', () => {

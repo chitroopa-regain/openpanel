@@ -40,7 +40,14 @@ export const ATTRIBUTION_COVERAGE_FROM: Record<
 };
 
 /** Platform-level spend on a cohort can only come from these. */
-export const PAID_PLATFORMS = ['google_ads', 'meta_ads', 'apple_ads'] as const;
+export const PAID_PLATFORMS = [
+  'google_ads',
+  'meta_ads',
+  'apple_ads',
+  // Creator (UGC + paid collab) spend from the marketing dashboard, booked on
+  // the day each video goes live.
+  'ugc',
+] as const;
 
 const CAMPAIGN_ID_KEYS = new Set([
   'fb_campaign_group_id',
@@ -169,6 +176,11 @@ export function sourceValueToPlatform(value: string | null | undefined) {
   }
   if (v === 'apple_ads' || v === 'apple-ads' || v === 'apple_search_ads') {
     return 'apple_ads';
+  }
+  // Creator links: install_source 'creator', utm_source 'social-media'
+  // (utm_campaign carries the creator, e.g. UGC-Amritha).
+  if (v === 'creator' || v === 'ugc' || v === 'social-media') {
+    return 'ugc';
   }
   return null;
 }
@@ -951,8 +963,12 @@ export function spendPendingToday(spend: SpendRow[], today: string) {
     spend
       .filter((s) => s.day === day && s.platform === platform)
       .reduce((acc, s) => acc + Number(s.spend_inr), 0);
+  // UGC is booked on posting days, so a zero day is normal, not pending.
   return PAID_PLATFORMS.filter(
-    (platform) => byDay(y, platform) > 0 && byDay(today, platform) <= 0
+    (platform) =>
+      platform !== 'ugc' &&
+      byDay(y, platform) > 0 &&
+      byDay(today, platform) <= 0
   );
 }
 
