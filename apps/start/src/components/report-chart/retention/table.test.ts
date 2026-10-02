@@ -174,6 +174,40 @@ describe('retention breakdown table groups', () => {
     expect(screen.getByText('2026-07-22')).toBeTruthy();
   });
 
+  it('renders each heat cell as td + one div with the value as direct text', () => {
+    const data: CohortData = [
+      { ...row('2026-07-21', []), values: [5, 0], percentages: [0.5, 0] },
+      {
+        ...row('2026-07-22', []),
+        values: [1, null as unknown as number],
+        percentages: [0.1, null as unknown as number],
+      },
+    ];
+
+    render(createElement(CohortTable, { data }));
+
+    const cells = Array.from(
+      document.querySelectorAll<HTMLElement>('td > div.isolate')
+    );
+    // 2 rows x 2 day columns
+    expect(cells).toHaveLength(4);
+    for (const cell of cells) {
+      expect(cell.children).toHaveLength(0);
+    }
+    const [filled, zero, , empty] = cells as [
+      HTMLElement,
+      HTMLElement,
+      HTMLElement,
+      HTMLElement,
+    ];
+    expect(filled.style.getPropertyValue('--cell-opacity')).not.toBe('');
+    expect(filled.className).toContain('before:bg-highlight');
+    expect(zero.className).not.toContain('before:bg-highlight');
+    expect(empty.textContent).toBe('—');
+    expect(empty.className).not.toContain('before:bg-highlight');
+    expect(empty.getAttribute('style')).toBeNull();
+  });
+
   it('shows Spend and CPI before Total profiles only when acquisition cost is on', () => {
     const data = [
       { ...row('Weighted Average', [], 3000), spend: 382000, cpi: 127.33 },
@@ -197,14 +231,20 @@ describe('retention breakdown table groups', () => {
     const headers = screen
       .getAllByRole('columnheader')
       .map((header) => header.textContent);
-    expect(headers.slice(1, 6)).toEqual(['Play installs', 'Spend', 'CPI', 'Revenue', 'Total profiles']);
+    expect(headers.slice(1, 6)).toEqual([
+      'Play installs',
+      'Spend',
+      'CPI',
+      'Revenue',
+      'Total profiles',
+    ]);
     const cpi = screen
       .getAllByTestId('retention-cpi-cell')
       .map((cell) => cell.textContent);
     expect(cpi).toEqual(['₹191', '₹127.3', '₹141', '—']);
-    expect(
-      screen.getAllByTestId('retention-spend-cell')[2]?.textContent
-    ).toBe('₹2,82,000');
+    expect(screen.getAllByTestId('retention-spend-cell')[2]?.textContent).toBe(
+      '₹2,82,000'
+    );
     expect(
       screen.getByTestId('retention-acquisition-cost-note').textContent
     ).toContain('blended');
@@ -282,59 +322,157 @@ describe('retention breakdown table groups', () => {
     render(
       createElement(CohortTable, {
         data: [
-          { ...row('2026-10-02', [], 10000), spend: 149_929, cpi: 15, roas: { d0: 0.42, d7: null, d30: null, lifetime: 0.42, partial: ['d0'] } },
+          {
+            ...row('2026-10-02', [], 10000),
+            spend: 149_929,
+            cpi: 15,
+            roas: {
+              d0: 0.42,
+              d7: null,
+              d30: null,
+              lifetime: 0.42,
+              partial: ['d0'],
+            },
+          },
         ],
         acquisitionCost: {
-          mode: 'blended', breakdown: null, totalSpend: 149_929, attributedSpend: 149_929, currency: 'INR',
-          roasAvailable: true, roasMaxDay: 7, coverageFrom: {}, spendPendingToday: ['meta_ads'],
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 149_929,
+          attributedSpend: 149_929,
+          currency: 'INR',
+          roasAvailable: true,
+          roasMaxDay: 7,
+          coverageFrom: {},
+          spendPendingToday: ['meta_ads'],
         },
       })
     );
     // [0] is the Total row; [1] is today's cohort.
     const d0 = screen.getAllByTestId('retention-roas-d0-cell')[1];
     expect(d0?.textContent).toBe('0.42xso far');
-    expect(screen.getByTestId('retention-acquisition-cost-note').textContent).toContain(
-      "Meta has not reported today's spend yet"
-    );
+    expect(
+      screen.getByTestId('retention-acquisition-cost-note').textContent
+    ).toContain("Meta has not reported today's spend yet");
   });
 
   it('shows booked revenue and ROAS before tracking without extra tags or faded text', () => {
     render(
       createElement(CohortTable, {
         data: [
-          { ...row('2026-02-01', [], 0), spend: 1_034_746, cpi: 1.73, playInstalls: 596_667, lifetimeRevenue: 1_188_650, revenueBasis: 'booked', installsSource: 'play', externalInstalls: 596_667, roas: { d0: null, d7: null, d30: null, lifetime: 1.149, basis: 'booked' } },
+          {
+            ...row('2026-02-01', [], 0),
+            spend: 1_034_746,
+            cpi: 1.73,
+            playInstalls: 596_667,
+            lifetimeRevenue: 1_188_650,
+            revenueBasis: 'booked',
+            installsSource: 'play',
+            externalInstalls: 596_667,
+            roas: {
+              d0: null,
+              d7: null,
+              d30: null,
+              lifetime: 1.149,
+              basis: 'booked',
+            },
+          },
         ],
         acquisitionCost: {
-          mode: 'blended', breakdown: null, totalSpend: 1_034_746, attributedSpend: 0, currency: 'INR',
-          roasAvailable: true, roasMaxDay: 7, coverageFrom: {}, spendPendingToday: [], trackingStart: '2026-03-12', spendFilters: { applied: [], ignored: [] },
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 1_034_746,
+          attributedSpend: 0,
+          currency: 'INR',
+          roasAvailable: true,
+          roasMaxDay: 7,
+          coverageFrom: {},
+          spendPendingToday: [],
+          trackingStart: '2026-03-12',
+          spendFilters: { applied: [], ignored: [] },
         },
       })
     );
-    expect(screen.getAllByTestId('retention-play-installs-cell')[0]?.textContent).toBe('596667');
-    expect(screen.getAllByTestId('retention-revenue-cell')[0]?.textContent).toBe('₹11,88,650');
-    expect(screen.getAllByTestId('retention-roas-lifetime-cell')[0]?.textContent).toBe('1.15x');
-    expect(screen.getAllByTestId('retention-cpi-cell')[0]?.textContent).toBe('₹1.7');
+    expect(
+      screen.getAllByTestId('retention-play-installs-cell')[0]?.textContent
+    ).toBe('596667');
+    expect(
+      screen.getAllByTestId('retention-revenue-cell')[0]?.textContent
+    ).toBe('₹11,88,650');
+    expect(
+      screen.getAllByTestId('retention-roas-lifetime-cell')[0]?.textContent
+    ).toBe('1.15x');
+    expect(screen.getAllByTestId('retention-cpi-cell')[0]?.textContent).toBe(
+      '₹1.7'
+    );
     // Same text colour on every row: no muted styling on Spend / CPI / Revenue.
-    for (const id of ['retention-spend-cell', 'retention-cpi-cell', 'retention-revenue-cell']) {
-      expect(screen.getAllByTestId(id)[0]?.querySelector('div')?.className ?? '').not.toContain('text-muted-foreground');
+    for (const id of [
+      'retention-spend-cell',
+      'retention-cpi-cell',
+      'retention-revenue-cell',
+    ]) {
+      expect(
+        screen.getAllByTestId(id)[0]?.querySelector('div')?.className ?? ''
+      ).not.toContain('text-muted-foreground');
     }
-    expect(screen.getAllByTestId('retention-roas-d0-cell')[0]?.textContent).toBe('—');
+    expect(
+      screen.getAllByTestId('retention-roas-d0-cell')[0]?.textContent
+    ).toBe('—');
   });
 
   it('shows a Total row above Weighted Average that sums every row', () => {
     const cost = {
-      mode: 'blended' as const, breakdown: null, totalSpend: 0, attributedSpend: 0, currency: 'INR' as const,
-      roasAvailable: true, roasMaxDay: 30, coverageFrom: {}, spendPendingToday: [], trackingStart: '2026-03-12',
+      mode: 'blended' as const,
+      breakdown: null,
+      totalSpend: 0,
+      attributedSpend: 0,
+      currency: 'INR' as const,
+      roasAvailable: true,
+      roasMaxDay: 30,
+      coverageFrom: {},
+      spendPendingToday: [],
+      trackingStart: '2026-03-12',
       spendFilters: { applied: [], ignored: [] },
     };
     render(
       createElement(CohortTable, {
         data: [
-          { ...row('Weighted Average', [], 3000), spend: 300_000, cpi: 100, playInstalls: 4000, lifetimeRevenue: 450_000, roas: { d0: 0.5, d7: null, d30: null, lifetime: 1.5 } },
+          {
+            ...row('Weighted Average', [], 3000),
+            spend: 300_000,
+            cpi: 100,
+            playInstalls: 4000,
+            lifetimeRevenue: 450_000,
+            roas: { d0: 0.5, d7: null, d30: null, lifetime: 1.5 },
+          },
           // Before tracking: Play CPI, booked revenue.
-          { ...row('2026-02-01', [], 0), spend: 100_000, cpi: 1, playInstalls: 100_000, lifetimeRevenue: 120_000, revenueBasis: 'booked', installsSource: 'play', externalInstalls: 100_000, roas: { d0: null, d7: null, d30: null, lifetime: 1.2, basis: 'booked' } },
+          {
+            ...row('2026-02-01', [], 0),
+            spend: 100_000,
+            cpi: 1,
+            playInstalls: 100_000,
+            lifetimeRevenue: 120_000,
+            revenueBasis: 'booked',
+            installsSource: 'play',
+            externalInstalls: 100_000,
+            roas: {
+              d0: null,
+              d7: null,
+              d30: null,
+              lifetime: 1.2,
+              basis: 'booked',
+            },
+          },
           // Tracked.
-          { ...row('2026-03-01', [], 3000), spend: 300_000, cpi: 100, playInstalls: 4000, lifetimeRevenue: 450_000, revenueBasis: 'cohort', roas: { d0: 0.5, d7: null, d30: null, lifetime: 1.5 } },
+          {
+            ...row('2026-03-01', [], 3000),
+            spend: 300_000,
+            cpi: 100,
+            playInstalls: 4000,
+            lifetimeRevenue: 450_000,
+            revenueBasis: 'cohort',
+            roas: { d0: 0.5, d7: null, d30: null, lifetime: 1.5 },
+          },
         ],
         acquisitionCost: cost,
       })
@@ -343,7 +481,8 @@ describe('retention breakdown table groups', () => {
     expect(bodyRows[0]?.textContent).toContain('Total');
     expect(bodyRows[1]?.textContent).toContain('Weighted Average');
     const total = screen.getByTestId('retention-total-row');
-    const cell = (id: string) => total.querySelector(`[data-testid="${id}"]`)?.textContent;
+    const cell = (id: string) =>
+      total.querySelector(`[data-testid="${id}"]`)?.textContent;
     expect(cell('retention-play-installs-cell')).toBe('104000');
     expect(cell('retention-spend-cell')).toBe('₹4,00,000');
     // 400000 / (100000 Play installs + 3000 cohort installs)
@@ -363,12 +502,26 @@ describe('retention breakdown table groups', () => {
       createElement(CohortTable, {
         data: [
           { ...wide('Weighted Average', 3000), spend: 1, cpi: 1 },
-          { ...wide('2026-02-01', 0), spend: 1_034_746, cpi: 1.73, installsSource: 'play', externalInstalls: 596_667 },
+          {
+            ...wide('2026-02-01', 0),
+            spend: 1_034_746,
+            cpi: 1.73,
+            installsSource: 'play',
+            externalInstalls: 596_667,
+          },
           { ...wide('2026-03-01', 3000), spend: 300_000, cpi: 100 },
         ],
         acquisitionCost: {
-          mode: 'blended', breakdown: null, totalSpend: 0, attributedSpend: 0, currency: 'INR',
-          roasAvailable: true, roasMaxDay: 30, coverageFrom: {}, spendPendingToday: [], trackingStart: '2026-03-12',
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 0,
+          attributedSpend: 0,
+          currency: 'INR',
+          roasAvailable: true,
+          roasMaxDay: 30,
+          coverageFrom: {},
+          spendPendingToday: [],
+          trackingStart: '2026-03-12',
           spendFilters: { applied: [], ignored: [] },
         },
       })
@@ -384,7 +537,9 @@ describe('retention breakdown table groups', () => {
   it('offers no ROAS columns when the report does not measure revenue', () => {
     render(
       createElement(CohortTable, {
-        data: [{ ...row('2026-09-29', [], 2000), spend: 1, cpi: 1, roas: null }],
+        data: [
+          { ...row('2026-09-29', [], 2000), spend: 1, cpi: 1, roas: null },
+        ],
         acquisitionCost: {
           mode: 'blended',
           breakdown: null,

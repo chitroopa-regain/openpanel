@@ -35,7 +35,7 @@ describe('aggregateRetentionMetric', () => {
         { cohort_interval: '2026-09-02', sum: 5, values: [499.5] },
       ],
       0,
-      'property_sum',
+      'property_sum'
     );
     expect(result.value).toBe(2000);
   });
@@ -72,7 +72,7 @@ describe('aggregateRetentionMetric', () => {
         },
       ],
       0,
-      'property_average',
+      'property_average'
     );
     // (10*20 + 40*5) / (20 + 5) = 400 / 25
     expect(result.value).toBe(16);
@@ -95,7 +95,7 @@ describe('aggregateRetentionMetric', () => {
         },
       ],
       0,
-      'property_sum',
+      'property_sum'
     );
     expect(result.value).toBe(12.5);
   });
@@ -105,8 +105,6 @@ describe('describeRetentionStep', () => {
   it('spells out the criteria the step is read with', () => {
     expect(describeRetentionStep(0, 'day', 'on_or_after')).toBe('Day ≥ 0');
     expect(describeRetentionStep(3, 'week', 'on')).toBe('Week 3');
-    expect(describeRetentionStep(1, 'month', 'on_or_before')).toBe(
-      'Month ≤ 1',
-    );
+    expect(describeRetentionStep(1, 'month', 'on_or_before')).toBe('Month ≤ 1');
   });
 });

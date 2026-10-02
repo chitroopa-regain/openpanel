@@ -1,6 +1,12 @@
 import { max, min } from '@openpanel/common';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Fragment, useEffect, useId, useState } from 'react';
+import {
+  type CSSProperties,
+  Fragment,
+  useEffect,
+  useId,
+  useState,
+} from 'react';
 import { useReportChartContext } from '../context';
 import {
   ReportSeriesScreenshot,
@@ -501,31 +507,32 @@ const CohortTable: React.FC<CohortTableProps> = ({
           values.map((value, index) => {
             const { opacity, backgroundClassName } = getBackground(value);
             const columnLabel = getColumnLabel(index);
+            // Heat colour is a ::before layer (isolate + -z-10 keeps it under
+            // the text): 2 DOM nodes per cell instead of 4, which matters on
+            // 90 x 90 daily grids rendered on phones.
             return (
               <td className="min-w-24 p-0" key={`${keyPrefix}:${columnLabel}`}>
                 <div
                   className={cn(
-                    'center-center relative h-10 font-mono hover:shadow-[inset_0_0_0_2px_rgb(255,255,255)]',
+                    'center-center relative isolate h-10 font-mono hover:shadow-[inset_0_0_0_2px_rgb(255,255,255)]',
+                    backgroundClassName &&
+                      'before:-z-10 before:absolute before:inset-0 before:bg-highlight before:opacity-(--cell-opacity) before:content-[""] dark:before:bg-emerald-700',
                     opacity > 0.7 &&
                       'text-white [text-shadow:_0_0_3px_rgb(0_0_0_/_20%)]'
                   )}
+                  style={
+                    backgroundClassName
+                      ? ({ '--cell-opacity': opacity } as CSSProperties)
+                      : undefined
+                  }
                 >
-                  <div
-                    className={cn(
-                      backgroundClassName,
-                      'absolute inset-0 h-full w-full'
-                    )}
-                    style={{ opacity }}
-                  />
-                  <div className="relative">
-                    {value === null
-                      ? '—'
-                      : number.formatWithUnit(
-                          value,
-                          isPropertyMeasure ? undefined : unit
-                        )}
-                    {value !== null && value === highestValue && ' 🚀'}
-                  </div>
+                  {value === null
+                    ? '—'
+                    : number.formatWithUnit(
+                        value,
+                        isPropertyMeasure ? undefined : unit
+                      )}
+                  {value !== null && value === highestValue && ' 🚀'}
                 </div>
               </td>
             );

@@ -164,7 +164,7 @@ export function ReportRetentionChart() {
               sum: 0,
               values: row.values.map((value) => (value === null ? null : 0)),
               percentages: row.percentages.map((value) =>
-                value === null ? null : 0,
+                value === null ? null : 0
               ),
             }));
         return source.map((row) => ({
@@ -187,7 +187,10 @@ export function ReportRetentionChart() {
   if (retentionOptions?.visualization === 'metric') {
     return (
       <>
-        {showBreakdownControlsFor(report.breakdowns.length, isDashboardLayout) && (
+        {showBreakdownControlsFor(
+          report.breakdowns.length,
+          isDashboardLayout
+        ) && (
           <BreakdownControls
             breakdownSort={breakdownSort}
             setBreakdownSort={setBreakdownSort}
@@ -195,7 +198,9 @@ export function ReportRetentionChart() {
             topN={topN}
           />
         )}
-        <div className={isDashboardLayout ? 'h-full min-h-0 w-full' : undefined}>
+        <div
+          className={isDashboardLayout ? 'h-full min-h-0 w-full' : undefined}
+        >
           <RetentionMetric data={rows} overall={overall} />
         </div>
       </>

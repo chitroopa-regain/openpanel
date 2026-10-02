@@ -46,14 +46,15 @@ export function RetentionMetric({ data, overall }: Props) {
   const retentionOptions =
     reportOptions?.type === 'retention' ? reportOptions : undefined;
   const measure: RetentionMetricMeasure =
-    retentionOptions?.metric ?? (unit === '%' ? 'retention_rate' : 'unique_users');
+    retentionOptions?.metric ??
+    (unit === '%' ? 'retention_rate' : 'unique_users');
   const step = retentionOptions?.metricStep ?? 0;
   const retentionUnit = retentionOptions?.retentionUnit ?? 'day';
   const criteria = retentionOptions?.criteria ?? 'on_or_after';
   const property = retentionOptions?.property;
 
   const hasBreakdowns = data.some(
-    (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey),
+    (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey)
   );
   const groups = hasBreakdowns
     ? [
@@ -65,10 +66,10 @@ export function RetentionMetric({ data, overall }: Props) {
                 label: 'Overall',
                 aggregate: aggregateRetentionMetric(
                   overall.filter(
-                    (row) => row.cohort_interval !== 'Weighted Average',
+                    (row) => row.cohort_interval !== 'Weighted Average'
                   ),
                   step,
-                  measure,
+                  measure
                 ),
               },
             ]
@@ -100,7 +101,7 @@ export function RetentionMetric({ data, overall }: Props) {
         isHero
           ? 'flex h-full w-full items-stretch'
           : compactMetricGridClassName,
-        isEditMode && 'card p-4',
+        isEditMode && 'card p-4'
       )}
     >
       {groups.map((group) => (
@@ -176,7 +177,7 @@ function RetentionMetricCard({
             className={cn(
               'max-w-full cursor-default truncate font-mono font-bold tracking-tight',
               'text-[clamp(2rem,9cqw,4.5rem)] leading-none',
-              value === null && 'text-muted-foreground',
+              value === null && 'text-muted-foreground'
             )}
           >
             {display}
@@ -207,7 +208,7 @@ function RetentionMetricCard({
           <div
             className={cn(
               compactMetricValueClassName,
-              value === null && 'text-muted-foreground',
+              value === null && 'text-muted-foreground'
             )}
           >
             {display}

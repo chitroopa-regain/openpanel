@@ -46,7 +46,7 @@ export const RETENTION_SUMMARY_ROW = 'Weighted Average';
 export function aggregateRetentionMetric(
   rows: RetentionMetricRow[],
   step: number,
-  measure: RetentionMetricMeasure,
+  measure: RetentionMetricMeasure
 ): RetentionMetricAggregate {
   let numerator = 0;
   let weightSum = 0;
@@ -80,10 +80,7 @@ export function aggregateRetentionMetric(
     measuredCohorts += 1;
     measuredProfiles += cohortSize;
     weightSum += weight;
-    numerator +=
-      measure === 'property_average'
-        ? value * weight
-        : value;
+    numerator += measure === 'property_average' ? value * weight : value;
   }
 
   let value: number | null = null;
@@ -113,7 +110,7 @@ export function aggregateRetentionMetric(
 export function describeRetentionStep(
   step: number,
   unit: 'day' | 'week' | 'month',
-  criteria: 'on_or_after' | 'on' | 'on_or_before',
+  criteria: 'on_or_after' | 'on' | 'on_or_before'
 ) {
   const unitLabel = { day: 'Day', week: 'Week', month: 'Month' }[unit];
   const comparator =

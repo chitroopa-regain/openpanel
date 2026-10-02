@@ -12,7 +12,7 @@ describe('hasRenderableRetention', () => {
       hasRenderableRetention({
         data: [],
         buckets: [{ data: [] }, { data: [row] }],
-      }),
+      })
     ).toBe(true);
   });
 
@@ -21,13 +21,16 @@ describe('hasRenderableRetention', () => {
       hasRenderableRetention({
         data: [],
         buckets: [{ data: [row] }, { data: [] }],
-      }),
+      })
     ).toBe(true);
   });
 
   it('is empty only when every bucket is empty', () => {
     expect(
-      hasRenderableRetention({ data: [], buckets: [{ data: [] }, { data: [] }] }),
+      hasRenderableRetention({
+        data: [],
+        buckets: [{ data: [] }, { data: [] }],
+      })
     ).toBe(false);
   });
 

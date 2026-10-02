@@ -80,13 +80,13 @@ export function getBreakdownChartState(
   const hasBreakdowns = averageRows.some(
     (row) =>
       row.breakdowns.length > 0 ||
-      Boolean((row as { cohortKey?: string }).cohortKey),
+      Boolean((row as { cohortKey?: string }).cohortKey)
   );
   // The whole-population curve drawn beside the buckets. Only meaningful with
   // a breakdown (without one the single series already is the overall).
   const overallRow = hasBreakdowns
-    ? overall?.find((row) => row.cohort_interval === 'Weighted Average') ??
-      null
+    ? (overall?.find((row) => row.cohort_interval === 'Weighted Average') ??
+      null)
     : null;
   const dataSource = isPercentage
     ? averageRow?.percentages
@@ -104,9 +104,7 @@ export function getBreakdownChartState(
           averageRows.map((row, seriesIndex) => [
             `series_${seriesIndex}`,
             toChartValue(
-              isPercentage
-                ? row.percentages[dayIndex]
-                : row.values[dayIndex],
+              isPercentage ? row.percentages[dayIndex] : row.values[dayIndex],
               isPercentage
             ),
           ])
@@ -130,20 +128,22 @@ export function getBreakdownChartState(
       }));
   const dataMax = hasBreakdowns
     ? Math.max(
-        ...[...averageRows, ...(overallRow ? [overallRow] : [])].flatMap((row) =>
-          isPercentage
-            ? row.percentages
-                .filter((value): value is number => value !== null)
-                .map((value) => value * 100)
-            : row.values.filter((value): value is number => value !== null)
+        ...[...averageRows, ...(overallRow ? [overallRow] : [])].flatMap(
+          (row) =>
+            isPercentage
+              ? row.percentages
+                  .filter((value): value is number => value !== null)
+                  .map((value) => value * 100)
+              : row.values.filter((value): value is number => value !== null)
         ),
         0
       )
     : Math.max(
         ...(dataSource
           ?.filter((value): value is number => value !== null)
-          .map((value) =>
-            toChartValue(value as number | string | null, isPercentage) ?? 0
+          .map(
+            (value) =>
+              toChartValue(value as number | string | null, isPercentage) ?? 0
           ) ?? [0])
       );
 
@@ -159,13 +159,7 @@ export function getBreakdownChartState(
 
 export function Chart({ data, overall }: Props) {
   const {
-    report: {
-      breakdowns,
-      interval,
-      options: reportOptions,
-      series,
-      unit,
-    },
+    report: { breakdowns, interval, options: reportOptions, series, unit },
     isEditMode,
     options: { hideXAxis, hideYAxis, retentionLayout },
   } = useReportChartContext();
