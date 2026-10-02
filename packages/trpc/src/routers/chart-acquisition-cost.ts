@@ -95,6 +95,10 @@ export interface AcquisitionCostSummary {
   coverageFrom: Partial<Record<string, string>>;
   /** Platforms that spent yesterday but report nothing yet for today. */
   spendPendingToday: string[];
+  /** First day the cohort event was tracked; earlier spend has no cohort. */
+  trackingStart: string | null;
+  /** Cohort filters applied to spend / not applicable to spend. */
+  spendFilters: { applied: string[]; ignored: string[] };
 }
 
 const PROFILE_PROPERTIES_PREFIX = /^profile\.properties\./;
@@ -211,6 +215,60 @@ WHERE ${where}
     SELECT spend_date, platform, max(synced_at) FROM ${AD_SPEND_TABLE} WHERE ${where} GROUP BY spend_date, platform
   )
 GROUP BY spend_date, platform, campaign_id, campaign_name`;
+}
+
+/**
+ * Daily volume of the cohort event for the 60 days after it first appears,
+ * from cohort_events_mv (Date grain, small). Used to find when tracking went
+ * live — test devices send the event days before a release reaches users.
+ */
+export function buildTrackingDailyQuery({
+  projectId,
+  eventNames,
+}: {
+  projectId: string;
+  eventNames: string[];
+}) {
+  const where = `project_id = ${sqlstring.escape(projectId)} AND name IN (${eventNames.map((n) => sqlstring.escape(n)).join(', ')})`;
+  return `SELECT toString(created_at) AS day, sum(event_count) AS events
+FROM cohort_events_mv
+WHERE ${where}
+  AND created_at < (SELECT min(created_at) FROM cohort_events_mv WHERE ${where}) + 60
+GROUP BY created_at
+ORDER BY created_at`;
+}
+
+/** Below this share of a typical day, the event is test traffic, not users. */
+const TRACKING_LIVE_SHARE = 0.1;
+
+/** First day the cohort event runs at real volume; null when unknown. */
+export function findTrackingStart(
+  daily: Array<{ day: string; events: number | string }>
+) {
+  if (daily.length === 0) {
+    return null;
+  }
+  const counts = daily.map((d) => Number(d.events)).sort((a, b) => a - b);
+  const median = counts[Math.floor(counts.length / 2)] ?? 0;
+  const live = daily.find(
+    (d) => Number(d.events) >= median * TRACKING_LIVE_SHARE
+  );
+  return live ? live.day.slice(0, 10) : null;
+}
+
+/** Daily installs from the Play Console export (play_installs_daily). */
+export function buildExternalInstallsQuery({
+  projectId,
+  startDay,
+  endDay,
+}: {
+  projectId: string;
+  startDay: string;
+  endDay: string;
+}) {
+  return `SELECT toString(day) AS day, device_installs AS installs
+FROM play_installs_daily FINAL
+WHERE project_id = ${sqlstring.escape(projectId)} AND day BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
 }
 
 /** OS mix of the cohort's first event over the report range (sorting-key scan). */
@@ -363,6 +421,81 @@ function buildSpendLookup(spend: SpendRow[], interval: string | undefined) {
       .reduce((acc, s) => acc + Number(s.spend_inr), 0);
 }
 
+export interface SpendFilterInput {
+  name: string;
+  operator: string;
+  value?: Array<string | number | boolean | null>;
+}
+
+export interface SpendFilter {
+  /** Whether a spend row survives the report's cohort filters. */
+  allows: (row: SpendRow) => boolean;
+  /** Filters applied to spend, e.g. `install_referrer_utm_source is google-ads`. */
+  applied: string[];
+  /** Cohort filters that cannot narrow ad spend (shown in the footnote). */
+  ignored: string[];
+  /** An `is` filter that only lets unpaid traffic through: no CPI at all. */
+  unpaidOnly: boolean;
+}
+
+/**
+ * Turn the cohort event's filters into a spend filter, so a report filtered
+ * to e.g. Google installs is charged Google spend only. `is` keeps spend
+ * matching any value, `isNot` drops it; other operators and non-attribution
+ * properties cannot be mapped onto ad spend and are reported as ignored.
+ */
+export function buildSpendFilter(
+  filters: SpendFilterInput[],
+  campaignNameToIds: Map<string, string[]>
+): SpendFilter {
+  const include: Matcher[][] = [];
+  const exclude: Matcher[] = [];
+  const applied: string[] = [];
+  const ignored: string[] = [];
+  let unpaidOnly = false;
+  for (const f of filters) {
+    if (f.name === 'name') {
+      continue;
+    }
+    const attribution = findAttributionBreakdown([f.name]);
+    const values = (f.value ?? [])
+      .filter((v) => v !== null && v !== undefined && v !== '')
+      .map(String);
+    const label =
+      `${getBreakdownKey(f.name)} ${f.operator} ${values.join(', ')}`.trim();
+    if (
+      !attribution ||
+      (f.operator !== 'is' && f.operator !== 'isNot') ||
+      values.length === 0
+    ) {
+      ignored.push(label);
+      continue;
+    }
+    const matchers = values
+      .map((v) =>
+        matcherFor([v], { ...attribution, index: 0 }, campaignNameToIds)
+      )
+      .filter((m) => m.kind !== 'unpaid');
+    applied.push(label);
+    if (f.operator === 'is') {
+      if (matchers.length === 0) {
+        unpaidOnly = true;
+      }
+      include.push(matchers);
+    } else {
+      exclude.push(...matchers);
+    }
+  }
+  return {
+    allows: (row) =>
+      include.every((any) => any.some((m) => spendMatches(row, m))) &&
+      !exclude.some((m) => spendMatches(row, m)),
+    applied,
+    ignored,
+    unpaidOnly,
+  };
+}
+
 /** The ad platform a matched row's spend comes from. */
 function matcherPlatform(m: Matcher, spend: SpendRow[]) {
   if (m.kind === 'platform') {
@@ -415,6 +548,12 @@ export interface CostRowInput {
 export type WithAcquisitionCost<T> = T & {
   spend: number | null;
   cpi: number | null;
+  /**
+   * Set on rows from before install tracking began: their CPI uses installs
+   * from an external source (Play Console), and they have no cohort ROAS.
+   */
+  installsSource?: 'play';
+  externalInstalls?: number;
   /** revenue / spend per window; null when unpaid, unspent or incomplete. */
   roas: Roas | null;
 };
@@ -568,6 +707,8 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     campaignNameToIds = new Map(),
     overallSums,
     coverageFrom = {},
+    trackingStart = null,
+    externalInstalls = [],
   }: {
     interval: string | undefined;
     attribution: AttributionBreakdown | null;
@@ -575,16 +716,35 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     overallSums?: Map<string, number>;
     /** platform → first covered cohort day; see ATTRIBUTION_COVERAGE_FROM. */
     coverageFrom?: Partial<Record<string, string>>;
+    /** First day the cohort event was tracked at real volume. */
+    trackingStart?: string | null;
+    /** Daily installs from outside the event stream (Play Console). */
+    externalInstalls?: Array<{ day: string; installs: number | string }>;
   }
 ): { rows: WithAcquisitionCost<T>[]; attributedSpend: number } {
-  const cohortRows = rows.filter((r) => r.cohort_interval !== AVERAGE_ROW);
+  // Before tracking began there are no cohorts to charge: spend from those
+  // days stays out of every CPI/ROAS and summary. Rows wholly before it show
+  // their spend with CPI from external installs, and no ROAS.
+  const trackingKey = trackingStart
+    ? cohortIntervalKey(trackingStart, interval)
+    : null;
+  const isBeforeTracking = (row: T) =>
+    trackingKey !== null &&
+    row.cohort_interval !== AVERAGE_ROW &&
+    row.cohort_interval < trackingKey;
+  const trackedSpend = trackingStart
+    ? spend.filter((s) => s.day >= trackingStart)
+    : spend;
+  const cohortRows = rows.filter(
+    (r) => r.cohort_interval !== AVERAGE_ROW && !isBeforeTracking(r)
+  );
   const rowMatcher = (row: T) =>
     matcherFor(row.breakdowns ?? [], attribution, campaignNameToIds);
   // Matched rows whose cohort starts before their platform is attributable.
   const uncovered = new Set<T>();
   const matcherOfRow = (row: T): Matcher => {
     const m = rowMatcher(row);
-    const platform = attribution ? matcherPlatform(m, spend) : null;
+    const platform = attribution ? matcherPlatform(m, trackedSpend) : null;
     const from = platform ? coverageFrom[platform] : undefined;
     if (from && row.cohort_interval < from) {
       uncovered.add(row);
@@ -594,12 +754,38 @@ export function attachAcquisitionCost<T extends CostRowInput>(
   };
   const { shares, attributed } = allocateShares(
     groupBySpendKey(cohortRows, matcherOfRow),
-    buildSpendLookup(spend, interval),
+    buildSpendLookup(trackedSpend, interval),
     overallSums
   );
+  const allSpendFor = buildSpendLookup(spend, interval);
+  const externalByInterval = new Map<string, number>();
+  for (const e of externalInstalls) {
+    const key = cohortIntervalKey(e.day, interval);
+    externalByInterval.set(
+      key,
+      (externalByInterval.get(key) ?? 0) + Number(e.installs)
+    );
+  }
   const summaries = summarizeGroups(cohortRows, shares, uncovered);
 
   const out = rows.map((row) => {
+    if (isBeforeTracking(row)) {
+      // Matched views cannot split untracked spend; blended can show it.
+      if (attribution) {
+        return { ...row, spend: null, cpi: null, roas: null };
+      }
+      const value = allSpendFor(row.cohort_interval, { kind: 'all' });
+      const installs = externalByInterval.get(row.cohort_interval);
+      return {
+        ...row,
+        spend: round2(value),
+        cpi: installs ? round2(value / installs) : null,
+        roas: null,
+        ...(installs
+          ? { installsSource: 'play' as const, externalInstalls: installs }
+          : {}),
+      };
+    }
     // Organic / unattributed rows have no acquisition cost, not a zero one;
     // neither do matched rows from before their platform is attributable.
     const unpaid = uncovered.has(row) || rowMatcher(row).kind === 'unpaid';

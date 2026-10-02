@@ -83,9 +83,13 @@ import {
   attachAcquisitionCost,
   buildCampaignNameMapQuery,
   buildCohortOsQuery,
+  buildExternalInstallsQuery,
+  buildSpendFilter,
   buildSpendQuery,
+  buildTrackingDailyQuery,
   cohortSizesByInterval,
   findAttributionBreakdown,
+  findTrackingStart,
   type SpendRow,
   spendForCohortOs,
   spendPendingToday,
@@ -2193,8 +2197,19 @@ export const chartRouter = createTRPCRouter({
         const attribution = findAttributionBreakdown(
           breakdowns.map((b) => b.name)
         );
+        // Campaign names (from the breakdown or a cohort filter) resolve to
+        // ids, so renamed campaigns still match their spend.
+        const nameKeys = uniq(
+          [
+            attribution?.kind === 'campaign_name' ? attribution.key : null,
+            ...firstEventFilters.map((f) => {
+              const a = findAttributionBreakdown([f.name]);
+              return a?.kind === 'campaign_name' ? a.key : null;
+            }),
+          ].filter((k): k is string => Boolean(k))
+        );
         try {
-          const [spend, osCounts, nameRows] = await Promise.all([
+          const [spend, osCounts, nameRows, trackingDaily, externalInstalls] = await Promise.all([
             chQuery<SpendRow>(buildSpendQuery({ projectId, startDay, endDay })),
             chQuery<{ os: string; events: number }>(
               buildCohortOsQuery({
@@ -2205,25 +2220,46 @@ export const chartRouter = createTRPCRouter({
                 timezone,
               })
             ),
-            attribution?.kind === 'campaign_name'
-              ? chQuery<{ name: string; ids: string[] }>(
-                  buildCampaignNameMapQuery({
-                    projectId,
-                    key: attribution.key,
-                  })
+            Promise.all(
+              nameKeys.map((key) =>
+                chQuery<{ name: string; ids: string[] }>(
+                  buildCampaignNameMapQuery({ projectId, key })
                 )
-              : Promise.resolve([]),
+              )
+            ).then((lists) => lists.flat()),
+            chQuery<{ day: string; events: number }>(
+              buildTrackingDailyQuery({ projectId, eventNames: firstEvent })
+            ),
+            // Play Console installs exist only where they were imported.
+            chQuery<{ day: string; installs: number }>(
+              buildExternalInstallsQuery({ projectId, startDay, endDay })
+            ).catch(() => []),
           ]);
           const today = new Intl.DateTimeFormat('en-CA', {
             timeZone: timezone,
           }).format(new Date());
-          const osSpend = spendForCohortOs(spend, osCounts);
+          const campaignNameToIds = new Map(
+            nameRows.map((r) => [r.name, r.ids])
+          );
+          // A cohort filtered to e.g. Google installs is charged Google spend.
+          const spendFilter = buildSpendFilter(
+            firstEventFilters,
+            campaignNameToIds
+          );
+          const osSpend = spendForCohortOs(spend, osCounts).filter(
+            spendFilter.allows
+          );
           return {
             spend: osSpend,
+            spendFilter,
             pendingToday:
               endDay >= today ? spendPendingToday(osSpend, today) : [],
+            trackingStart: findTrackingStart(trackingDaily),
+            // Play installs cannot be narrowed by a spend filter: unfiltered only.
+            externalInstalls:
+              spendFilter.applied.length > 0 ? [] : externalInstalls,
             attribution,
-            campaignNameToIds: new Map(nameRows.map((r) => [r.name, r.ids])),
+            campaignNameToIds,
           };
         } catch (error) {
           console.error('[retention] acquisition cost spend load failed', error);
@@ -2237,6 +2273,19 @@ export const chartRouter = createTRPCRouter({
         options: { blended: boolean; overallRows?: CohortRows | null }
       ) => {
         if (!loaded) return { rows, attributedSpend: 0 };
+        // Filtered to unpaid traffic only (e.g. utm_source is google-play):
+        // there is no acquisition cost to show.
+        if (loaded.spendFilter.unpaidOnly) {
+          return {
+            rows: rows.map((row) => ({
+              ...row,
+              spend: null,
+              cpi: null,
+              roas: null,
+            })),
+            attributedSpend: 0,
+          };
+        }
         return attachAcquisitionCost(rows, loaded.spend, {
           interval,
           attribution: options.blended ? null : loaded.attribution,
@@ -2245,6 +2294,8 @@ export const chartRouter = createTRPCRouter({
             ? cohortSizesByInterval(options.overallRows)
             : undefined,
           coverageFrom: ATTRIBUTION_COVERAGE_FROM[projectId] ?? {},
+          trackingStart: loaded.trackingStart,
+          externalInstalls: loaded.externalInstalls,
         });
       };
       const acquisitionSummary = (
@@ -2272,6 +2323,11 @@ export const chartRouter = createTRPCRouter({
                   ? {}
                   : (ATTRIBUTION_COVERAGE_FROM[projectId] ?? {}),
               spendPendingToday: loaded.pendingToday,
+              trackingStart: loaded.trackingStart,
+              spendFilters: {
+                applied: loaded.spendFilter.applied,
+                ignored: loaded.spendFilter.ignored,
+              },
             }
           : null;
 

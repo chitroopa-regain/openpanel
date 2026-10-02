@@ -35,6 +35,9 @@ export type CohortRow = CohortData[number] & {
   spend?: number | null;
   /** spend / cohort size. `null` = unpaid source or an empty cohort. */
   cpi?: number | null;
+  /** Before install tracking: CPI uses Play Console installs. */
+  installsSource?: 'play';
+  externalInstalls?: number;
   /** revenue / spend per window; `null` = unpaid, unspent or incomplete. */
   roas?: {
     d0: number | null;
@@ -65,7 +68,7 @@ const inrCpi = new Intl.NumberFormat('en-IN', {
 export function describeAcquisitionCost(cost: AcquisitionCost) {
   const base = describeAcquisitionSpend(cost);
   return cost.roasAvailable
-    ? `${base} · ROAS = cohort revenue / spend; D-n shown once day n has fully passed, except today's D0 (so far)${describePending(cost)}`
+    ? `${base} · ROAS = cohort revenue / spend; D-n shown once day n has fully passed, except today's D0 (so far)${describeSpendFilters(cost)}${describePending(cost)}${describeTracking(cost)}`
     : `${base} · ROAS needs a revenue metric (Property Sum or Property Average)${describePending(cost)}`;
 }
 
@@ -86,6 +89,23 @@ function describeCoverage(cost: AcquisitionCost) {
         `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
     )
     .join(', ')}`;
+}
+
+function describeSpendFilters(cost: AcquisitionCost) {
+  const applied = cost.spendFilters?.applied ?? [];
+  const ignored = cost.spendFilters?.ignored ?? [];
+  return [
+    applied.length > 0 ? ` · Spend filtered to: ${applied.join('; ')}` : '',
+    ignored.length > 0
+      ? ` · Not applied to spend (ad platforms have no such split): ${ignored.join('; ')}`
+      : '',
+  ].join('');
+}
+
+function describeTracking(cost: AcquisitionCost) {
+  return cost.trackingStart
+    ? ` · Install tracking began ${cost.trackingStart}: earlier spend is left out of CPI, ROAS and the summary row; earlier rows show CPI from Play Console installs ("Play") and no ROAS`
+    : '';
 }
 
 function describePending(cost: AcquisitionCost) {
@@ -341,11 +361,23 @@ const CohortTable: React.FC<CohortTableProps> = ({
       );
     }
     if (column.key === 'cpi') {
+      const fromPlay = row.installsSource === 'play';
       return (
-        <div className="px-3 text-right font-medium font-mono">
+        <div
+          className={cn(
+            'px-3 text-right font-medium font-mono',
+            fromPlay && 'text-muted-foreground'
+          )}
+          title={
+            fromPlay
+              ? `Before install tracking: spend / ${number.format(row.externalInstalls ?? 0)} Play Console installs`
+              : undefined
+          }
+        >
           {row.cpi === null || row.cpi === undefined
             ? '—'
             : inrCpi.format(row.cpi)}
+          {fromPlay && <span className="ml-1 text-[10px]">Play</span>}
         </div>
       );
     }

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   attachAcquisitionCost,
+  buildSpendFilter,
   buildSpendQuery,
   cohortIntervalKey,
   cohortSizesByInterval,
   findAttributionBreakdown,
+  findTrackingStart,
   type SpendRow,
   sourceValueToPlatform,
   spendForCohortOs,
@@ -472,6 +474,153 @@ describe('acquisition cost', () => {
     ];
     expect(spendPendingToday(rows, '2026-10-02')).toEqual(['meta_ads']);
     expect(spendPendingToday(rows, '2026-10-03')).toEqual(['google_ads']);
+  });
+
+  it('cohort filters on attribution properties narrow the spend', () => {
+    const google = buildSpendFilter(
+      [
+        {
+          name: 'profile.properties.install_referrer_utm_source',
+          operator: 'is',
+          value: ['google-ads'],
+        },
+      ],
+      new Map()
+    );
+    expect(spend.filter(google.allows).map((s) => s.platform)).toEqual([
+      'google_ads',
+      'google_ads',
+    ]);
+    expect(google.applied).toEqual([
+      'install_referrer_utm_source is google-ads',
+    ]);
+
+    const notMeta = buildSpendFilter(
+      [
+        {
+          name: 'properties.install_source',
+          operator: 'isNot',
+          value: ['instagram', 'facebook'],
+        },
+      ],
+      new Map()
+    );
+    expect(
+      spend.filter(notMeta.allows).some((s) => s.platform === 'meta_ads')
+    ).toBe(false);
+
+    const campaign = buildSpendFilter(
+      [
+        {
+          name: 'properties.fb_campaign_group_name',
+          operator: 'is',
+          value: ['Meta CBO 05'],
+        },
+      ],
+      new Map([['Meta CBO 05', ['m1']]])
+    );
+    expect(spend.filter(campaign.allows).map((s) => s.campaign_id)).toEqual([
+      'm1',
+    ]);
+
+    const organic = buildSpendFilter(
+      [
+        {
+          name: 'properties.install_source',
+          operator: 'is',
+          value: ['organic'],
+        },
+      ],
+      new Map()
+    );
+    expect(organic.unpaidOnly).toBe(true);
+
+    const other = buildSpendFilter(
+      [
+        { name: 'country', operator: 'is', value: ['IN'] },
+        {
+          name: 'properties.utm_source',
+          operator: 'contains',
+          value: ['goog'],
+        },
+        { name: 'name', operator: 'is', value: ['Application Installed'] },
+      ],
+      new Map()
+    );
+    expect(other.applied).toEqual([]);
+    expect(other.ignored).toEqual([
+      'country is IN',
+      'utm_source contains goog',
+    ]);
+    expect(spend.every(other.allows)).toBe(true);
+  });
+
+  it('finds when tracking went live, ignoring days of test traffic', () => {
+    expect(
+      findTrackingStart([
+        { day: '2026-03-05', events: 1 },
+        { day: '2026-03-06', events: 28 },
+        { day: '2026-03-11', events: 148 },
+        { day: '2026-03-12', events: 14_658 },
+        { day: '2026-03-13', events: 19_235 },
+        { day: '2026-03-14', events: 17_669 },
+        { day: '2026-03-15', events: 18_556 },
+        { day: '2026-03-16', events: 20_550 },
+      ])
+    ).toBe('2026-03-12');
+    expect(findTrackingStart([])).toBeNull();
+  });
+
+  it('rows before tracking show spend with Play CPI and stay out of the summary', () => {
+    const early: SpendRow[] = [
+      ...spend,
+      {
+        day: '2026-08-15',
+        platform: 'google_ads',
+        campaign_id: 'g1',
+        campaign_name: 'Google Scale',
+        spend_inr: 50_000,
+        os: 'android',
+      },
+      {
+        day: '2026-09-01',
+        platform: 'google_ads',
+        campaign_id: 'g1',
+        campaign_name: 'Google Scale',
+        spend_inr: 40_000,
+        os: 'android',
+      },
+    ];
+    const { rows } = attachAcquisitionCost(
+      [
+        avg(3000),
+        { cohort_interval: '2026-08-01', sum: 0, breakdowns: [] },
+        {
+          cohort_interval: '2026-09-01',
+          sum: 3000,
+          breakdowns: [],
+          revenue: { d0: 191_000, d7: null, d30: null, lifetime: 191_000 },
+        },
+      ],
+      early,
+      {
+        interval: 'month',
+        attribution: null,
+        trackingStart: '2026-09-29',
+        externalInstalls: [{ day: '2026-08-15', installs: 10_000 }],
+      }
+    );
+    expect(rows[1]).toMatchObject({
+      spend: 50_000,
+      cpi: 5,
+      roas: null,
+      installsSource: 'play',
+      externalInstalls: 10_000,
+    });
+    // September only counts spend from 09-29 (tracking start), not 09-01.
+    expect(rows[2]).toMatchObject({ spend: 382_000 });
+    // Summary = tracked rows only.
+    expect(rows[0]).toMatchObject({ spend: 382_000, cpi: 127.33 });
   });
 
   it('reads only the latest sync batch per platform-day', () => {
