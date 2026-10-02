@@ -113,6 +113,7 @@ import {
   buildRetentionMeasureIntervalSelect,
   buildRoasRevenueSelects,
   getConcreteEventNameWhereClause,
+  getFirstEventDayInRange,
   getRetentionDateBounds,
   getRetentionQuerySettings,
   getRetentionElapsedIntervalExpression,
@@ -1663,11 +1664,32 @@ export const chartRouter = createTRPCRouter({
         timezone
       );
       const retentionTimeUnitConfig = getRetentionTimeUnitConfig(retentionUnit);
-      const diffInterval = {
-        day: () => differenceInDays(dates.endDate, dates.startDate),
-        week: () => differenceInWeeks(dates.endDate, dates.startDate),
-        month: () => differenceInMonths(dates.endDate, dates.startDate),
-      }[retentionTimeUnitConfig.diffUnit]();
+      // One select per return interval: a range reaching back before the
+      // cohort event ever fired (e.g. 'since 2023' on an event first seen in
+      // 2026) built ~1,100 day columns that can only ever be empty — a 600 KB
+      // response and ~44k table cells. No cohort can start before the first
+      // event in range, so the return window is measured from there (plus one
+      // unit of margin for week/month cohorts). Lossless: every cohort still
+      // sees through the range end.
+      const firstDataDay = await getFirstEventDayInRange({
+        projectId,
+        eventNames: firstEvent,
+        startDate: utc(dates.startDate),
+        endDate: utc(dates.endDate),
+        timezone,
+      });
+      const diffStart =
+        firstDataDay && firstDataDay > dates.startDate.slice(0, 10)
+          ? `${firstDataDay} 00:00:00`
+          : dates.startDate;
+      const diffMargin = retentionUnit === 'day' && interval === 'day' ? 0 : 1;
+      const diffInterval =
+        {
+          day: () => differenceInDays(dates.endDate, diffStart),
+          week: () => differenceInWeeks(dates.endDate, diffStart),
+          month: () => differenceInMonths(dates.endDate, diffStart),
+        }[retentionTimeUnitConfig.diffUnit]() +
+        (diffStart === dates.startDate ? 0 : diffMargin);
       const sqlInterval = retentionTimeUnitConfig.sqlInterval;
       const retentionWindowEndInterval = diffInterval + 1;
 

@@ -1,4 +1,4 @@
-import { getSelectPropertyKey, TABLE_NAMES } from '@openpanel/db';
+import { chQuery, getSelectPropertyKey, TABLE_NAMES } from '@openpanel/db';
 import sqlstring from 'sqlstring';
 
 export type RetentionMeasure =
@@ -310,6 +310,40 @@ export function getRetentionDateBounds({
     returnWindow: (col: string) =>
       `${col} >= ${start}\n              AND ${col} < ${end} + ${windowInterval}`,
   };
+}
+
+/**
+ * First local day the cohort event occurs within the report range, from the
+ * raw events table (cohort_events_mv can lag events). Null for wildcard or
+ * empty selections — callers then keep the full range.
+ */
+export async function getFirstEventDayInRange({
+  projectId,
+  eventNames,
+  startDate,
+  endDate,
+  timezone,
+}: {
+  projectId: string;
+  eventNames: string[];
+  startDate: string;
+  endDate: string;
+  timezone: string;
+}): Promise<string | null> {
+  if (eventNames.length === 0 || eventNames.some((n) => n === '*')) {
+    return null;
+  }
+  const tz = sqlstring.escape(timezone);
+  const rows = await chQuery<{ d: string | null }>(
+    `SELECT toString(min(toDate(created_at, ${tz}))) AS d FROM ${TABLE_NAMES.events}
+WHERE project_id = ${sqlstring.escape(projectId)}
+  AND name IN (${eventNames.map((n) => sqlstring.escape(n)).join(', ')})
+  AND created_at >= toDateTime(${sqlstring.escape(startDate)}, ${tz})
+  AND created_at < toDateTime(${sqlstring.escape(endDate)}, ${tz}) + INTERVAL 1 DAY`
+  );
+  const d = rows[0]?.d;
+  // min() over no rows returns the epoch date.
+  return d && d > '1970-01-02' ? d.slice(0, 10) : null;
 }
 
 /** ClickHouse's default max_query_size (256 KiB). */
