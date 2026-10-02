@@ -625,9 +625,80 @@ describe('acquisition cost', () => {
   });
 
   it('Play installs query filters on the column, not its String alias', () => {
-    const sql = buildExternalInstallsQuery({ projectId: 'regain-app', startDay: '2025-10-01', endDay: '2026-10-02' });
+    const sql = buildExternalInstallsQuery({
+      projectId: 'regain-app',
+      startDay: '2025-10-01',
+      endDay: '2026-10-02',
+    });
     expect(sql).toContain('toString(p.day) AS day');
     expect(sql).toContain("p.day BETWEEN toDate('2025-10-01')");
+  });
+
+  it('every blended row carries Play installs and revenue; untracked rows use booked revenue', () => {
+    const early: SpendRow[] = [
+      ...spend,
+      {
+        day: '2026-08-15',
+        platform: 'google_ads',
+        campaign_id: 'g1',
+        campaign_name: 'Google Scale',
+        spend_inr: 50_000,
+        os: 'android',
+      },
+    ];
+    const { rows } = attachAcquisitionCost(
+      [
+        avg(3000),
+        { cohort_interval: '2026-08-01', sum: 0, breakdowns: [] },
+        {
+          cohort_interval: '2026-09-01',
+          sum: 3000,
+          breakdowns: [],
+          revenue: { d0: 191_000, d7: null, d30: null, lifetime: 250_000 },
+        },
+      ],
+      early,
+      {
+        interval: 'month',
+        attribution: null,
+        trackingStart: '2026-09-29',
+        externalInstalls: [
+          { day: '2026-08-15', installs: 10_000 },
+          { day: '2026-09-29', installs: 2500 },
+        ],
+        bookedRevenue: [{ day: '2026-08-20', revenue: 60_000 }],
+      }
+    );
+    expect(rows[1]).toMatchObject({
+      spend: 50_000,
+      cpi: 5,
+      playInstalls: 10_000,
+      lifetimeRevenue: 60_000,
+      revenueBasis: 'booked',
+      roas: { d0: null, d7: null, d30: null, lifetime: 1.2, basis: 'booked' },
+    });
+    expect(rows[2]).toMatchObject({
+      playInstalls: 2500,
+      lifetimeRevenue: 250_000,
+      revenueBasis: 'cohort',
+    });
+    // Summary: tracked rows only.
+    expect(rows[0]).toMatchObject({
+      playInstalls: 2500,
+      lifetimeRevenue: 250_000,
+    });
+
+    // Breakdown views never show Play installs (not split by source).
+    const matched = attachAcquisitionCost(
+      [{ cohort_interval: '2026-09-01', sum: 10, breakdowns: ['google_ads'] }],
+      early,
+      {
+        interval: 'month',
+        attribution: findAttributionBreakdown(['properties.install_source']),
+        externalInstalls: [{ day: '2026-09-29', installs: 2500 }],
+      }
+    );
+    expect(matched.rows[0]?.playInstalls).toBeUndefined();
   });
 
   it('reads only the latest sync batch per platform-day', () => {

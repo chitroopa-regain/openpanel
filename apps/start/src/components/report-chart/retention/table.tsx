@@ -38,6 +38,9 @@ export type CohortRow = CohortData[number] & {
   /** Before install tracking: CPI uses Play Console installs. */
   installsSource?: 'play';
   externalInstalls?: number;
+  playInstalls?: number | null;
+  lifetimeRevenue?: number | null;
+  revenueBasis?: 'cohort' | 'booked';
   /** revenue / spend per window; `null` = unpaid, unspent or incomplete. */
   roas?: {
     d0: number | null;
@@ -46,6 +49,8 @@ export type CohortRow = CohortData[number] & {
     lifetime: number | null;
     /** Windows still running, e.g. today's D0 ("so far"). */
     partial?: Array<'d0' | 'd7' | 'd30' | 'lifetime'>;
+    /** 'booked' = period revenue / spend, before cohort data existed. */
+    basis?: 'booked';
   } | null;
 };
 
@@ -104,7 +109,7 @@ function describeSpendFilters(cost: AcquisitionCost) {
 
 function describeTracking(cost: AcquisitionCost) {
   return cost.trackingStart
-    ? ` · Install tracking began ${cost.trackingStart}: earlier spend is left out of CPI, ROAS and the summary row; earlier rows show CPI from Play Console installs ("Play") and no ROAS`
+    ? ` · Install tracking began ${cost.trackingStart}: earlier spend is left out of CPI, ROAS and the summary row; earlier rows show CPI from Play Console installs ("Play"), revenue booked in the period and booked revenue / spend ("booked")`
     : '';
 }
 
@@ -350,7 +355,43 @@ const CohortTable: React.FC<CohortTableProps> = ({
     });
   };
 
+  const renderPlayInstallsCell = (row: CohortRow) => (
+    <div className="px-3 text-right font-mono text-muted-foreground">
+      {row.playInstalls === null || row.playInstalls === undefined
+        ? '—'
+        : number.format(row.playInstalls)}
+    </div>
+  );
+
+  const renderRevenueCell = (row: CohortRow) => {
+    const booked = row.revenueBasis === 'booked';
+    const hasValue =
+      row.lifetimeRevenue !== null && row.lifetimeRevenue !== undefined;
+    return (
+      <div
+        className={cn(
+          'px-3 text-right font-mono',
+          booked && 'text-muted-foreground'
+        )}
+        title={
+          booked
+            ? 'Before install tracking: revenue booked in this period (incl. renewals of earlier users)'
+            : 'Everything this cohort has paid so far'
+        }
+      >
+        {hasValue ? inr.format(row.lifetimeRevenue ?? 0) : '—'}
+        {booked && hasValue && <span className="ml-1 text-[10px]">booked</span>}
+      </div>
+    );
+  };
+
   const renderCostCell = (row: CohortRow, column: AcquisitionColumn) => {
+    if (column.key === 'play_installs') {
+      return renderPlayInstallsCell(row);
+    }
+    if (column.key === 'revenue') {
+      return renderRevenueCell(row);
+    }
     if (column.key === 'spend') {
       return (
         <div className="px-3 text-right font-mono text-muted-foreground">
@@ -385,6 +426,11 @@ const CohortTable: React.FC<CohortTableProps> = ({
     const soFar = Boolean(
       column.roas && row.roas?.partial?.includes(column.roas)
     );
+    const booked =
+      row.roas?.basis === 'booked' &&
+      column.roas === 'lifetime' &&
+      value !== null &&
+      value !== undefined;
     return (
       <div
         className={cn(
@@ -403,6 +449,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
       >
         {formatRoas(value)}
         {soFar && <span className="ml-1 text-[10px] not-italic">so far</span>}
+        {booked && <span className="ml-1 text-[10px]">booked</span>}
       </div>
     );
   };

@@ -191,7 +191,7 @@ describe('retention breakdown table groups', () => {
     const headers = screen
       .getAllByRole('columnheader')
       .map((header) => header.textContent);
-    expect(headers.slice(1, 4)).toEqual(['Spend', 'CPI', 'Total profiles']);
+    expect(headers.slice(1, 6)).toEqual(['Play installs', 'Spend', 'CPI', 'Revenue', 'Total profiles']);
     const cpi = screen
       .getAllByTestId('retention-cpi-cell')
       .map((cell) => cell.textContent);
@@ -240,9 +240,11 @@ describe('retention breakdown table groups', () => {
     );
     const headers = () =>
       screen.getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers().slice(1, 8)).toEqual([
+    expect(headers().slice(1, 10)).toEqual([
+      'Play installs',
       'Spend',
       'CPI',
+      'Revenue',
       'D0 ROAS',
       'D7 ROAS',
       'D30 ROAS',
@@ -259,8 +261,10 @@ describe('retention breakdown table groups', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: /^CPI$/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /D30 ROAS/ }));
-    expect(headers().slice(1, 6)).toEqual([
+    expect(headers().slice(1, 8)).toEqual([
+      'Play installs',
       'Spend',
+      'Revenue',
       'D0 ROAS',
       'D7 ROAS',
       'Lifetime ROAS',
@@ -285,6 +289,24 @@ describe('retention breakdown table groups', () => {
     expect(screen.getByTestId('retention-acquisition-cost-note').textContent).toContain(
       "Meta has not reported today's spend yet"
     );
+  });
+
+  it('marks booked revenue and booked ROAS on rows before tracking', () => {
+    render(
+      createElement(CohortTable, {
+        data: [
+          { ...row('2026-02-01', [], 0), spend: 1_034_746, cpi: 1.73, playInstalls: 596_667, lifetimeRevenue: 1_188_650, revenueBasis: 'booked', installsSource: 'play', externalInstalls: 596_667, roas: { d0: null, d7: null, d30: null, lifetime: 1.149, basis: 'booked' } },
+        ],
+        acquisitionCost: {
+          mode: 'blended', breakdown: null, totalSpend: 1_034_746, attributedSpend: 0, currency: 'INR',
+          roasAvailable: true, roasMaxDay: 7, coverageFrom: {}, spendPendingToday: [], trackingStart: '2026-03-12', spendFilters: { applied: [], ignored: [] },
+        },
+      })
+    );
+    expect(screen.getAllByTestId('retention-play-installs-cell')[0]?.textContent).toBe('596667');
+    expect(screen.getAllByTestId('retention-revenue-cell')[0]?.textContent).toBe('₹11,88,650booked');
+    expect(screen.getAllByTestId('retention-roas-lifetime-cell')[0]?.textContent).toBe('1.15xbooked');
+    expect(screen.getAllByTestId('retention-roas-d0-cell')[0]?.textContent).toBe('—');
   });
 
   it('offers no ROAS columns when the report does not measure revenue', () => {

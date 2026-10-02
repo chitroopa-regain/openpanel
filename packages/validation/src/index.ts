@@ -348,8 +348,10 @@ export const zRetentionMeasure = z.enum([
 export const zRetentionVisualization = z.enum(['curve', 'metric']);
 /** Acquisition-cost columns a retention table can show beside each cohort. */
 export const zAcquisitionColumn = z.enum([
+  'play_installs',
   'spend',
   'cpi',
+  'revenue',
   'roas_d0',
   'roas_d7',
   'roas_d30',

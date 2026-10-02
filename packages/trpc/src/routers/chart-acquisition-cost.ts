@@ -272,6 +272,44 @@ FROM play_installs_daily AS p FINAL
 WHERE p.project_id = ${sqlstring.escape(projectId)} AND p.day BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
 }
 
+/** Daily aggregate purchases imported from before event tracking. */
+export const HISTORIC_PURCHASE_EVENT = 'Historic: Daily Purchases';
+
+/**
+ * Revenue booked per local day: imported historic aggregates plus the report's
+ * revenue event, the latter de-duplicated by transaction_id (re-sent purchase
+ * events exist, e.g. regain-app April 2026).
+ */
+export function buildBookedRevenueQuery({
+  projectId,
+  eventNames,
+  propertyKey,
+  startDay,
+  endDayExclusive,
+  timezone,
+}: {
+  projectId: string;
+  eventNames: string[];
+  propertyKey: string;
+  startDay: string;
+  endDayExclusive: string;
+  timezone: string;
+}) {
+  const tz = sqlstring.escape(timezone);
+  const window = `created_at >= toDateTime64(toDate(${sqlstring.escape(startDay)}), 3, ${tz}) AND created_at < toDateTime64(toDate(${sqlstring.escape(endDayExclusive)}), 3, ${tz})`;
+  const project = `project_id = ${sqlstring.escape(projectId)}`;
+  return `SELECT toString(bd) AS day, sum(v) AS revenue FROM (
+  SELECT toDate(created_at, ${tz}) AS bd, toFloat64OrZero(properties['revenue_inr']) AS v
+  FROM events WHERE ${project} AND name = ${sqlstring.escape(HISTORIC_PURCHASE_EVENT)} AND ${window}
+  UNION ALL
+  SELECT bd, v FROM (
+    SELECT toDate(created_at, ${tz}) AS bd, toFloat64OrZero(properties[${sqlstring.escape(propertyKey)}]) AS v,
+      row_number() OVER (PARTITION BY if(properties['transaction_id'] = '', toString(id), properties['transaction_id']) ORDER BY created_at) AS rn
+    FROM events WHERE ${project} AND name IN (${eventNames.map((n) => sqlstring.escape(n)).join(', ')}) AND ${window}
+  ) WHERE rn = 1
+) GROUP BY bd`;
+}
+
 /** OS mix of the cohort's first event over the report range (sorting-key scan). */
 export function buildCohortOsQuery({
   projectId,
@@ -532,6 +570,8 @@ export type RoasKey = (typeof ROAS_KEYS)[number];
 export type Roas = Record<RoasKey, number | null> & {
   /** Windows still in progress ("so far" values), e.g. today's D0. */
   partial?: RoasKey[];
+  /** 'booked': revenue booked in the period / spend (no cohort data then). */
+  basis?: 'booked';
 };
 /** Cohort revenue per window; d0Partial = the cohort day is still running. */
 export type RoasRevenueInput = Record<RoasKey, number | null> & {
@@ -555,6 +595,11 @@ export type WithAcquisitionCost<T> = T & {
    */
   installsSource?: 'play';
   externalInstalls?: number;
+  /** Play Console installs in the row's period (blended views only). */
+  playInstalls?: number | null;
+  /** Cohort lifetime revenue, or revenue booked in the period before tracking. */
+  lifetimeRevenue?: number | null;
+  revenueBasis?: 'cohort' | 'booked';
   /** revenue / spend per window; null when unpaid, unspent or incomplete. */
   roas: Roas | null;
 };
@@ -710,6 +755,7 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     coverageFrom = {},
     trackingStart = null,
     externalInstalls = [],
+    bookedRevenue = [],
   }: {
     interval: string | undefined;
     attribution: AttributionBreakdown | null;
@@ -721,6 +767,8 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     trackingStart?: string | null;
     /** Daily installs from outside the event stream (Play Console). */
     externalInstalls?: Array<{ day: string; installs: number | string }>;
+    /** Daily booked revenue, for rows before tracking. */
+    bookedRevenue?: Array<{ day: string; revenue: number | string }>;
   }
 ): { rows: WithAcquisitionCost<T>[]; attributedSpend: number } {
   // Before tracking began there are no cohorts to charge: spend from those
@@ -759,14 +807,32 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     overallSums
   );
   const allSpendFor = buildSpendLookup(spend, interval);
-  const externalByInterval = new Map<string, number>();
-  for (const e of externalInstalls) {
-    const key = cohortIntervalKey(e.day, interval);
-    externalByInterval.set(
-      key,
-      (externalByInterval.get(key) ?? 0) + Number(e.installs)
+  const externalByInterval = sumByInterval(
+    externalInstalls.map((e) => ({ day: e.day, value: Number(e.installs) })),
+    interval
+  );
+  const bookedByInterval = sumByInterval(
+    bookedRevenue.map((e) => ({ day: e.day, value: Number(e.revenue) })),
+    interval
+  );
+  // Play installs are not split by source, so only blended views show them.
+  const showPlay = !attribution && externalInstalls.length > 0;
+  const playFor = (row: T) =>
+    showPlay
+      ? (externalByInterval.get(row.cohort_interval) ?? null)
+      : undefined;
+  const trackedPlayTotal = showPlay
+    ? cohortRows.reduce(
+        (acc, r) => acc + (externalByInterval.get(r.cohort_interval) ?? 0),
+        0
+      )
+    : undefined;
+  const cohortRevenueTotal = (key: string) =>
+    round2(
+      cohortRows
+        .filter((r) => JSON.stringify(r.breakdowns ?? []) === key)
+        .reduce((acc, r) => acc + (r.revenue?.lifetime ?? 0), 0)
     );
-  }
   const summaries = summarizeGroups(cohortRows, shares, uncovered);
 
   const out = rows.map((row) => {
@@ -775,28 +841,30 @@ export function attachAcquisitionCost<T extends CostRowInput>(
       if (attribution) {
         return { ...row, spend: null, cpi: null, roas: null };
       }
-      const value = allSpendFor(row.cohort_interval, { kind: 'all' });
-      const installs = externalByInterval.get(row.cohort_interval);
       return {
         ...row,
-        spend: round2(value),
-        cpi: installs ? round2(value / installs) : null,
-        roas: null,
-        ...(installs
-          ? { installsSource: 'play' as const, externalInstalls: installs }
-          : {}),
+        ...beforeTrackingCells(
+          allSpendFor(row.cohort_interval, { kind: 'all' }),
+          externalByInterval.get(row.cohort_interval),
+          bookedByInterval.get(row.cohort_interval)
+        ),
+        playInstalls: playFor(row),
       };
     }
     // Organic / unattributed rows have no acquisition cost, not a zero one;
     // neither do matched rows from before their platform is attributable.
     const unpaid = uncovered.has(row) || rowMatcher(row).kind === 'unpaid';
     if (row.cohort_interval === AVERAGE_ROW) {
-      const group = summaries.get(JSON.stringify(row.breakdowns ?? []));
+      const key = JSON.stringify(row.breakdowns ?? []);
+      const group = summaries.get(key);
       return {
         ...row,
         ...costCells(unpaid, group?.spend ?? 0, group?.size ?? 0, () =>
           summaryRoas(group?.members ?? [])
         ),
+        playInstalls: trackedPlayTotal,
+        lifetimeRevenue: cohortRevenueTotal(key),
+        revenueBasis: 'cohort' as const,
       };
     }
     const value = shares.get(row) ?? 0;
@@ -805,9 +873,54 @@ export function attachAcquisitionCost<T extends CostRowInput>(
       ...costCells(unpaid, value, Number(row.sum), () =>
         rowRoas(row.revenue, value)
       ),
+      playInstalls: playFor(row),
+      lifetimeRevenue: row.revenue ? round2(row.revenue.lifetime ?? 0) : null,
+      revenueBasis: 'cohort' as const,
     };
   });
   return { rows: out, attributedSpend: round2(attributed) };
+}
+
+/**
+ * A row from before install tracking: its spend, CPI over Play Console
+ * installs, and revenue booked in the period / spend ("booked" ROAS).
+ */
+function beforeTrackingCells(
+  spendValue: number,
+  installs: number | undefined,
+  booked: number | undefined
+) {
+  return {
+    spend: round2(spendValue),
+    cpi: installs ? round2(spendValue / installs) : null,
+    roas:
+      booked === undefined
+        ? null
+        : {
+            d0: null,
+            d7: null,
+            d30: null,
+            lifetime: ratio(booked, spendValue),
+            basis: 'booked' as const,
+          },
+    lifetimeRevenue: booked === undefined ? null : round2(booked),
+    revenueBasis: 'booked' as const,
+    ...(installs
+      ? { installsSource: 'play' as const, externalInstalls: installs }
+      : {}),
+  };
+}
+
+function sumByInterval(
+  rows: Array<{ day: string; value: number }>,
+  interval: string | undefined
+) {
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const key = cohortIntervalKey(r.day, interval);
+    out.set(key, (out.get(key) ?? 0) + r.value);
+  }
+  return out;
 }
 
 /** interval → cohort size, from the whole-population rows. */

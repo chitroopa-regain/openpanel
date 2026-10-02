@@ -81,6 +81,7 @@ import {
   ATTRIBUTION_COVERAGE_FROM,
   type AcquisitionCostSummary,
   attachAcquisitionCost,
+  buildBookedRevenueQuery,
   buildCampaignNameMapQuery,
   buildCohortOsQuery,
   buildExternalInstallsQuery,
@@ -2249,12 +2250,36 @@ export const chartRouter = createTRPCRouter({
           const osSpend = spendForCohortOs(spend, osCounts).filter(
             spendFilter.allows
           );
+          const trackingStart = findTrackingStart(trackingDaily);
+          // Before tracking there is no cohort revenue; show what was booked
+          // in each period instead (revenue property measures only, and only
+          // unfiltered — booked revenue cannot be split by cohort filters).
+          const propertyKey = retentionProperty?.startsWith('properties.')
+            ? retentionProperty.slice('properties.'.length)
+            : null;
+          const bookedRevenue =
+            trackingStart &&
+            propertyKey &&
+            startDay < trackingStart &&
+            spendFilter.applied.length === 0
+              ? await chQuery<{ day: string; revenue: number }>(
+                  buildBookedRevenueQuery({
+                    projectId,
+                    eventNames: secondEvent,
+                    propertyKey,
+                    startDay,
+                    endDayExclusive: trackingStart,
+                    timezone,
+                  })
+                )
+              : [];
           return {
             spend: osSpend,
             spendFilter,
             pendingToday:
               endDay >= today ? spendPendingToday(osSpend, today) : [],
-            trackingStart: findTrackingStart(trackingDaily),
+            trackingStart,
+            bookedRevenue,
             // Play installs cannot be narrowed by a spend filter: unfiltered only.
             externalInstalls:
               spendFilter.applied.length > 0 ? [] : externalInstalls,
@@ -2296,6 +2321,7 @@ export const chartRouter = createTRPCRouter({
           coverageFrom: ATTRIBUTION_COVERAGE_FROM[projectId] ?? {},
           trackingStart: loaded.trackingStart,
           externalInstalls: loaded.externalInstalls,
+          bookedRevenue: loaded.bookedRevenue,
         });
       };
       const acquisitionSummary = (

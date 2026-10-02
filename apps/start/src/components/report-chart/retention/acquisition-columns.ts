@@ -13,6 +13,12 @@ export interface AcquisitionColumn {
 
 export const ACQUISITION_COLUMNS: AcquisitionColumn[] = [
   {
+    key: 'play_installs',
+    label: 'Play installs',
+    title:
+      'Google Play Console installs in the period (all sources; Play publishes ~10 days late)',
+  },
+  {
     key: 'spend',
     label: 'Spend',
     title: 'Paid ad spend matched to this cohort (INR)',
@@ -21,6 +27,12 @@ export const ACQUISITION_COLUMNS: AcquisitionColumn[] = [
     key: 'cpi',
     label: 'CPI',
     title: 'Cost per install = spend / cohort size',
+  },
+  {
+    key: 'revenue',
+    label: 'Revenue',
+    title:
+      "Cohort lifetime revenue; before install tracking, revenue booked in the period ('booked')",
   },
   {
     key: 'roas_d0',
