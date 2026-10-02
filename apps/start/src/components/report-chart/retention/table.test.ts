@@ -347,6 +347,34 @@ describe('retention breakdown table groups', () => {
     expect(cell('retention-roas-d0-cell')).toBe('—');
   });
 
+  it('collapses day columns of rows before tracking into one cell', () => {
+    const wide = (interval: string, sum: number) => ({
+      ...row(interval, [], sum),
+      values: Array.from({ length: 200 }, () => 0),
+      percentages: Array.from({ length: 200 }, () => 0),
+    });
+    render(
+      createElement(CohortTable, {
+        data: [
+          { ...wide('Weighted Average', 3000), spend: 1, cpi: 1 },
+          { ...wide('2026-02-01', 0), spend: 1_034_746, cpi: 1.73, installsSource: 'play', externalInstalls: 596_667 },
+          { ...wide('2026-03-01', 3000), spend: 300_000, cpi: 100 },
+        ],
+        acquisitionCost: {
+          mode: 'blended', breakdown: null, totalSpend: 0, attributedSpend: 0, currency: 'INR',
+          roasAvailable: true, roasMaxDay: 30, coverageFrom: {}, spendPendingToday: [], trackingStart: '2026-03-12',
+          spendFilters: { applied: [], ignored: [] },
+        },
+      })
+    );
+    const merged = screen.getAllByTestId('retention-before-tracking-cell');
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.getAttribute('colspan')).toBe('200');
+    // The tracked March row keeps all 200 day cells.
+    const marchRow = screen.getByText('2026-03-01').closest('tr');
+    expect(marchRow?.querySelectorAll('td').length).toBeGreaterThan(200);
+  });
+
   it('offers no ROAS columns when the report does not measure revenue', () => {
     render(
       createElement(CohortTable, {

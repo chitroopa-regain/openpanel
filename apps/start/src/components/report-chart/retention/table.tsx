@@ -222,15 +222,21 @@ const CohortTable: React.FC<CohortTableProps> = ({
   const isPercentage = !isPropertyMeasure && unit === '%';
   const roasAvailable = Boolean(acquisitionCost?.roasAvailable);
   const totalRow = acquisitionCost ? buildTotalRow(data) : null;
+  const trackingStartKey = acquisitionCost?.trackingStart ?? null;
+  // Rows wholly before install tracking have no cohort to show.
+  const isBeforeTrackingRow = (row: CohortRow) =>
+    trackingStartKey !== null &&
+    Number(row.sum) === 0 &&
+    row.cohort_interval !== 'Weighted Average' &&
+    row.cohort_interval !== TOTAL_ROW &&
+    row.cohort_interval < trackingStartKey;
   const savedColumns =
     options?.type === 'retention' ? options.acquisitionColumns : undefined;
   // Viewer-side tick boxes, seeded from the report's saved selection. They
   // only change what this screen shows; the report editor's sidebar saves.
   const [ticked, setTicked] = useState<Set<string>>(
     () =>
-      new Set(
-        resolveAcquisitionColumns(savedColumns, true).map((c) => c.key)
-      )
+      new Set(resolveAcquisitionColumns(savedColumns, true).map((c) => c.key))
   );
   const savedColumnsKey = JSON.stringify(savedColumns ?? null);
   useEffect(() => {
@@ -267,7 +273,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
     breakdowns.map((breakdown) => [breakdown.id, breakdown.name])
   );
   const hasBreakdowns = data.some(
-    (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey),
+    (row) => row.breakdowns.length > 0 || Boolean(row.cohortKey)
   );
   const breakdownGroups = hasBreakdowns ? getCohortBreakdownGroups(data) : [];
   // Pinned above the buckets, outside their sort/top-N and colour index. Its
@@ -479,38 +485,52 @@ const CohortTable: React.FC<CohortTableProps> = ({
             {row === rowWithHigestSum && ' 🚀'}
           </div>
         </td>
-        {values.map((value, index) => {
-          const { opacity, backgroundClassName } = getBackground(value);
-          const columnLabel = getColumnLabel(index);
-          return (
-            <td className="min-w-24 p-0" key={`${keyPrefix}:${columnLabel}`}>
-              <div
-                className={cn(
-                  'center-center relative h-10 font-mono hover:shadow-[inset_0_0_0_2px_rgb(255,255,255)]',
-                  opacity > 0.7 &&
-                    'text-white [text-shadow:_0_0_3px_rgb(0_0_0_/_20%)]'
-                )}
-              >
+        {isBeforeTrackingRow(row) ? (
+          // One cell instead of a row of zeros: thousands fewer DOM nodes on
+          // long ranges (e.g. 30 untracked months x 200+ day columns).
+          <td
+            className="p-0"
+            colSpan={values.length}
+            data-testid="retention-before-tracking-cell"
+          >
+            <div className="flex h-10 items-center px-3 text-muted-foreground text-xs">
+              Before install tracking ({acquisitionCost?.trackingStart})
+            </div>
+          </td>
+        ) : (
+          values.map((value, index) => {
+            const { opacity, backgroundClassName } = getBackground(value);
+            const columnLabel = getColumnLabel(index);
+            return (
+              <td className="min-w-24 p-0" key={`${keyPrefix}:${columnLabel}`}>
                 <div
                   className={cn(
-                    backgroundClassName,
-                    'absolute inset-0 h-full w-full'
+                    'center-center relative h-10 font-mono hover:shadow-[inset_0_0_0_2px_rgb(255,255,255)]',
+                    opacity > 0.7 &&
+                      'text-white [text-shadow:_0_0_3px_rgb(0_0_0_/_20%)]'
                   )}
-                  style={{ opacity }}
-                />
-                <div className="relative">
-                  {value === null
-                    ? '—'
-                    : number.formatWithUnit(
-                        value,
-                        isPropertyMeasure ? undefined : unit
-                      )}
-                  {value !== null && value === highestValue && ' 🚀'}
+                >
+                  <div
+                    className={cn(
+                      backgroundClassName,
+                      'absolute inset-0 h-full w-full'
+                    )}
+                    style={{ opacity }}
+                  />
+                  <div className="relative">
+                    {value === null
+                      ? '—'
+                      : number.formatWithUnit(
+                          value,
+                          isPropertyMeasure ? undefined : unit
+                        )}
+                    {value !== null && value === highestValue && ' 🚀'}
+                  </div>
                 </div>
-              </div>
-            </td>
-          );
-        })}
+              </td>
+            );
+          })
+        )}
       </>
     );
   };
@@ -527,198 +547,203 @@ const CohortTable: React.FC<CohortTableProps> = ({
 
   return (
     <ReportSeriesScreenshotsProvider chartSeries={screenshotSeries as never}>
-    {acquisitionCost && (
-      <div
-        className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
-        data-testid="retention-acquisition-columns"
-      >
-        {availableAcquisitionColumns(roasAvailable).map((column) => {
-          const id = `${disclosureId}-col-${column.key}`;
-          const short =
-            column.minDay !== undefined &&
-            column.minDay > (acquisitionCost.roasMaxDay ?? 0);
-          return (
-            <label
-              className="flex cursor-pointer items-center gap-2"
-              htmlFor={id}
-              key={column.key}
-              title={column.title}
-            >
-              <Checkbox
-                checked={ticked.has(column.key)}
-                id={id}
-                onCheckedChange={(on) => toggleColumn(column.key, on === true)}
-              />
-              <span className={cn(short && 'text-muted-foreground')}>
-                {column.label}
-                {short && ' (range too short)'}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    )}
-    <div className="card relative overflow-hidden">
-      <div
-        className={'absolute top-px right-0 left-0 h-10 border-b bg-def-100'}
-      />
-      <div className="hide-scrollbar w-full overflow-x-auto">
-        <div className="relative min-w-full">
-          <table className="w-full table-auto whitespace-nowrap">
-            <thead>
-              <tr>
-                <th className={cn(thClassName, 'sticky left-0 z-10')}>
-                  <div className="bg-def-100">
-                    <div className="center-center -mt-3 h-10 px-4">
-                      {firstColumnLabel}
-                    </div>
-                  </div>
-                </th>
-                {costColumns.map((column) => (
-                  <th
-                    className={cn(thClassName, 'px-3 text-right')}
-                    key={column.key}
-                    title={column.title}
-                  >
-                    {column.label}
-                  </th>
-                ))}
-                <th className={cn(thClassName, 'pr-1')}>Total profiles</th>
-                {data[0]?.values.map((_column, index) => (
-                  <th
-                    className={cn(thClassName, 'capitalize')}
-                    key={index.toString()}
-                  >
-                    {getColumnLabel(index)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            {hasBreakdowns ? (
-              [
-                ...(overallGroup ? [overallGroup] : []),
-                ...breakdownGroups,
-              ].map((group, index) => {
-                const isOverall = group.key === OVERALL_GROUP_KEY;
-                // Colour index stays positional in breakdownGroups so pinning
-                // the Overall row does not shift every bucket's colour.
-                const groupIndex = overallGroup ? index - 1 : index;
-                const isExpanded = expandedGroups.has(group.key);
-                const cohortRowsId = `${disclosureId}-cohorts-${group.key.replace(/\W/g, '')}`;
-                return (
-                  <Fragment key={group.key}>
-                    <tbody>
-                      <tr
-                        className={cn(
-                          'border-t bg-def-50',
-                          isOverall && 'border-b-2',
-                        )}
-                        data-testid={
-                          isOverall ? 'retention-overall-row' : undefined
-                        }
-                      >
-                        <td className="sticky left-0 z-10 min-w-52 bg-def-50 p-0">
-                          <button
-                            aria-controls={cohortRowsId}
-                            aria-expanded={isExpanded}
-                            className="flex h-10 w-full items-center gap-2 px-4 text-left font-semibold hover:bg-def-200"
-                            onClick={() => toggleGroup(group.key)}
-                            type="button"
-                          >
-                            <span
-                              aria-hidden
-                              className={cn(
-                                'size-3 shrink-0 rounded-sm',
-                                isOverall && 'border-2 border-foreground/50',
-                              )}
-                              data-breakdown-color
-                              style={
-                                isOverall
-                                  ? undefined
-                                  : { backgroundColor: getChartColor(groupIndex) }
-                              }
-                            />
-                            {isExpanded ? (
-                              <ChevronDown className="size-4 shrink-0" />
-                            ) : (
-                              <ChevronRight className="size-4 shrink-0" />
-                            )}
-                            <span className="truncate" title={group.label}>
-                              {group.label}
-                            </span>
-                            {!isOverall && series[0]?.type === 'event' && (
-                              <ReportSeriesScreenshot
-                                eventName={`${series[0].name} — ${group.label}`}
-                                serieId={group.key}
-                                showNoMatch={false}
-                              />
-                            )}
-                          </button>
-                        </td>
-                        {renderMetricCells(group.summary, group.key)}
-                      </tr>
-                    </tbody>
-                    <tbody hidden={!isExpanded} id={cohortRowsId}>
-                      {group.cohorts.map((row) => (
-                        <tr key={`${group.key}:${row.cohort_interval}`}>
-                          <td className="sticky left-0 z-10 min-w-52 bg-card p-0">
-                            <div className="flex h-10 items-center pr-4 pl-12 font-medium text-muted-foreground">
-                              {row.cohort_interval}
-                            </div>
-                          </td>
-                          {renderMetricCells(
-                            row,
-                            `${group.key}:${row.cohort_interval}`
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </Fragment>
-                );
-              })
-            ) : (
-              <tbody>
-                {totalRow && (
-                  <tr
-                    className="border-b bg-def-50"
-                    data-testid="retention-total-row"
-                    key={TOTAL_ROW}
-                  >
-                    <td className="sticky left-0 z-10 w-36 bg-def-50 p-0">
-                      <div
-                        className="center-center h-10 px-4 font-semibold"
-                        title="Sums over every row in the range; CPI and Lifetime ROAS are total spend / total installs and total revenue / total spend"
-                      >
-                        {TOTAL_ROW}
-                      </div>
-                    </td>
-                    {renderMetricCells(totalRow, TOTAL_ROW)}
-                  </tr>
-                )}
-                {data.map((row) => (
-                  <tr key={row.cohort_interval}>
-                    <td className="sticky left-0 z-10 w-36 bg-card p-0">
-                      <div className="center-center h-10 px-4 font-medium text-muted-foreground">
-                        {row.cohort_interval}
-                      </div>
-                    </td>
-                    {renderMetricCells(row, row.cohort_interval)}
-                  </tr>
-                ))}
-              </tbody>
-            )}
-          </table>
-        </div>
-      </div>
       {acquisitionCost && (
         <div
-          className="border-t px-4 py-2 text-muted-foreground text-xs"
-          data-testid="retention-acquisition-cost-note"
+          className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
+          data-testid="retention-acquisition-columns"
         >
-          {describeAcquisitionCost(acquisitionCost)}
+          {availableAcquisitionColumns(roasAvailable).map((column) => {
+            const id = `${disclosureId}-col-${column.key}`;
+            const short =
+              column.minDay !== undefined &&
+              column.minDay > (acquisitionCost.roasMaxDay ?? 0);
+            return (
+              <label
+                className="flex cursor-pointer items-center gap-2"
+                htmlFor={id}
+                key={column.key}
+                title={column.title}
+              >
+                <Checkbox
+                  checked={ticked.has(column.key)}
+                  id={id}
+                  onCheckedChange={(on) =>
+                    toggleColumn(column.key, on === true)
+                  }
+                />
+                <span className={cn(short && 'text-muted-foreground')}>
+                  {column.label}
+                  {short && ' (range too short)'}
+                </span>
+              </label>
+            );
+          })}
         </div>
       )}
-    </div>
+      <div className="card relative overflow-hidden">
+        <div
+          className={'absolute top-px right-0 left-0 h-10 border-b bg-def-100'}
+        />
+        <div className="hide-scrollbar w-full overflow-x-auto">
+          <div className="relative min-w-full">
+            <table className="w-full table-auto whitespace-nowrap">
+              <thead>
+                <tr>
+                  <th className={cn(thClassName, 'sticky left-0 z-10')}>
+                    <div className="bg-def-100">
+                      <div className="center-center -mt-3 h-10 px-4">
+                        {firstColumnLabel}
+                      </div>
+                    </div>
+                  </th>
+                  {costColumns.map((column) => (
+                    <th
+                      className={cn(thClassName, 'px-3 text-right')}
+                      key={column.key}
+                      title={column.title}
+                    >
+                      {column.label}
+                    </th>
+                  ))}
+                  <th className={cn(thClassName, 'pr-1')}>Total profiles</th>
+                  {data[0]?.values.map((_column, index) => (
+                    <th
+                      className={cn(thClassName, 'capitalize')}
+                      key={index.toString()}
+                    >
+                      {getColumnLabel(index)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              {hasBreakdowns ? (
+                [
+                  ...(overallGroup ? [overallGroup] : []),
+                  ...breakdownGroups,
+                ].map((group, index) => {
+                  const isOverall = group.key === OVERALL_GROUP_KEY;
+                  // Colour index stays positional in breakdownGroups so pinning
+                  // the Overall row does not shift every bucket's colour.
+                  const groupIndex = overallGroup ? index - 1 : index;
+                  const isExpanded = expandedGroups.has(group.key);
+                  const cohortRowsId = `${disclosureId}-cohorts-${group.key.replace(/\W/g, '')}`;
+                  return (
+                    <Fragment key={group.key}>
+                      <tbody>
+                        <tr
+                          className={cn(
+                            'border-t bg-def-50',
+                            isOverall && 'border-b-2'
+                          )}
+                          data-testid={
+                            isOverall ? 'retention-overall-row' : undefined
+                          }
+                        >
+                          <td className="sticky left-0 z-10 min-w-52 bg-def-50 p-0">
+                            <button
+                              aria-controls={cohortRowsId}
+                              aria-expanded={isExpanded}
+                              className="flex h-10 w-full items-center gap-2 px-4 text-left font-semibold hover:bg-def-200"
+                              onClick={() => toggleGroup(group.key)}
+                              type="button"
+                            >
+                              <span
+                                aria-hidden
+                                className={cn(
+                                  'size-3 shrink-0 rounded-sm',
+                                  isOverall && 'border-2 border-foreground/50'
+                                )}
+                                data-breakdown-color
+                                style={
+                                  isOverall
+                                    ? undefined
+                                    : {
+                                        backgroundColor:
+                                          getChartColor(groupIndex),
+                                      }
+                                }
+                              />
+                              {isExpanded ? (
+                                <ChevronDown className="size-4 shrink-0" />
+                              ) : (
+                                <ChevronRight className="size-4 shrink-0" />
+                              )}
+                              <span className="truncate" title={group.label}>
+                                {group.label}
+                              </span>
+                              {!isOverall && series[0]?.type === 'event' && (
+                                <ReportSeriesScreenshot
+                                  eventName={`${series[0].name} — ${group.label}`}
+                                  serieId={group.key}
+                                  showNoMatch={false}
+                                />
+                              )}
+                            </button>
+                          </td>
+                          {renderMetricCells(group.summary, group.key)}
+                        </tr>
+                      </tbody>
+                      <tbody hidden={!isExpanded} id={cohortRowsId}>
+                        {group.cohorts.map((row) => (
+                          <tr key={`${group.key}:${row.cohort_interval}`}>
+                            <td className="sticky left-0 z-10 min-w-52 bg-card p-0">
+                              <div className="flex h-10 items-center pr-4 pl-12 font-medium text-muted-foreground">
+                                {row.cohort_interval}
+                              </div>
+                            </td>
+                            {renderMetricCells(
+                              row,
+                              `${group.key}:${row.cohort_interval}`
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Fragment>
+                  );
+                })
+              ) : (
+                <tbody>
+                  {totalRow && (
+                    <tr
+                      className="border-b bg-def-50"
+                      data-testid="retention-total-row"
+                      key={TOTAL_ROW}
+                    >
+                      <td className="sticky left-0 z-10 w-36 bg-def-50 p-0">
+                        <div
+                          className="center-center h-10 px-4 font-semibold"
+                          title="Sums over every row in the range; CPI and Lifetime ROAS are total spend / total installs and total revenue / total spend"
+                        >
+                          {TOTAL_ROW}
+                        </div>
+                      </td>
+                      {renderMetricCells(totalRow, TOTAL_ROW)}
+                    </tr>
+                  )}
+                  {data.map((row) => (
+                    <tr key={row.cohort_interval}>
+                      <td className="sticky left-0 z-10 w-36 bg-card p-0">
+                        <div className="center-center h-10 px-4 font-medium text-muted-foreground">
+                          {row.cohort_interval}
+                        </div>
+                      </td>
+                      {renderMetricCells(row, row.cohort_interval)}
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        </div>
+        {acquisitionCost && (
+          <div
+            className="border-t px-4 py-2 text-muted-foreground text-xs"
+            data-testid="retention-acquisition-cost-note"
+          >
+            {describeAcquisitionCost(acquisitionCost)}
+          </div>
+        )}
+      </div>
     </ReportSeriesScreenshotsProvider>
   );
 };
