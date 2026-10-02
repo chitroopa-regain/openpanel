@@ -394,6 +394,13 @@ export const zFunnelOptions = z.object({
   hiddenBreakdowns: z.array(z.string()).optional(),
 });
 
+export const MAX_RETENTION_TOP_N = 100;
+export const zRetentionTopN = z
+  .number()
+  .int()
+  .positive()
+  .transform((n) => Math.min(n, MAX_RETENTION_TOP_N));
+
 export const zRetentionOptions = z.object({
   type: z.literal('retention'),
   displayMode: zReportDisplayMode.optional(),
@@ -406,8 +413,9 @@ export const zRetentionOptions = z.object({
   retentionUnit: zRetentionTimeUnit.optional(),
   /** 0-based retention step used as the denominator for Property Average. undefined/0 = step 1 cohort users. */
   propertyAverageDenominatorStep: z.number().int().nonnegative().optional(),
-  /** Number of highest-profile-count breakdowns shown. undefined = 20. */
-  topN: z.number().int().positive().max(20).optional(),
+  /** Number of highest-profile-count breakdowns shown. undefined = 20.
+   * Larger saved values are clamped (not rejected) so the report still loads. */
+  topN: zRetentionTopN.optional(),
   /** Display order for the selected top breakdowns. */
   breakdownSort: zRetentionBreakdownSort.optional(),
   /**

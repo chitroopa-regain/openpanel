@@ -302,7 +302,7 @@ function BreakdownControls({
         <Label className="mb-0 whitespace-nowrap">Show</Label>
         <Combobox
           align="end"
-          items={[1, 3, 5, 10, 20].map((value) => ({
+          items={[1, 3, 5, 10, 20, 50, 100].map((value) => ({
             label: `Top ${value}`,
             value: String(value),
           }))}

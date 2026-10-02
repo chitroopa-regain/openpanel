@@ -55,6 +55,8 @@ import {
   zRetentionBreakdownSort,
   zRetentionMeasure,
   zRetentionTimeUnit,
+  zRetentionTopN,
+  MAX_RETENTION_TOP_N,
   zTimeInterval,
 } from '@openpanel/validation';
 import {
@@ -1472,7 +1474,7 @@ export const chartRouter = createTRPCRouter({
           .nonnegative()
           .optional(),
         retentionUnit: zRetentionTimeUnit.default('day'),
-        topN: z.number().int().positive().max(20).default(20),
+        topN: zRetentionTopN.default(20),
         breakdownSort: zRetentionBreakdownSort.default('profile_count_desc'),
         breakdowns: zChartBreakdowns.default([]),
         acquisitionCost: z.boolean().optional(),
@@ -1593,7 +1595,10 @@ export const chartRouter = createTRPCRouter({
           retentionOptions?.propertyAverageDenominatorStep ??
           propertyAverageDenominatorStep;
         retentionUnit = retentionOptions?.retentionUnit ?? retentionUnit;
-        topN = retentionOptions?.topN ?? topN;
+        topN = Math.min(
+          retentionOptions?.topN ?? topN,
+          MAX_RETENTION_TOP_N
+        );
         breakdownSort = retentionOptions?.breakdownSort ?? breakdownSort;
         acquisitionCostEnabled =
           retentionOptions?.acquisitionCost ?? acquisitionCostEnabled;
