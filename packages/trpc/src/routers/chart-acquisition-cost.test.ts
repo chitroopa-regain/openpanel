@@ -8,6 +8,7 @@ import {
   type SpendRow,
   sourceValueToPlatform,
   spendForCohortOs,
+  spendPendingToday,
   totalPaidSpend,
 } from './chart-acquisition-cost';
 
@@ -394,6 +395,83 @@ describe('acquisition cost', () => {
       }
     );
     expect(blended.rows[0]).toMatchObject({ spend: 200_000, cpi: 200 });
+  });
+
+  it("today's D0 shows so far, flagged, and stays out of the summary", () => {
+    const { rows } = attachAcquisitionCost(
+      [
+        avg(3000),
+        {
+          cohort_interval: '2026-09-29',
+          sum: 2000,
+          breakdowns: [],
+          revenue: { d0: 141_000, d7: null, d30: null, lifetime: 141_000 },
+        },
+        {
+          cohort_interval: '2026-09-30',
+          sum: 1000,
+          breakdowns: [],
+          revenue: {
+            d0: 20_000,
+            d7: null,
+            d30: null,
+            lifetime: 20_000,
+            d0Partial: true,
+          },
+        },
+      ],
+      spend,
+      { interval: 'day', attribution: null }
+    );
+    expect(rows[2]?.roas).toEqual({
+      d0: 0.2,
+      d7: null,
+      d30: null,
+      lifetime: 0.2,
+      partial: ['d0'],
+    });
+    expect(rows[1]?.roas?.partial).toBeUndefined();
+    // Summary D0 = the finished day only: 141000 / 282000.
+    expect(rows[0]?.roas?.d0).toBe(0.5);
+  });
+
+  it('flags platforms that spent yesterday but have not reported today', () => {
+    const rows: SpendRow[] = [
+      {
+        day: '2026-10-01',
+        platform: 'meta_ads',
+        campaign_id: 'm1',
+        campaign_name: 'x',
+        spend_inr: 70_000,
+        os: 'android',
+      },
+      {
+        day: '2026-10-02',
+        platform: 'meta_ads',
+        campaign_id: 'm1',
+        campaign_name: 'x',
+        spend_inr: 0,
+        os: 'android',
+      },
+      {
+        day: '2026-10-01',
+        platform: 'google_ads',
+        campaign_id: 'g1',
+        campaign_name: 'y',
+        spend_inr: 198_000,
+        os: 'android',
+      },
+      {
+        day: '2026-10-02',
+        platform: 'google_ads',
+        campaign_id: 'g1',
+        campaign_name: 'y',
+        spend_inr: 149_000,
+        os: 'android',
+      },
+    ];
+    expect(spendPendingToday(rows, '2026-10-02')).toEqual(['meta_ads']);
+    expect(spendPendingToday(rows, '2026-10-03')).toEqual(['google_ads']);
   });
 
   it('reads only the latest sync batch per platform-day', () => {

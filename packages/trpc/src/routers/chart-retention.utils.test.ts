@@ -757,7 +757,11 @@ describe('chart retention utils', () => {
       asOfExpression: 'today_ist',
     });
     expect(sql).toContain(
-      'if(addDays(cs.cohort_interval, 1) <= today_ist, round(sumIf(ifNull(r.retention_property_value, 0), r.x_after_cohort <= 0), 2), NULL) AS roas_rev_d0'
+      'if(addDays(cs.cohort_interval, 0) <= today_ist, round(sumIf(ifNull(r.retention_property_value, 0), r.x_after_cohort <= 0), 2), NULL) AS roas_rev_d0'
+    );
+    // Today's cohort shows D0 "so far", flagged as partial.
+    expect(sql).toContain(
+      'addDays(cs.cohort_interval, 1) > today_ist AS roas_rev_d0_partial'
     );
     expect(sql).toContain(
       'if(addDays(cs.cohort_interval, 8) <= today_ist, round(sumIf(ifNull(r.retention_property_value, 0), r.x_after_cohort <= 7), 2), NULL) AS roas_rev_d7'
@@ -782,7 +786,7 @@ describe('chart retention utils', () => {
         { d0: 1, d7: 2, d30: null, lifetime: 3 },
         { d0: 1.5, d7: null, d30: null, lifetime: 4 }
       )
-    ).toEqual({ d0: 2.5, d7: null, d30: null, lifetime: 7 });
+    ).toEqual({ d0: 2.5, d7: null, d30: null, lifetime: 7, d0Partial: false });
     expect(addRoasRevenue(undefined, { d0: 1, d7: 1, d30: 1, lifetime: 1 })).toEqual({ d0: 1, d7: 1, d30: 1, lifetime: 1 });
   });
 

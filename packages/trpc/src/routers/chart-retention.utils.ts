@@ -40,6 +40,8 @@ export interface RoasRevenue {
   d30: number | null;
   /** Everything the cohort has paid through now. */
   lifetime: number | null;
+  /** D0 is today's cohort, still running: a "so far" value. */
+  d0Partial?: boolean;
 }
 
 export function buildRoasRevenueSelects({
@@ -54,14 +56,24 @@ export function buildRoasRevenueSelects({
   asOfExpression: string;
 }) {
   const revenue = 'ifNull(r.retention_property_value, 0)';
-  const windows = ROAS_WINDOWS.map(({ key, day }) =>
-    unit === 'day' && day <= diffInterval
-      ? `if(addDays(${cohortExpression}, ${day + 1}) <= ${asOfExpression}, round(sumIf(${revenue}, r.x_after_cohort <= ${day}), 2), NULL) AS roas_rev_${key}`
-      : `CAST(NULL, 'Nullable(Float64)') AS roas_rev_${key}`
-  );
-  return [...windows, `round(sum(${revenue}), 2) AS roas_rev_lifetime`].join(
-    ',\n'
-  );
+  // D0 also shows for the cohort day still in progress (flagged partial, a
+  // "so far" number); D7/D30 only once fully elapsed.
+  const windows = ROAS_WINDOWS.map(({ key, day }) => {
+    if (unit !== 'day' || day > diffInterval) {
+      return `CAST(NULL, 'Nullable(Float64)') AS roas_rev_${key}`;
+    }
+    const shownFrom = day === 0 ? 0 : day + 1;
+    return `if(addDays(${cohortExpression}, ${shownFrom}) <= ${asOfExpression}, round(sumIf(${revenue}, r.x_after_cohort <= ${day}), 2), NULL) AS roas_rev_${key}`;
+  });
+  const d0Partial =
+    unit === 'day'
+      ? `addDays(${cohortExpression}, 1) > ${asOfExpression} AS roas_rev_d0_partial`
+      : 'false AS roas_rev_d0_partial';
+  return [
+    ...windows,
+    d0Partial,
+    `round(sum(${revenue}), 2) AS roas_rev_lifetime`,
+  ].join(',\n');
 }
 
 const toNullableNumber = (value: unknown) =>
@@ -78,6 +90,7 @@ export function readRoasRevenue(
     d7: toNullableNumber(row.roas_rev_d7),
     d30: toNullableNumber(row.roas_rev_d30),
     lifetime: toNullableNumber(row.roas_rev_lifetime),
+    d0Partial: Boolean(Number(row.roas_rev_d0_partial ?? 0)),
   };
 }
 
@@ -99,6 +112,7 @@ export function addRoasRevenue(
     d7: add(a.d7, b.d7),
     d30: add(a.d30, b.d30),
     lifetime: add(a.lifetime, b.lifetime),
+    d0Partial: Boolean(a.d0Partial || b.d0Partial),
   };
 }
 

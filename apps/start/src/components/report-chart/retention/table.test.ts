@@ -268,6 +268,25 @@ describe('retention breakdown table groups', () => {
     ]);
   });
 
+  it("marks today's D0 ROAS as so far and names platforms whose spend is pending", () => {
+    render(
+      createElement(CohortTable, {
+        data: [
+          { ...row('2026-10-02', [], 10000), spend: 149_929, cpi: 15, roas: { d0: 0.42, d7: null, d30: null, lifetime: 0.42, partial: ['d0'] } },
+        ],
+        acquisitionCost: {
+          mode: 'blended', breakdown: null, totalSpend: 149_929, attributedSpend: 149_929, currency: 'INR',
+          roasAvailable: true, roasMaxDay: 7, coverageFrom: {}, spendPendingToday: ['meta_ads'],
+        },
+      })
+    );
+    const d0 = screen.getAllByTestId('retention-roas-d0-cell')[0];
+    expect(d0?.textContent).toBe('0.42xso far');
+    expect(screen.getByTestId('retention-acquisition-cost-note').textContent).toContain(
+      "Meta has not reported today's spend yet"
+    );
+  });
+
   it('offers no ROAS columns when the report does not measure revenue', () => {
     render(
       createElement(CohortTable, {

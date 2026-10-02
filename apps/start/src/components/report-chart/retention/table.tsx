@@ -41,6 +41,8 @@ export type CohortRow = CohortData[number] & {
     d7: number | null;
     d30: number | null;
     lifetime: number | null;
+    /** Windows still running, e.g. today's D0 ("so far"). */
+    partial?: Array<'d0' | 'd7' | 'd30' | 'lifetime'>;
   } | null;
 };
 
@@ -63,8 +65,8 @@ const inrCpi = new Intl.NumberFormat('en-IN', {
 export function describeAcquisitionCost(cost: AcquisitionCost) {
   const base = describeAcquisitionSpend(cost);
   return cost.roasAvailable
-    ? `${base} · ROAS = cohort revenue / spend; D-n shown once day n has fully passed`
-    : `${base} · ROAS needs a revenue metric (Property Sum or Property Average)`;
+    ? `${base} · ROAS = cohort revenue / spend; D-n shown once day n has fully passed, except today's D0 (so far)${describePending(cost)}`
+    : `${base} · ROAS needs a revenue metric (Property Sum or Property Average)${describePending(cost)}`;
 }
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -84,6 +86,15 @@ function describeCoverage(cost: AcquisitionCost) {
         `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
     )
     .join(', ')}`;
+}
+
+function describePending(cost: AcquisitionCost) {
+  const pending = cost.spendPendingToday ?? [];
+  if (pending.length === 0) {
+    return '';
+  }
+  const names = pending.map((p) => PLATFORM_LABEL[p] ?? p).join(' + ');
+  return ` · ${names} has not reported today's spend yet, so today's spend, CPI and ROAS leave it out`;
 }
 
 function describeAcquisitionSpend(cost: AcquisitionCost) {
@@ -339,16 +350,27 @@ const CohortTable: React.FC<CohortTableProps> = ({
       );
     }
     const value = column.roas ? row.roas?.[column.roas] : null;
+    const soFar = Boolean(
+      column.roas && row.roas?.partial?.includes(column.roas)
+    );
     return (
       <div
         className={cn(
           'px-3 text-right font-mono',
           value !== null && value !== undefined && value >= 1
             ? 'font-semibold text-emerald-600 dark:text-emerald-400'
-            : 'font-medium'
+            : 'font-medium',
+          soFar && 'text-muted-foreground italic'
         )}
+        data-so-far={soFar || undefined}
+        title={
+          soFar
+            ? 'Today is still running: revenue so far / spend so far'
+            : undefined
+        }
       >
         {formatRoas(value)}
+        {soFar && <span className="ml-1 text-[10px] not-italic">so far</span>}
       </div>
     );
   };

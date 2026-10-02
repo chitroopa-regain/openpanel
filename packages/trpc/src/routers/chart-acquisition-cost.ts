@@ -93,6 +93,8 @@ export interface AcquisitionCostSummary {
   roasMaxDay: number;
   /** Matched modes only: platform → first attributable cohort day. */
   coverageFrom: Partial<Record<string, string>>;
+  /** Platforms that spent yesterday but report nothing yet for today. */
+  spendPendingToday: string[];
 }
 
 const PROFILE_PROPERTIES_PREFIX = /^profile\.properties\./;
@@ -393,14 +395,21 @@ function groupBySpendKey<T extends { cohort_interval: string }>(
 
 export const ROAS_KEYS = ['d0', 'd7', 'd30', 'lifetime'] as const;
 export type RoasKey = (typeof ROAS_KEYS)[number];
-export type Roas = Record<RoasKey, number | null>;
+export type Roas = Record<RoasKey, number | null> & {
+  /** Windows still in progress ("so far" values), e.g. today's D0. */
+  partial?: RoasKey[];
+};
+/** Cohort revenue per window; d0Partial = the cohort day is still running. */
+export type RoasRevenueInput = Record<RoasKey, number | null> & {
+  d0Partial?: boolean;
+};
 
 export interface CostRowInput {
   cohort_interval: string;
   sum: number;
   breakdowns?: Array<string | null | undefined>;
   /** Cumulative cohort revenue per ROAS window (null = not yet complete). */
-  revenue?: Roas;
+  revenue?: RoasRevenueInput;
 }
 
 export type WithAcquisitionCost<T> = T & {
@@ -413,7 +422,10 @@ export type WithAcquisitionCost<T> = T & {
 const ratio = (num: number, den: number) =>
   den > 0 ? Math.round((num / den) * 1000) / 1000 : null;
 
-function rowRoas(revenue: Roas | undefined, spend: number): Roas | null {
+function rowRoas(
+  revenue: RoasRevenueInput | undefined,
+  spend: number
+): Roas | null {
   if (!revenue) {
     return null;
   }
@@ -422,12 +434,15 @@ function rowRoas(revenue: Roas | undefined, spend: number): Roas | null {
     const value = revenue[key];
     out[key] = value === null ? null : ratio(value, spend);
   }
+  if (revenue.d0Partial) {
+    out.partial = ['d0'];
+  }
   return out;
 }
 
 /** Summary ROAS per window over the cohorts whose window is complete. */
 function summaryRoas(
-  members: Array<{ revenue?: Roas; spend: number }>
+  members: Array<{ revenue?: RoasRevenueInput; spend: number }>
 ): Roas | null {
   if (!members.some((m) => m.revenue)) {
     return null;
@@ -438,7 +453,12 @@ function summaryRoas(
     let spend = 0;
     for (const m of members) {
       const value = m.revenue?.[key];
-      if (value === null || value === undefined) {
+      // An in-progress day is not a finished D0; keep it out of the average.
+      if (
+        value === null ||
+        value === undefined ||
+        (key === 'd0' && m.revenue?.d0Partial)
+      ) {
         continue;
       }
       revenue += value;
@@ -462,7 +482,7 @@ const AVERAGE_ROW = 'Weighted Average';
 interface GroupSummary {
   spend: number;
   size: number;
-  members: Array<{ revenue?: Roas; spend: number }>;
+  members: Array<{ revenue?: RoasRevenueInput; spend: number }>;
 }
 
 /** Per breakdown group: covered cohorts' spend, installs and revenue. */
@@ -616,6 +636,24 @@ export function cohortSizesByInterval(rows: CostRowInput[]) {
     );
   }
   return sizes;
+}
+
+/**
+ * Platforms whose spend for `today` is not in yet: they spent the day before
+ * but report zero today (Meta posts some accounts' spend late in the day).
+ * Today's spend, CPI and ROAS undercount them until they do.
+ */
+export function spendPendingToday(spend: SpendRow[], today: string) {
+  const yesterday = new Date(`${today}T00:00:00Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const y = yesterday.toISOString().slice(0, 10);
+  const byDay = (day: string, platform: string) =>
+    spend
+      .filter((s) => s.day === day && s.platform === platform)
+      .reduce((acc, s) => acc + Number(s.spend_inr), 0);
+  return PAID_PLATFORMS.filter(
+    (platform) => byDay(y, platform) > 0 && byDay(today, platform) <= 0
+  );
 }
 
 export function totalPaidSpend(spend: SpendRow[]) {

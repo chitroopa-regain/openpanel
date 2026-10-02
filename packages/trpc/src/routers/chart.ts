@@ -88,6 +88,7 @@ import {
   findAttributionBreakdown,
   type SpendRow,
   spendForCohortOs,
+  spendPendingToday,
   spendWindowStart,
   totalPaidSpend,
 } from './chart-acquisition-cost';
@@ -2213,8 +2214,14 @@ export const chartRouter = createTRPCRouter({
                 )
               : Promise.resolve([]),
           ]);
+          const today = new Intl.DateTimeFormat('en-CA', {
+            timeZone: timezone,
+          }).format(new Date());
+          const osSpend = spendForCohortOs(spend, osCounts);
           return {
-            spend: spendForCohortOs(spend, osCounts),
+            spend: osSpend,
+            pendingToday:
+              endDay >= today ? spendPendingToday(osSpend, today) : [],
             attribution,
             campaignNameToIds: new Map(nameRows.map((r) => [r.name, r.ids])),
           };
@@ -2264,6 +2271,7 @@ export const chartRouter = createTRPCRouter({
                 blended || !loaded.attribution
                   ? {}
                   : (ATTRIBUTION_COVERAGE_FROM[projectId] ?? {}),
+              spendPendingToday: loaded.pendingToday,
             }
           : null;
 
