@@ -272,6 +272,32 @@ export const ch = new Proxy(originalCh, {
   },
 });
 
+/**
+ * Integer columns arrive as strings (64-bit safety); turn them into numbers.
+ * Keys come from the first row, as before. Linear in rows x columns: the old
+ * reduce-with-spread rebuilt each row once per column and searched `meta` per
+ * cell, which took ~50 s and blocked the event loop on a 1,230-column
+ * retention result.
+ */
+export function normalizeChRows<T extends Record<string, any>>(
+  data: T[],
+  meta?: Array<{ name: string; type: string }>
+): T[] {
+  const keys = Object.keys(data[0] || {});
+  const intKeys = new Set(
+    (meta ?? []).filter((m) => m.type.includes('Int')).map((m) => m.name)
+  );
+  return data.map((item) => {
+    const out: Record<string, unknown> = {};
+    for (const key of keys) {
+      const value = item[key];
+      out[key] =
+        value && intKeys.has(key) ? Number.parseFloat(value as string) : value;
+    }
+    return out as T;
+  });
+}
+
 export async function chQueryWithMeta<T extends Record<string, any>>(
   query: string,
   clickhouseSettings?: ClickHouseSettings
@@ -282,21 +308,9 @@ export async function chQueryWithMeta<T extends Record<string, any>>(
     clickhouse_settings: clickhouseSettings,
   });
   const json = await res.json<T>();
-  const keys = Object.keys(json.data[0] || {});
   const response = {
     ...json,
-    data: json.data.map((item) => {
-      return keys.reduce((acc, key) => {
-        const meta = json.meta?.find((m) => m.name === key);
-        return {
-          ...acc,
-          [key]:
-            item[key] && meta?.type.includes('Int')
-              ? Number.parseFloat(item[key] as string)
-              : item[key],
-        };
-      }, {} as T);
-    }),
+    data: normalizeChRows<T>(json.data, json.meta),
   };
 
   logger.info('query info', {
