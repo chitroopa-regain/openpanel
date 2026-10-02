@@ -5,6 +5,7 @@ import {
   aggregateRetentionRowsByDisplayInterval,
   buildRoasRevenueSelects,
   getRetentionDateBounds,
+  getRetentionQuerySettings,
   buildRetentionBreakdownSelects,
   buildRetentionFirstTimeCteSql,
   buildRetentionMeasureIntervalSelect,
@@ -827,5 +828,12 @@ describe('chart retention utils', () => {
     expect(yesterday.cohortWindow('c')).toContain(
       "c < toDateTime64(toDate('2026-10-01 23:59:59', 'Asia/Calcutta') + 1, 3, 'Asia/Calcutta')"
     );
+  });
+
+  it('only oversized retention queries get raised ClickHouse limits', () => {
+    expect(getRetentionQuerySettings('SELECT 1')).toBeUndefined();
+    const big = getRetentionQuerySettings('x'.repeat(300_000));
+    expect(Number(big?.max_query_size)).toBeGreaterThan(300_000);
+    expect(Number(big?.max_ast_elements)).toBeGreaterThan(50_000);
   });
 });

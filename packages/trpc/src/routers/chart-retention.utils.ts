@@ -312,6 +312,27 @@ export function getRetentionDateBounds({
   };
 }
 
+/** ClickHouse's default max_query_size (256 KiB). */
+const DEFAULT_MAX_QUERY_SIZE = 262_144;
+
+/**
+ * The retention SQL has one select per return interval, so a day-unit report
+ * over ~3 years (1,200+ columns) passes ClickHouse's 256 KiB query-size limit
+ * and its AST limits. Raise them in proportion — only for queries that need
+ * it, so every other report runs with exactly the settings it had.
+ */
+export function getRetentionQuerySettings(query: string) {
+  if (query.length < DEFAULT_MAX_QUERY_SIZE * 0.8) {
+    return undefined;
+  }
+  const scale = Math.ceil(query.length / DEFAULT_MAX_QUERY_SIZE) + 1;
+  return {
+    max_query_size: String(DEFAULT_MAX_QUERY_SIZE * scale),
+    max_ast_elements: String(50_000 * scale),
+    max_expanded_ast_elements: String(500_000 * scale),
+  };
+}
+
 export function getRetentionTimeUnitConfig(unit: RetentionTimeUnit): {
   diffUnit: RetentionTimeUnit;
   sqlInterval: 'DAY' | 'WEEK' | 'MONTH';

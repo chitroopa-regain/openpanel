@@ -114,6 +114,7 @@ import {
   buildRoasRevenueSelects,
   getConcreteEventNameWhereClause,
   getRetentionDateBounds,
+  getRetentionQuerySettings,
   getRetentionElapsedIntervalExpression,
   getRetentionIntervalMaturityExpression,
   getRetentionMaturedIntervalsExpression,
@@ -2144,7 +2145,7 @@ export const chartRouter = createTRPCRouter({
           cohort_interval: string;
           total_first_event_count: number;
           [key: string]: any;
-        }>(query);
+        }>(query, getRetentionQuerySettings(query));
         return {
           query,
           data: processCohortData(
