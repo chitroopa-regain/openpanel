@@ -8,6 +8,7 @@ import {
   cohortSizesByInterval,
   findAttributionBreakdown,
   findTrackingStart,
+  NEVER_ATTRIBUTABLE,
   type SpendRow,
   sourceValueToPlatform,
   spendForCohortOs,
@@ -398,6 +399,34 @@ describe('acquisition cost', () => {
       }
     );
     expect(blended.rows[0]).toMatchObject({ spend: 200_000, cpi: 200 });
+  });
+
+  it('a month bucket containing the coverage day keeps its covered spend only', () => {
+    const spendRows: SpendRow[] = [
+      { day: '2026-09-10', platform: 'meta_ads', campaign_id: 'm', campaign_name: 'M', spend_inr: 50_000, os: 'android' },
+      { day: '2026-09-20', platform: 'meta_ads', campaign_id: 'm', campaign_name: 'M', spend_inr: 30_000, os: 'android' },
+      { day: '2026-08-20', platform: 'meta_ads', campaign_id: 'm', campaign_name: 'M', spend_inr: 9_000, os: 'android' },
+      { day: '2026-09-20', platform: 'ugc', campaign_id: 'u', campaign_name: 'UGC', spend_inr: 70_000, os: 'android' },
+    ];
+    const { rows } = attachAcquisitionCost(
+      [
+        { cohort_interval: '2026-08-01', sum: 100, breakdowns: ['meta-ads'] },
+        { cohort_interval: '2026-09-01', sum: 1000, breakdowns: ['meta-ads'] },
+        { cohort_interval: '2026-09-01', sum: 10, breakdowns: ['creator'] },
+      ],
+      spendRows,
+      {
+        interval: 'month',
+        attribution: findAttributionBreakdown(['properties.install_source']),
+        coverageFrom: { meta_ads: '2026-09-15', ugc: NEVER_ATTRIBUTABLE },
+      }
+    );
+    // August is wholly before coverage.
+    expect(rows[0]).toMatchObject({ spend: null, cpi: null });
+    // September: only the 09-20 spend, not 09-10's.
+    expect(rows[1]).toMatchObject({ spend: 30_000, cpi: 30 });
+    // Creator-tagged installs never carry all UGC spend.
+    expect(rows[2]).toMatchObject({ spend: null, cpi: null });
   });
 
   it("today's D0 shows so far, flagged, and stays out of the summary", () => {

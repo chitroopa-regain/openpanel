@@ -99,7 +99,9 @@ function describeCoverage(cost: AcquisitionCost) {
   return ` · ${entries
     .map(
       ([platform, from]) =>
-        `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
+        from === '9999-12-31'
+          ? `${PLATFORM_LABEL[platform] ?? platform} spend is not matched to rows (its installs are not labelled)`
+          : `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
     )
     .join(', ')}`;
 }

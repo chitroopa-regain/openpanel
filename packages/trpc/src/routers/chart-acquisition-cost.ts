@@ -34,12 +34,21 @@ export const AD_SPEND_TABLE = 'ad_spend_campaign_daily';
  * Brainpal: `Install: Attributed` (install_source / fb_campaign_group_*) only
  * exists from 2026-09-14 13:46 IST (first full day 09-15), Meta and Google.
  */
+/** Coverage date for a platform whose installs are never labelled. */
+export const NEVER_ATTRIBUTABLE = '9999-12-31';
+
 export const ATTRIBUTION_COVERAGE_FROM: Record<
   string,
   Partial<Record<string, string>>
 > = {
   'regain-app': { meta_ads: '2026-09-06' },
-  'brainrot-app': { meta_ads: '2026-09-15', google_ads: '2026-09-15' },
+  // Brainpal creator installs arrive untagged (157 'creator' installs against
+  // Rs 3.4 lakh of UGC), so UGC is never matched to a source or campaign row.
+  'brainrot-app': {
+    meta_ads: '2026-09-15',
+    google_ads: '2026-09-15',
+    ugc: NEVER_ATTRIBUTABLE,
+  },
 };
 
 /** Platform-level spend on a cohort can only come from these. */
@@ -810,15 +819,24 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     const m = rowMatcher(row);
     const platform = attribution ? matcherPlatform(m, trackedSpend) : null;
     const from = platform ? coverageFrom[platform] : undefined;
-    if (from && row.cohort_interval < from) {
+    // A week/month bucket that contains the coverage day is covered; only its
+    // pre-coverage spend is dropped (below).
+    if (from && row.cohort_interval < cohortIntervalKey(from, interval)) {
       uncovered.add(row);
       return { kind: 'unpaid' };
     }
     return m;
   };
+  // Matched views: spend from before a platform is attributable belongs to no row.
+  const matchableSpend = attribution
+    ? trackedSpend.filter((s) => {
+        const from = coverageFrom[s.platform];
+        return !from || s.day >= from;
+      })
+    : trackedSpend;
   const { shares, attributed } = allocateShares(
     groupBySpendKey(cohortRows, matcherOfRow),
-    buildSpendLookup(trackedSpend, interval),
+    buildSpendLookup(matchableSpend, interval),
     overallSums
   );
   const allSpendFor = buildSpendLookup(spend, interval);
