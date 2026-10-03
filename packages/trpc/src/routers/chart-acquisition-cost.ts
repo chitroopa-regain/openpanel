@@ -266,9 +266,23 @@ ORDER BY created_at`;
 const TRACKING_LIVE_SHARE = 0.1;
 
 /** First day the cohort event runs at real volume; null when unknown. */
+/**
+ * Known tracking starts where the volume heuristic misfires. Brainpal grew
+ * ~10x from April to May, so 10% of its early median lands on 04-28 although
+ * installs were tracked at real volume from 04-04 (360+/day, Play ~1.3k/day).
+ */
+export const TRACKING_START_OVERRIDE: Record<string, string> = {
+  'brainrot-app': '2026-04-04',
+};
+
 export function findTrackingStart(
-  daily: Array<{ day: string; events: number | string }>
+  daily: Array<{ day: string; events: number | string }>,
+  projectId?: string
 ) {
+  const override = projectId ? TRACKING_START_OVERRIDE[projectId] : undefined;
+  if (override) {
+    return override;
+  }
   if (daily.length === 0) {
     return null;
   }

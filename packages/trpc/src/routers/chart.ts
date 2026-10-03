@@ -2312,7 +2312,7 @@ export const chartRouter = createTRPCRouter({
           const osSpend = spendForCohortOs(spend, osCounts).filter(
             spendFilter.allows
           );
-          const trackingStart = findTrackingStart(trackingDaily);
+          const trackingStart = findTrackingStart(trackingDaily, projectId);
           // Before tracking there is no cohort revenue; show what was booked
           // in each period instead (revenue property measures only, and only
           // unfiltered — booked revenue cannot be split by cohort filters).

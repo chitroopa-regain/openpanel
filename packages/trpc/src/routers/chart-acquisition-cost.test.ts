@@ -787,3 +787,15 @@ describe('acquisition cost', () => {
     expect(sql).toContain('FROM ad_spend_campaign_daily FINAL');
   });
 });
+
+describe('tracking start override', () => {
+  it('uses the per-project start where the heuristic misfires', () => {
+    const daily = [
+      { day: '2026-04-04', events: 360 },
+      { day: '2026-05-10', events: 12_000 },
+      { day: '2026-05-11', events: 12_000 },
+    ];
+    expect(findTrackingStart(daily, 'brainrot-app')).toBe('2026-04-04');
+    expect(findTrackingStart(daily, 'regain-app')).toBe('2026-05-10');
+  });
+});
