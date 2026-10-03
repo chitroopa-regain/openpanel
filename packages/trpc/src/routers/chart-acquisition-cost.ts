@@ -31,12 +31,15 @@ export const AD_SPEND_TABLE = 'ad_spend_campaign_daily';
  * Regain: Meta's install referrer only decodes to instagram/facebook +
  * fb_campaign_* at scale from 2026-09-06 (120-400 labelled installs a week
  * against Rs 1-2.4 lakh of Meta Android spend before it).
+ * Brainpal: `Install: Attributed` (install_source / fb_campaign_group_*) only
+ * exists from 2026-09-14 13:46 IST (first full day 09-15), Meta and Google.
  */
 export const ATTRIBUTION_COVERAGE_FROM: Record<
   string,
   Partial<Record<string, string>>
 > = {
   'regain-app': { meta_ads: '2026-09-06' },
+  'brainrot-app': { meta_ads: '2026-09-15', google_ads: '2026-09-15' },
 };
 
 /** Platform-level spend on a cohort can only come from these. */
