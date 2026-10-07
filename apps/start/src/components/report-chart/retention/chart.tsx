@@ -1,3 +1,4 @@
+import { describePartialCoverage } from './coverage';
 import { average, round } from '@openpanel/common';
 import {
   Area,
@@ -124,7 +125,8 @@ export function getBreakdownChartState(
         days: index,
         percentage: toChartValue(item as number | string | null, isPercentage),
         value: averageRow?.values?.[index],
-        sum: averageRow?.sum,
+        sum: averageRow?.valueWeights?.[index] ?? averageRow?.sum,
+        coverage: averageRow?.coverage?.[index],
       }));
   const dataMax = hasBreakdowns
     ? Math.max(
@@ -191,9 +193,30 @@ export function Chart({ data, overall }: Props) {
     )
     .filter((value): value is number => value !== null);
   const averageRetentionRate = average(normalizedAverageValues || [], true);
-  const breakdownTooltipFormatter = (value: number | string) => {
+  const breakdownTooltipFormatter = (
+    value: number | string,
+    _name: unknown,
+    item: { dataKey?: unknown; payload?: { days?: number } }
+  ) => {
+    const row =
+      item.dataKey === OVERALL_SERIES_KEY
+        ? overallRow
+        : averageRows[Number(String(item.dataKey).replace('series_', ''))];
+    const coverage = describePartialCoverage(
+      row?.coverage?.[item.payload?.days ?? 0]
+    );
     const roundedValue = round(Number(value), 2);
-    return isPercentage ? `${roundedValue}%` : roundedValue;
+    return (
+      <span>
+        {isPercentage ? `${roundedValue}%` : roundedValue}
+        {coverage && (
+          <>
+            *<br />
+            <small>{coverage}</small>
+          </>
+        )}
+      </span>
+    );
   };
   const yTicks = getNiceTicks(dataMax, isPercentage);
   const yMax = yTicks.at(-1) ?? 100;

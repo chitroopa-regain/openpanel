@@ -181,17 +181,7 @@ describe('chart retention utils', () => {
     ]);
   });
 
-  it('carries matured_intervals through processCohortData into weekly truncation', () => {
-    // Exercises the whole wired path — raw ClickHouse column name through the
-    // rollup — rather than the aggregation helper alone. Two daily cohorts in
-    // one display week; the younger has two intervals of history, the older
-    // three, so the week must stop at index 2.
-    //
-    // The assertion has to reach PAST the shared horizon or it proves nothing:
-    // with every requested index mature, dropping the matured_intervals
-    // mapping in chart.ts would leave the test green. Index 2 is the one that
-    // discriminates — without the mapping it reports 0.29, the older cohort's
-    // value over its own 346 profiles, instead of nothing.
+  it('carries partial coverage through processCohortData into weekly cells', () => {
     const result = processCohortData(
       [
         {
@@ -223,9 +213,8 @@ describe('chart retention utils', () => {
 
     const week = result.find((row) => row.cohort_interval === '2026-08-23');
     expect(week?.sum).toBe(816);
-    // (0.29*346 + 5.8*470) / 816 twice, then truncation — never 470 or 346
-    // alone, and never a third column the younger cohort cannot support.
-    expect(week?.values).toEqual([3.46, 3.46, null]);
+    expect(week?.values).toEqual([3.46, 3.46, 0.29]);
+    expect(week?.coverage?.[2]).toEqual({ eligible: 1, total: 2 });
   });
 
   it('treats a zero-revenue cohort as zero rather than dropping it', () => {
@@ -533,7 +522,9 @@ describe('chart retention utils', () => {
         cohortExpression: 'cs.cohort_interval',
         asOfExpression: "toDate(now('UTC'))",
       })
-    ).toBe("dateDiff('day', cs.cohort_interval, toDate(now('UTC')))");
+    ).toBe(
+      "if(dateDiff('day', cs.cohort_interval, toDate(now('UTC'))) >= 0, greatest(0, dateDiff('day', cs.cohort_interval, toDate(now('UTC'))) - 1), -1)"
+    );
 
     // addWeeks is a fixed 7 days, so the horizon is plain integer division —
     // NOT dateDiff('week'), which counts calendar boundaries crossed.
@@ -543,7 +534,9 @@ describe('chart retention utils', () => {
         cohortExpression: 'cs.cohort_interval',
         asOfExpression: "toDate(now('UTC'))",
       })
-    ).toBe("intDiv(dateDiff('day', cs.cohort_interval, toDate(now('UTC'))), 7)");
+    ).toBe(
+      "intDiv(dateDiff('day', cs.cohort_interval, toDate(now('UTC'))), 7)"
+    );
 
     // addMonths clamps day-of-month, so the calendar-month difference
     // overshoots until the cohort's day-of-month comes round again.
@@ -600,17 +593,17 @@ describe('chart retention utils', () => {
         sum: 400,
         values: [8, 10],
         valueWeights: [400, 400],
+        coverage: [
+          { eligible: 2, total: 2 },
+          { eligible: 2, total: 2 },
+        ],
+        revenueCohorts: [],
         percentages: [0.02, 0.025],
       },
     ]);
   });
 
-  // Reverses an earlier rule that let a display row keep reporting past the
-  // point its youngest member could reach. Dropping that member shrank the
-  // denominator for the columns beyond it, so neighbouring cells in one row
-  // were computed over different populations — which is how a cumulative
-  // "on or after" row managed to rise from left to right.
-  it('truncates a display row at its youngest member cohort horizon', () => {
+  it('uses the eligible cohort rather than truncating the display row', () => {
     expect(
       aggregateRetentionRowsByDisplayInterval(
         [
@@ -637,8 +630,13 @@ describe('chart retention utils', () => {
       {
         cohort_interval: '2026-07-20',
         sum: 400,
-        values: [140, null],
-        percentages: [0.35, null],
+        values: [140, 40],
+        percentages: [0.35, 0.4],
+        valueWeights: [400, 100],
+        coverage: [
+          { eligible: 2, total: 2 },
+          { eligible: 1, total: 2 },
+        ],
       },
     ]);
   });
@@ -682,7 +680,7 @@ describe('chart retention utils', () => {
     ]);
   });
 
-  it('reproduces the reported regain-ios week without the on-or-after row rising', () => {
+  it('keeps zeros and explicitly marks changing on-or-after populations', () => {
     // Verbatim from prod ClickHouse, regain-ios week 2026-08-23,
     // property_average(value_inr) with criteria "On or After", columns D7..D10.
     // Only two of the seven daily cohorts ever earned anything; the other five
@@ -712,9 +710,9 @@ describe('chart retention utils', () => {
     );
 
     expect(row?.sum).toBe(2310);
-    // D10 is dropped because 2026-08-29 is only nine days old; the three
-    // columns that remain are all divided by the same 2310 profiles.
-    expect(row?.values).toEqual([1.22, 1.18, 1.18, null]);
+    // D10 now uses the six eligible cohorts, explicitly flagged partial.
+    expect(row?.values).toEqual([1.22, 1.18, 1.18, 1.28]);
+    expect(row?.coverage?.[3]).toEqual({ eligible: 6, total: 7 });
     expect(row?.valueWeights?.slice(0, 3)).toEqual([2310, 2310, 2310]);
   });
 
@@ -781,14 +779,16 @@ describe('chart retention utils', () => {
     expect(weekly).toContain("CAST(NULL, 'Nullable(Float64)') AS roas_rev_d0");
   });
 
-  it('rolls ROAS revenue up only when every member window is known', () => {
+  it('rolls ROAS revenue up over eligible members only', () => {
     expect(
       addRoasRevenue(
         { d0: 1, d7: 2, d30: null, lifetime: 3 },
         { d0: 1.5, d7: null, d30: null, lifetime: 4 }
       )
-    ).toEqual({ d0: 2.5, d7: null, d30: null, lifetime: 7, d0Partial: false });
-    expect(addRoasRevenue(undefined, { d0: 1, d7: 1, d30: 1, lifetime: 1 })).toEqual({ d0: 1, d7: 1, d30: 1, lifetime: 1 });
+    ).toEqual({ d0: 2.5, d7: 2, d30: null, lifetime: 7, d0Partial: false });
+    expect(
+      addRoasRevenue(undefined, { d0: 1, d7: 1, d30: 1, lifetime: 1 })
+    ).toEqual({ d0: 1, d7: 1, d30: 1, lifetime: 1 });
   });
 
   it('legacy retention bounds stay byte-identical; exact-day bounds use local midnight', () => {
@@ -805,7 +805,9 @@ describe('chart retention utils', () => {
     expect(legacy.returnWindow('created_at')).toBe(
       "created_at >= toDate('2026-09-25 00:00:00', 'Asia/Calcutta')\n              AND created_at < toDate('2026-10-03 00:00:00', 'Asia/Calcutta') + INTERVAL 9 DAY"
     );
-    expect(legacy.firstTimeEnd).toBe("toDate('2026-10-03 00:00:00', 'Asia/Calcutta')");
+    expect(legacy.firstTimeEnd).toBe(
+      "toDate('2026-10-03 00:00:00', 'Asia/Calcutta')"
+    );
 
     const exact = getRetentionDateBounds({
       startDate: '2026-09-25 00:00:00',

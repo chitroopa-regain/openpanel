@@ -1,3 +1,4 @@
+import type { RetentionCoverage, RevenueCohort } from './chart-retention.utils';
 import sqlstring from 'sqlstring';
 
 /**
@@ -608,6 +609,7 @@ export type RoasKey = (typeof ROAS_KEYS)[number];
 export type Roas = Record<RoasKey, number | null> & {
   /** Windows still in progress ("so far" values), e.g. today's D0. */
   partial?: RoasKey[];
+  coverage?: Partial<Record<RoasKey, RetentionCoverage>>;
   /** 'booked': revenue booked in the period / spend (no cohort data then). */
   basis?: 'booked';
 };
@@ -622,6 +624,7 @@ export interface CostRowInput {
   breakdowns?: Array<string | null | undefined>;
   /** Cumulative cohort revenue per ROAS window (null = not yet complete). */
   revenue?: RoasRevenueInput;
+  revenueCohorts?: RevenueCohort[];
 }
 
 export type WithAcquisitionCost<T> = T & {
@@ -665,30 +668,44 @@ function rowRoas(
 
 /** Summary ROAS per window over the cohorts whose window is complete. */
 function summaryRoas(
-  members: Array<{ revenue?: RoasRevenueInput; spend: number }>
+  members: Array<{ revenue?: RoasRevenueInput; spend: number }>,
+  includeLiveD0 = false,
+  lifetimeMembers = members
 ): Roas | null {
   if (!members.some((m) => m.revenue)) {
     return null;
   }
-  const out = {} as Roas;
+  const out: Roas = {
+    d0: null,
+    d7: null,
+    d30: null,
+    lifetime: null,
+    coverage: {},
+  };
   for (const key of ROAS_KEYS) {
+    let eligible = 0;
     let revenue = 0;
     let spend = 0;
-    for (const m of members) {
+    const windowMembers = key === 'lifetime' ? lifetimeMembers : members;
+    for (const m of windowMembers) {
       const value = m.revenue?.[key];
       // An in-progress day is not a finished D0; keep it out of the average.
       if (
         value === null ||
         value === undefined ||
-        (key === 'd0' && m.revenue?.d0Partial)
+        (!includeLiveD0 && key === 'd0' && m.revenue?.d0Partial)
       ) {
         continue;
       }
+      eligible += 1;
       revenue += value;
       spend += m.spend;
     }
-    out[key] = ratio(revenue, spend);
+    out[key] = eligible > 0 ? ratio(revenue, spend) : null;
+    out.coverage![key] = { eligible, total: windowMembers.length };
   }
+  if (includeLiveD0 && members.some((m) => m.revenue?.d0Partial))
+    out.partial = ['d0'];
   return out;
 }
 
@@ -706,13 +723,15 @@ interface GroupSummary {
   spend: number;
   size: number;
   members: Array<{ revenue?: RoasRevenueInput; spend: number }>;
+  lifetimeMembers: Array<{ revenue?: RoasRevenueInput; spend: number }>;
 }
 
 /** Per breakdown group: covered cohorts' spend, installs and revenue. */
 function summarizeGroups<T extends CostRowInput>(
   cohortRows: T[],
   shares: Map<T, number>,
-  uncovered: Set<T>
+  uncovered: Set<T>,
+  dailyMembers: Map<T, Array<{ revenue?: RoasRevenueInput; spend: number }>>
 ) {
   const groups = new Map<string, GroupSummary>();
   for (const row of cohortRows) {
@@ -720,11 +739,21 @@ function summarizeGroups<T extends CostRowInput>(
       continue;
     }
     const key = JSON.stringify(row.breakdowns ?? []);
-    const group = groups.get(key) ?? { spend: 0, size: 0, members: [] };
+    const group = groups.get(key) ?? {
+      spend: 0,
+      size: 0,
+      members: [],
+      lifetimeMembers: [],
+    };
     const share = shares.get(row) ?? 0;
     group.spend += share;
     group.size += Number(row.sum);
-    group.members.push({ revenue: row.revenue, spend: share });
+    // Lifetime has no maturity cutoff: retain all displayed-period spend,
+    // including spend on dates with no observed install cohort.
+    group.lifetimeMembers.push({ revenue: row.revenue, spend: share });
+    group.members.push(
+      ...(dailyMembers.get(row) ?? [{ revenue: row.revenue, spend: share }])
+    );
     groups.set(key, group);
   }
   return groups;
@@ -790,6 +819,7 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     attribution,
     campaignNameToIds = new Map(),
     overallSums,
+    overallDailySums,
     coverageFrom = {},
     trackingStart = null,
     externalInstalls = [],
@@ -799,6 +829,7 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     attribution: AttributionBreakdown | null;
     campaignNameToIds?: Map<string, string[]>;
     overallSums?: Map<string, number>;
+    overallDailySums?: Map<string, number>;
     /** platform → first covered cohort day; see ATTRIBUTION_COVERAGE_FROM. */
     coverageFrom?: Partial<Record<string, string>>;
     /** First day the cohort event was tracked at real volume. */
@@ -853,6 +884,30 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     buildSpendLookup(matchableSpend, interval),
     overallSums
   );
+  // Display-row spend/CPI stays unchanged. ROAS allocates spend at the daily
+  // grain BEFORE selecting eligible windows, never prorates monthly spend by
+  // the number of days (daily budgets and breakdown shares can differ).
+  const dailyRows = cohortRows.flatMap((row) =>
+    (row.revenueCohorts ?? []).map((member) => ({
+      ...member,
+      breakdowns: row.breakdowns,
+      parent: row,
+    }))
+  );
+  const dailyShares = allocateShares(
+    groupBySpendKey(dailyRows, (row) => rowMatcher(row.parent)),
+    buildSpendLookup(matchableSpend, 'day'),
+    overallDailySums
+  ).shares;
+  const dailyMembers = new Map<
+    T,
+    Array<{ revenue?: RoasRevenueInput; spend: number }>
+  >();
+  for (const row of dailyRows) {
+    const members = dailyMembers.get(row.parent) ?? [];
+    members.push({ revenue: row.revenue, spend: dailyShares.get(row) ?? 0 });
+    dailyMembers.set(row.parent, members);
+  }
   const allSpendFor = buildSpendLookup(spend, interval);
   const externalByInterval = sumByInterval(
     externalInstalls.map((e) => ({ day: e.day, value: Number(e.installs) })),
@@ -880,7 +935,12 @@ export function attachAcquisitionCost<T extends CostRowInput>(
         .filter((r) => JSON.stringify(r.breakdowns ?? []) === key)
         .reduce((acc, r) => acc + (r.revenue?.lifetime ?? 0), 0)
     );
-  const summaries = summarizeGroups(cohortRows, shares, uncovered);
+  const summaries = summarizeGroups(
+    cohortRows,
+    shares,
+    uncovered,
+    dailyMembers
+  );
 
   const out = rows.map((row) => {
     if (isBeforeTracking(row)) {
@@ -907,7 +967,7 @@ export function attachAcquisitionCost<T extends CostRowInput>(
       return {
         ...row,
         ...costCells(unpaid, group?.spend ?? 0, group?.size ?? 0, () =>
-          summaryRoas(group?.members ?? [])
+          summaryRoas(group?.members ?? [], false, group?.lifetimeMembers ?? [])
         ),
         playInstalls: trackedPlayTotal,
         lifetimeRevenue: cohortRevenueTotal(key),
@@ -918,7 +978,11 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     return {
       ...row,
       ...costCells(unpaid, value, Number(row.sum), () =>
-        rowRoas(row.revenue, value)
+        dailyMembers.has(row)
+          ? summaryRoas(dailyMembers.get(row)!, true, [
+              { revenue: row.revenue, spend: value },
+            ])
+          : rowRoas(row.revenue, value)
       ),
       playInstalls: playFor(row),
       lifetimeRevenue: row.revenue ? round2(row.revenue.lifetime ?? 0) : null,

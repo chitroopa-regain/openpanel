@@ -9,12 +9,25 @@ export type RetentionMeasure =
 
 export type RetentionTimeUnit = 'day' | 'week' | 'month';
 
+export interface RetentionCoverage {
+  eligible: number;
+  total: number;
+}
+
+export interface RevenueCohort {
+  cohort_interval: string;
+  sum: number;
+  revenue?: RoasRevenue;
+}
+
 export interface ProcessedRetentionCohortRow {
   cohort_interval: string;
   display_interval?: string;
   sum: number;
   values: Array<number | null>;
   valueWeights?: number[];
+  coverage?: RetentionCoverage[];
+  revenueCohorts?: RevenueCohort[];
   percentages: Array<number | null>;
   /** Intervals of history this cohort has; see getRetentionMaturedIntervalsExpression. */
   maturedIntervals?: number;
@@ -94,7 +107,7 @@ export function readRoasRevenue(
   };
 }
 
-/** Rolled-up revenue: a window is known only when every member's is. */
+/** Rolled-up revenue over eligible members; spend must use the same members. */
 export function addRoasRevenue(
   a: RoasRevenue | undefined,
   b: RoasRevenue | undefined
@@ -106,7 +119,9 @@ export function addRoasRevenue(
     return a;
   }
   const add = (x: number | null, y: number | null) =>
-    x === null || y === null ? null : Math.round((x + y) * 100) / 100;
+    x === null && y === null
+      ? null
+      : Math.round(((x ?? 0) + (y ?? 0)) * 100) / 100;
   return {
     d0: add(a.d0, b.d0),
     d7: add(a.d7, b.d7),
@@ -180,7 +195,8 @@ export function aggregateRetentionRowsByDisplayInterval(
       values: number[];
       weightedValues: number[];
       valueWeights: number[];
-      maturedIntervals: number;
+      coverage: RetentionCoverage[];
+      revenueCohorts: RevenueCohort[];
       revenue?: RoasRevenue;
     }
   >();
@@ -192,26 +208,35 @@ export function aggregateRetentionRowsByDisplayInterval(
       values: new Array(row.values.length).fill(0) as number[],
       weightedValues: new Array(row.values.length).fill(0) as number[],
       valueWeights: new Array(row.values.length).fill(0) as number[],
-      maturedIntervals: Number.POSITIVE_INFINITY,
+      coverage: row.values.map(() => ({ eligible: 0, total: 0 })),
+      revenueCohorts: [] as RevenueCohort[],
     };
 
     group.sum += row.sum;
     group.revenue = addRoasRevenue(group.revenue, row.revenue);
-    // The group can only be shown as far as its YOUNGEST member reaches. A
-    // display row is read left to right, so every cell in it has to come from
-    // the same population; letting a young member drop out column by column
-    // silently shrinks the denominator and can make a cumulative row rise.
-    group.maturedIntervals = Math.min(
-      group.maturedIntervals,
-      row.maturedIntervals ?? Number.POSITIVE_INFINITY
-    );
+    if (row.revenue) {
+      group.revenueCohorts.push(
+        ...(row.revenueCohorts ?? [
+          {
+            cohort_interval: row.cohort_interval,
+            sum: row.sum,
+            revenue: row.revenue,
+          },
+        ])
+      );
+    }
     row.values.forEach((value, index) => {
-      // A null inside the horizon is not missing history — it is a cohort with
-      // no denominator at this index (a per-converter average with nobody to
-      // average). Its weight is zero, so skipping it is a no-op, not a drop.
-      if (value === null) {
-        return;
-      }
+      const coverage = group.coverage[index]!;
+      coverage.total += row.coverage?.[index]?.total ?? 1;
+      const mature =
+        row.maturedIntervals !== undefined
+          ? index <= row.maturedIntervals
+          : (row.coverage?.[index]?.eligible ?? (value === null ? 0 : 1)) > 0;
+      if (!mature) return;
+      coverage.eligible += row.coverage?.[index]?.eligible ?? 1;
+      // A completed return-user average can be undefined (zero returners).
+      // It is still a completed cohort, not an immature one.
+      if (value === null) return;
       const weight = row.valueWeights?.[index] ?? row.sum;
       group.values[index] = (group.values[index] ?? 0) + value;
       group.valueWeights[index] = (group.valueWeights[index] ?? 0) + weight;
@@ -223,7 +248,8 @@ export function aggregateRetentionRowsByDisplayInterval(
 
   return Array.from(groups.entries())
     .map(([cohort_interval, group]) => {
-      const isMature = (index: number) => index <= group.maturedIntervals;
+      const isMature = (index: number) =>
+        (group.coverage[index]?.eligible ?? 0) > 0;
       const values =
         valueMode === 'weighted_average'
           ? group.weightedValues.map((value, index) => {
@@ -244,6 +270,8 @@ export function aggregateRetentionRowsByDisplayInterval(
         sum: group.sum,
         values,
         valueWeights: group.valueWeights,
+        coverage: group.coverage,
+        revenueCohorts: group.revenueCohorts,
         revenue: group.revenue,
         percentages: values.map((value, index) => {
           if (value === null) {
@@ -416,15 +444,17 @@ export function getRetentionIntervalMaturityExpression({
     week: 'addWeeks',
     month: 'addMonths',
   }[unit];
-  return `${addFunction}(${cohortExpression}, ${index}) <= ${asOfExpression}`;
+  // Daily D1+ must FINISH, not merely start. Keep live D0 and existing
+  // week/month conversion-window semantics unchanged.
+  const boundary = unit === 'day' && index > 0 ? index + 1 : index;
+  return `${addFunction}(${cohortExpression}, ${boundary}) <= ${asOfExpression}`;
 }
 
 /**
  * How many intervals of history a cohort actually has — the largest `index`
  * for which getRetentionIntervalMaturityExpression is true. Kept adjacent to
- * that function because the two must agree exactly; the rollup uses this to
- * find a display group's common horizon, and an off-by-one here would show a
- * column built from a different population than the one beside it.
+ * that function because the two must agree exactly. Each display cell uses
+ * only eligible daily cohorts, with explicit coverage and its own denominator.
  */
 export function getRetentionMaturedIntervalsExpression({
   unit,
@@ -437,7 +467,8 @@ export function getRetentionMaturedIntervalsExpression({
 }) {
   const days = `dateDiff('day', ${cohortExpression}, ${asOfExpression})`;
   if (unit === 'day') {
-    return days;
+    // D0 remains live today; D1+ ends at the following local midnight.
+    return `if(${days} >= 0, greatest(0, ${days} - 1), -1)`;
   }
   // addWeeks adds a fixed 7 days, so the horizon is exact arithmetic.
   if (unit === 'week') {

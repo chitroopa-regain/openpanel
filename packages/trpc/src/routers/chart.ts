@@ -128,6 +128,8 @@ import {
   isRetentionPropertyMeasure,
   type RawRetentionCohortRow,
   type RoasRevenue,
+  type RetentionCoverage,
+  type RevenueCohort,
   readRoasRevenue,
 } from './chart-retention.utils';
 
@@ -2380,6 +2382,11 @@ export const chartRouter = createTRPCRouter({
           overallSums: options.overallRows
             ? cohortSizesByInterval(options.overallRows)
             : undefined,
+          overallDailySums: options.overallRows
+            ? cohortSizesByInterval(
+                options.overallRows.flatMap((row) => row.revenueCohorts ?? [])
+              )
+            : undefined,
           coverageFrom: ATTRIBUTION_COVERAGE_FROM[projectId] ?? {},
           trackingStart: loaded.trackingStart,
           externalInstalls: loaded.externalInstalls,
@@ -3091,6 +3098,8 @@ function processCohortGroupData(
     sum: number;
     values: Array<number | null>;
     valueWeights?: number[];
+    coverage?: RetentionCoverage[];
+    revenueCohorts?: RevenueCohort[];
     percentages: Array<number | null>;
     maturedIntervals?: number;
     revenue?: RoasRevenue;
@@ -3112,6 +3121,12 @@ function processCohortGroupData(
       sum,
       values,
       valueWeights,
+      coverage: values.map((value, index) => ({
+        eligible: row.matured_intervals != null
+          ? Number(index <= Number(row.matured_intervals))
+          : Number(value !== null),
+        total: 1,
+      })),
       maturedIntervals:
         row.matured_intervals === null || row.matured_intervals === undefined
           ? undefined
@@ -3225,12 +3240,23 @@ function processCohortGroupData(
       : 0;
   const averageRow = {
     cohort_interval: 'Weighted Average',
+    revenueCohorts: undefined as RevenueCohort[] | undefined,
     // The table renders this under a "Total profiles" header and every cohort
     // row beneath it is a real total, so a mean here made one column mean two
     // different things depending on which row you read. Cohort sizes add up.
     // The day cells below stay weighted averages: a rate or an ARPU cannot be
     // summed across cohorts, but the number of profiles in them can.
     sum: averageData.totalSum,
+    valueWeights: averageData.values.map(({ sum }) => sum),
+    coverage: range(0, diffInterval + 1).map((index) =>
+      processed.reduce(
+        (coverage, row) => ({
+          eligible: coverage.eligible + (row.coverage?.[index]?.eligible ?? 0),
+          total: coverage.total + (row.coverage?.[index]?.total ?? 0),
+        }),
+        { eligible: 0, total: 0 }
+      )
+    ),
     percentages: averageData.percentages.map(({ sum, weightedSum }) =>
       sum > 0 ? round(weightedSum / sum, 4) : null
     ),

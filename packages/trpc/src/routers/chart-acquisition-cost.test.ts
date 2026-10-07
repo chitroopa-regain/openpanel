@@ -302,7 +302,7 @@ describe('acquisition cost', () => {
       lifetime: 0.6,
     });
     // Summary D7 counts only 09-29 (revenue AND spend), not 09-30's spend.
-    expect(rows[0]?.roas).toEqual({
+    expect(rows[0]?.roas).toMatchObject({
       d0: 0.5,
       d7: 1,
       d30: null,
@@ -333,7 +333,7 @@ describe('acquisition cost', () => {
         attribution: findAttributionBreakdown(['properties.install_source']),
       }
     );
-    expect(rows[0]?.roas).toEqual({
+    expect(rows[0]?.roas).toMatchObject({
       d0: 0.5,
       d7: null,
       d30: null,
@@ -403,10 +403,38 @@ describe('acquisition cost', () => {
 
   it('a month bucket containing the coverage day keeps its covered spend only', () => {
     const spendRows: SpendRow[] = [
-      { day: '2026-09-10', platform: 'meta_ads', campaign_id: 'm', campaign_name: 'M', spend_inr: 50_000, os: 'android' },
-      { day: '2026-09-20', platform: 'meta_ads', campaign_id: 'm', campaign_name: 'M', spend_inr: 30_000, os: 'android' },
-      { day: '2026-08-20', platform: 'meta_ads', campaign_id: 'm', campaign_name: 'M', spend_inr: 9_000, os: 'android' },
-      { day: '2026-09-20', platform: 'ugc', campaign_id: 'u', campaign_name: 'UGC', spend_inr: 70_000, os: 'android' },
+      {
+        day: '2026-09-10',
+        platform: 'meta_ads',
+        campaign_id: 'm',
+        campaign_name: 'M',
+        spend_inr: 50_000,
+        os: 'android',
+      },
+      {
+        day: '2026-09-20',
+        platform: 'meta_ads',
+        campaign_id: 'm',
+        campaign_name: 'M',
+        spend_inr: 30_000,
+        os: 'android',
+      },
+      {
+        day: '2026-08-20',
+        platform: 'meta_ads',
+        campaign_id: 'm',
+        campaign_name: 'M',
+        spend_inr: 9_000,
+        os: 'android',
+      },
+      {
+        day: '2026-09-20',
+        platform: 'ugc',
+        campaign_id: 'u',
+        campaign_name: 'UGC',
+        spend_inr: 70_000,
+        os: 'android',
+      },
     ];
     const { rows } = attachAcquisitionCost(
       [

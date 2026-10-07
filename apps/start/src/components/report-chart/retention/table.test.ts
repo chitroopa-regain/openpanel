@@ -28,6 +28,7 @@ vi.mock('../context', () => ({
         },
       ],
       unit: '%',
+      interval: 'month',
     },
   }),
 }));
@@ -219,6 +220,14 @@ describe('retention breakdown table groups', () => {
       createElement(CohortTable, {
         data,
         acquisitionCost: {
+          ...{
+            roasAvailable: false,
+            roasMaxDay: 0,
+            coverageFrom: {},
+            spendPendingToday: [],
+            trackingStart: null,
+            spendFilters: { applied: [], ignored: [] },
+          },
           mode: 'blended',
           breakdown: null,
           totalSpend: 382000,
@@ -274,6 +283,14 @@ describe('retention breakdown table groups', () => {
       createElement(CohortTable, {
         data,
         acquisitionCost: {
+          ...{
+            roasAvailable: false,
+            roasMaxDay: 0,
+            coverageFrom: {},
+            spendPendingToday: [],
+            trackingStart: null,
+            spendFilters: { applied: [], ignored: [] },
+          },
           mode: 'blended',
           breakdown: null,
           totalSpend: 382000,
@@ -336,6 +353,14 @@ describe('retention breakdown table groups', () => {
           },
         ],
         acquisitionCost: {
+          ...{
+            roasAvailable: false,
+            roasMaxDay: 0,
+            coverageFrom: {},
+            spendPendingToday: [],
+            trackingStart: null,
+            spendFilters: { applied: [], ignored: [] },
+          },
           mode: 'blended',
           breakdown: null,
           totalSpend: 149_929,
@@ -379,6 +404,14 @@ describe('retention breakdown table groups', () => {
           },
         ],
         acquisitionCost: {
+          ...{
+            roasAvailable: false,
+            roasMaxDay: 0,
+            coverageFrom: {},
+            spendPendingToday: [],
+            trackingStart: null,
+            spendFilters: { applied: [], ignored: [] },
+          },
           mode: 'blended',
           breakdown: null,
           totalSpend: 1_034_746,
@@ -512,6 +545,14 @@ describe('retention breakdown table groups', () => {
           { ...wide('2026-03-01', 3000), spend: 300_000, cpi: 100 },
         ],
         acquisitionCost: {
+          ...{
+            roasAvailable: false,
+            roasMaxDay: 0,
+            coverageFrom: {},
+            spendPendingToday: [],
+            trackingStart: null,
+            spendFilters: { applied: [], ignored: [] },
+          },
           mode: 'blended',
           breakdown: null,
           totalSpend: 0,
@@ -541,6 +582,14 @@ describe('retention breakdown table groups', () => {
           { ...row('2026-09-29', [], 2000), spend: 1, cpi: 1, roas: null },
         ],
         acquisitionCost: {
+          ...{
+            roasAvailable: false,
+            roasMaxDay: 0,
+            coverageFrom: {},
+            spendPendingToday: [],
+            trackingStart: null,
+            spendFilters: { applied: [], ignored: [] },
+          },
           mode: 'blended',
           breakdown: null,
           totalSpend: 1,
@@ -603,5 +652,106 @@ describe('retention breakdown table groups', () => {
       expect(control.getAttribute('aria-expanded')).toBe('false');
     });
     expect(controlledRows?.hidden).toBe(true);
+  });
+});
+
+describe('partial maturity presentation', () => {
+  it('renders a dynamic star on real zero, removes it on completion, leaves null blank', () => {
+    const data = [
+      {
+        ...row('2026-09-01', []),
+        values: [0],
+        percentages: [0],
+        coverage: [{ eligible: 23, total: 30 }],
+      },
+    ];
+    const { rerender } = render(createElement(CohortTable, { data }));
+    const title =
+      'Based on 23 of 30 September cohort days. Only completed windows contribute; their matching denominators are used.';
+    expect(screen.getByTitle(title).textContent).toContain('0%*');
+    expect(screen.getByLabelText(title).textContent).toBe('*');
+    rerender(
+      createElement(CohortTable, {
+        data: [{ ...data[0]!, coverage: [{ eligible: 30, total: 30 }] }],
+      })
+    );
+    expect(screen.queryByTitle(title)).toBeNull();
+    expect(screen.queryByText('*')).toBeNull();
+    rerender(
+      createElement(CohortTable, {
+        data: [
+          {
+            ...data[0]!,
+            values: [null],
+            percentages: [null],
+            coverage: [{ eligible: 0, total: 30 }],
+          },
+        ],
+      })
+    );
+    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.queryByText('*')).toBeNull();
+  });
+
+  it('shows coverage on collapsed summaries and expanded dated breakdowns', () => {
+    const data = [
+      {
+        ...row('Weighted Average', ['control']),
+        coverage: [{ eligible: 1, total: 2 }],
+      },
+      {
+        ...row('2026-09-01', ['control']),
+        coverage: [{ eligible: 1, total: 2 }],
+      },
+    ];
+    render(createElement(CohortTable, { data }));
+    expect(screen.getAllByText('*')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'control' }));
+    expect(screen.getAllByText('*')).toHaveLength(2);
+    expect(
+      screen.getByTitle(/Based on 1 of 2 September cohort days/)
+    ).toBeTruthy();
+  });
+
+  it('stars partial ROAS without mislabelling it as today so far', () => {
+    render(
+      createElement(CohortTable, {
+        data: [
+          {
+            ...row('2026-09-01', []),
+            spend: 100,
+            cpi: 10,
+            roas: {
+              d0: 1,
+              d7: 0,
+              d30: null,
+              lifetime: 1,
+              coverage: { d7: { eligible: 23, total: 30 } },
+            },
+          },
+        ],
+        acquisitionCost: {
+          mode: 'blended',
+          breakdown: null,
+          totalSpend: 100,
+          attributedSpend: 100,
+          currency: 'INR',
+          roasAvailable: true,
+          roasMaxDay: 30,
+          coverageFrom: {},
+          spendPendingToday: [],
+          trackingStart: null,
+          spendFilters: { applied: [], ignored: [] },
+        },
+      })
+    );
+    const cell = screen
+      .getAllByTestId('retention-roas-d7-cell')
+      .find((cell) => cell.querySelector('[title]'))!;
+    expect(cell.textContent).toContain('*');
+    expect(cell.textContent).not.toContain('so far');
+    expect(cell.querySelector('[title]')?.getAttribute('title')).toContain(
+      '23 of 30 September cohort days'
+    );
   });
 });

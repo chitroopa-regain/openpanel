@@ -1,3 +1,4 @@
+import { describePartialCoverage, type CellCoverage } from './coverage';
 import { max, min } from '@openpanel/common';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
@@ -55,6 +56,7 @@ export type CohortRow = CohortData[number] & {
     d30: number | null;
     lifetime: number | null;
     /** Windows still running, e.g. today's D0 ("so far"). */
+    coverage?: Partial<Record<'d0' | 'd7' | 'd30' | 'lifetime', CellCoverage>>;
     partial?: Array<'d0' | 'd7' | 'd30' | 'lifetime'>;
     /** 'booked' = period revenue / spend, before cohort data existed. */
     basis?: 'booked';
@@ -97,11 +99,10 @@ function describeCoverage(cost: AcquisitionCost) {
     return '';
   }
   return ` · ${entries
-    .map(
-      ([platform, from]) =>
-        from === '9999-12-31'
-          ? `${PLATFORM_LABEL[platform] ?? platform} spend is not matched to rows (its installs are not labelled)`
-          : `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
+    .map(([platform, from]) =>
+      from === '9999-12-31'
+        ? `${PLATFORM_LABEL[platform] ?? platform} spend is not matched to rows (its installs are not labelled)`
+        : `${PLATFORM_LABEL[platform] ?? platform} rows before ${from} read — (installs not attributable then)`
     )
     .join(', ')}`;
 }
@@ -219,7 +220,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
   acquisitionCost,
 }) => {
   const {
-    report: { unit, options, breakdowns, series },
+    report: { unit, options, breakdowns, series, interval },
   } = useReportChartContext();
   const retentionUnit =
     options?.type === 'retention' ? (options.retentionUnit ?? 'day') : 'day';
@@ -450,6 +451,14 @@ const CohortTable: React.FC<CohortTableProps> = ({
     const soFar = Boolean(
       column.roas && row.roas?.partial?.includes(column.roas)
     );
+    const coverageTitle =
+      column.roas && value != null
+        ? describePartialCoverage(
+            row.roas?.coverage?.[column.roas],
+            row.cohort_interval,
+            interval
+          )
+        : undefined;
     const booked =
       row.roas?.basis === 'booked' &&
       column.roas === 'lifetime' &&
@@ -465,9 +474,13 @@ const CohortTable: React.FC<CohortTableProps> = ({
           soFar && 'text-muted-foreground italic'
         )}
         data-so-far={soFar || undefined}
-        title={roasTitle(soFar, booked)}
+        title={
+          [coverageTitle, roasTitle(soFar, booked)].filter(Boolean).join(' ') ||
+          undefined
+        }
       >
         {formatRoas(value)}
+        {coverageTitle && <span aria-label={coverageTitle}>*</span>}
         {soFar && <span className="ml-1 text-[10px] not-italic">so far</span>}
       </div>
     );
@@ -509,6 +522,14 @@ const CohortTable: React.FC<CohortTableProps> = ({
           values.map((value, index) => {
             const { opacity, backgroundClassName } = getBackground(value);
             const columnLabel = getColumnLabel(index);
+            const coverageTitle =
+              value !== null
+                ? describePartialCoverage(
+                    row.coverage?.[index],
+                    row.cohort_interval,
+                    interval
+                  )
+                : undefined;
             // Heat colour is a ::before layer (isolate + -z-10 keeps it under
             // the text): 2 DOM nodes per cell instead of 4, which matters on
             // 90 x 90 daily grids rendered on phones.
@@ -522,6 +543,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
                     opacity > 0.7 &&
                       'text-white [text-shadow:_0_0_3px_rgb(0_0_0_/_20%)]'
                   )}
+                  title={coverageTitle}
                   style={
                     backgroundClassName
                       ? ({ '--cell-opacity': opacity } as CSSProperties)
@@ -534,6 +556,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
                         value,
                         isPropertyMeasure ? undefined : unit
                       )}
+                  {coverageTitle && <span aria-label={coverageTitle}>*</span>}
                   {value !== null && value === highestValue && ' 🚀'}
                 </div>
               </td>
