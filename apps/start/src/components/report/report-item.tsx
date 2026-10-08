@@ -14,6 +14,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/utils/cn';
+import { ReportHeightMenu } from './report-height-menu';
+import { getReportChartHeights } from './report-height';
 
 // Mixpanel-style drag-to-reorder. We don't use a drag library — they all
 // shift the other cards visually while dragging, which we don't want.
@@ -447,6 +449,8 @@ export function ReportItem({
   isRowHovered,
   onAddAt,
   onRowHoverChange,
+  onHeightChange,
+  isHeightSaving,
 }: {
   report: any;
   organizationId: string;
@@ -466,6 +470,8 @@ export function ReportItem({
   isRowHovered?: boolean;
   onAddAt?: (rowIdx: number, side: 'start' | 'end') => void;
   onRowHoverChange?: (rowIdx: number, hovered: boolean) => void;
+  onHeightChange?: (reportId: string, height: number) => void;
+  isHeightSaving?: boolean;
 }) {
   const router = useRouter();
   const chartRange = report.range;
@@ -566,10 +572,17 @@ export function ReportItem({
         <div className="flex shrink-0 items-center gap-2">
           <ReportCacheBadge reportId={report.id} />
           <DropdownMenu>
-            <DropdownMenuTrigger className="flex h-8 w-8 items-center justify-center rounded hover:border">
+            <DropdownMenuTrigger aria-label={`Options for ${report.name}`} className="flex h-8 w-8 items-center justify-center rounded hover:border">
               <MoreHorizontal size={16} />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-[200px]">
+              {onHeightChange && (
+                <ReportHeightMenu
+                  report={report}
+                  disabled={isHeightSaving}
+                  onChange={(height) => onHeightChange(report.id, height)}
+                />
+              )}
               <DropdownMenuItem
                 onClick={(event) => {
                   event.stopPropagation();
@@ -617,10 +630,7 @@ export function ReportItem({
                 ? 'hero'
                 : 'compact',
             metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
-            maxHeight:
-              report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
-            minHeight:
-              report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
+            ...getReportChartHeights(report),
           }}
           report={{
             ...report,
@@ -749,10 +759,7 @@ export function ReportItemReadOnly({
                 ? 'hero'
                 : 'compact',
             metricSurface: report.chartType === 'metric' ? 'plain' : 'card',
-            maxHeight:
-              report.dashboardId === 'top-level-app-metrics' ? 600 : 300,
-            minHeight:
-              report.dashboardId === 'top-level-app-metrics' ? 400 : 100,
+            ...getReportChartHeights(report),
           }}
           report={{
             ...report,

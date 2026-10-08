@@ -26,6 +26,7 @@ import {
   useReportLayouts,
 } from '@/components/grafana-grid';
 import { PageContainer } from '@/components/page-container';
+import { prepareReportHeightChange } from '@/components/report/report-height';
 import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 import { PageHeader } from '@/components/page-header';
 import { TimeWindowPicker } from '@/components/time-window-picker';
@@ -287,6 +288,52 @@ function Component() {
   // Convert reports to grid layout format for all breakpoints.
   // Driven by orderedReports so drag-to-reorder is reflected immediately.
   const layouts = useReportLayouts(orderedReports);
+
+  const [isHeightSaving, setIsHeightSaving] = useState(false);
+  const handleHeightChange = async (reportId: string, height: number) => {
+    if (isHeightSaving || updateLayout.isPending) return;
+    const next = prepareReportHeightChange(
+      orderedReports,
+      deriveRowsFromReports(orderedReports),
+      reportId,
+      height,
+    );
+    setIsHeightSaving(true);
+    try {
+      const results = await Promise.allSettled(next.map((report, index) => {
+        if (report === orderedReports[index] || !report.layout) return;
+        const { x, y, w, h, minW, minH, maxW, maxH } = report.layout;
+        return updateLayout.mutateAsync({
+          reportId: report.id,
+          layout: {
+            x, y, w, h,
+            minW: minW ?? undefined,
+            minH: minH ?? undefined,
+            maxW: maxW ?? undefined,
+            maxH: maxH ?? undefined,
+          },
+        });
+      }));
+      if (results.some((result) => result.status === 'rejected')) {
+        // Each failed mutation displays its error; reconcile partial row writes.
+        await reportsQuery.refetch();
+        return;
+      }
+      // Layout edits auto-save, just like row reordering. Publish only after
+      // success so failed writes never look like a saved height.
+      await queryClient.cancelQueries({
+        queryKey: trpc.report.list.queryOptions({ dashboardId, projectId }).queryKey,
+      });
+      setOrderedReports(next);
+      queryClient.setQueryData(
+        trpc.report.list.queryOptions({ dashboardId, projectId }).queryKey,
+        next,
+      );
+      toast('Card height saved');
+    } finally {
+      setIsHeightSaving(false);
+    }
+  };
 
   const handleLayoutChange = useCallback((newLayout: Layout[]) => {
     // This is called during dragging/resizing, we'll save on drag/resize stop
@@ -736,7 +783,9 @@ function Component() {
                   onDuplicate={(reportId) => {
                     reportDuplicate.mutate({ reportId });
                   }}
-                  onDrop={handleDrop}
+                  onDrop={isHeightSaving ? undefined : handleDrop}
+                  onHeightChange={handleHeightChange}
+                  isHeightSaving={isHeightSaving || updateLayout.isPending}
                   rowIdx={info?.rowIdx}
                   isFirstInRow={info?.isFirst}
                   isLastInRow={info?.isLast}

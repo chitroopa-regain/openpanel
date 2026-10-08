@@ -1,6 +1,7 @@
 import type { IServiceReport } from '@openpanel/db';
 import { useMemo } from 'react';
 import { Responsive, WidthProvider } from 'react-grid-layout';
+import { getReportHeight } from './report/report-height';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -73,8 +74,7 @@ export const useReportLayouts = (
     // The layout is identical across breakpoints — rows do NOT re-wrap on
     // narrow screens; the grid keeps a min pixel width and scrolls
     // horizontally instead (see GrafanaGrid wrapper).
-    const isTopLevelAppMetrics = reports.some((r) => r.dashboardId === 'top-level-app-metrics');
-    const CARD_H = isTopLevelAppMetrics ? 6 : 3; // 3 * rowHeight(100) + margins ≈ 330px, 6 * rowHeight(100) + margins ≈ 630px
+    const heights = new Map(reports.map((report) => [report.id, getReportHeight(report)]));
     const layout: ReactGridLayout.Layout[] = [];
     let y = 0;
     rows.forEach((row) => {
@@ -86,12 +86,12 @@ export const useReportLayouts = (
           x: idx * w,
           y,
           w,
-          h: CARD_H,
+          h: heights.get(id) ?? 3,
           minW: 2,
           minH: 2,
         });
       });
-      y += CARD_H;
+      y += Math.max(...row.map((id) => heights.get(id) ?? 3));
     });
 
     // Same layout for every breakpoint — no responsive reflow.
@@ -170,7 +170,8 @@ export function GrafanaGrid({
             cols={{ xxl: 12, xl: 12, lg: 12, md: 12, sm: 12, xs: 12, xxs: 12 }}
             rowHeight={100}
             draggableHandle=".drag-handle"
-            compactType="vertical"
+            // Keep logical rows aligned when one card is taller than its peers.
+            compactType={null}
             preventCollision={false}
             margin={[16, 16]}
             transformScale={1}
