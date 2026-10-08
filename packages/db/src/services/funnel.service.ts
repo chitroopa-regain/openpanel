@@ -413,6 +413,46 @@ export class FunnelService {
   }
 
   /**
+   * Profiles whose FIRST-EVER occurrence of the step's event falls inside
+   * [startDate, endDate] — the "First time ever" rule. Matches on the event
+   * name only (not the step's filters), exactly as the funnel's own
+   * first_time_step_N CTEs do.
+   */
+  private firstTimeProfilesSql(
+    step: ResolvedFunnelStep,
+    projectId: string,
+    startDate: string,
+    endDate: string
+  ): string {
+    const stepPredicate = step.customEventComponents
+      ? getCustomEventWhereClause(step.customEventComponents, projectId)
+      : `name = ${sqlstring.escape(step.name)}`;
+    return `SELECT profile_id as ft_profile_id FROM ${TABLE_NAMES.events} WHERE project_id = ${sqlstring.escape(projectId)} AND ${stepPredicate} GROUP BY ft_profile_id HAVING min(created_at) >= toDateTime(${sqlstring.escape(startDate)}) AND min(created_at) <= toDateTime(${sqlstring.escape(endDate)})`;
+  }
+
+  /**
+   * Step conditions for the property/timing side queries, with each
+   * "First time ever" step restricted by a profile_id semi-join. Those
+   * queries chain steps with their own CTEs instead of the funnel's
+   * first_time LEFT JOINs, so without this they counted every entrant —
+   * reinstallers included — while the funnel above them did not (regain
+   * 30 Sep google-ads install→purchase: sum over 406 buyers, funnel 351).
+   */
+  getFunnelConditionsWithFirstTime(
+    events: ResolvedFunnelStep[],
+    projectId: string,
+    startDate: string,
+    endDate: string
+  ): string[] {
+    return this.getFunnelConditions(events, projectId).map(
+      (condition, index) =>
+        events[index]?.firstTimeFilter
+          ? `(${condition} AND profile_id IN (${this.firstTimeProfilesSql(events[index]!, projectId, startDate, endDate)}))`
+          : condition
+    );
+  }
+
+  /**
    * Builds the funnel CTE.
    *
    * Session mode (default): computes windowFunnel per session_id and extracts
@@ -906,19 +946,9 @@ export class FunnelService {
       if (step.firstTimeFilter) {
         const alias = `ft_${i}`;
         firstTimeCteAliases.push(alias);
-        // Build the step predicate for the CTE (same logic as getFunnelConditions)
-        let stepPredicate: string;
-        if (step.customEventComponents) {
-          stepPredicate = getCustomEventWhereClause(
-            step.customEventComponents,
-            projectId
-          );
-        } else {
-          stepPredicate = `name = ${sqlstring.escape(step.name)}`;
-        }
         firstTimeCtes.push({
           name: `first_time_step_${i}`,
-          sql: `SELECT profile_id as ft_profile_id FROM ${TABLE_NAMES.events} WHERE project_id = ${escapedProject} AND ${stepPredicate} GROUP BY ft_profile_id HAVING min(created_at) >= toDateTime(${escapedStart}) AND min(created_at) <= toDateTime(${escapedEnd})`,
+          sql: this.firstTimeProfilesSql(step, projectId, startDate, endDate),
         });
       } else {
         firstTimeCteAliases.push('');
@@ -1423,7 +1453,17 @@ export class FunnelService {
       breakdownGroupBy = breakdowns.map((_, index) => `b_${index}`);
     }
 
-    const stepConditions = this.getFunnelConditions(eventSeries, projectId);
+    // Only the timing side query reads these. A "First time ever" step never
+    // takes the MV path (resolveMvSource), so the semi-join stays raw-only.
+    const stepConditions =
+      startDate && endDate
+        ? this.getFunnelConditionsWithFirstTime(
+            eventSeries,
+            projectId,
+            startDate,
+            endDate
+          )
+        : this.getFunnelConditions(eventSeries, projectId);
 
     let funnelCte: ReturnType<typeof clix> | string;
     let firstTimeCtes: { name: string; sql: string }[];

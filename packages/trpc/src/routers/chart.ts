@@ -1106,10 +1106,18 @@ export const chartRouter = createTRPCRouter({
               : [e.name]
           )
         );
-        const stepConditions = funnelService.getFunnelConditions(
-          eventSeries,
-          chartInput.projectId
-        );
+        // Per period: a "First time ever" step is anchored to that period's
+        // own range, the same way the funnel above restricts its entrants.
+        const stepConditionsFor = (period: {
+          startDate?: string | null;
+          endDate?: string | null;
+        }) =>
+          funnelService.getFunnelConditionsWithFirstTime(
+            eventSeries,
+            chartInput.projectId,
+            period.startDate!,
+            period.endDate!
+          );
 
         const funnelWindowUnit = funnelOptions.funnelWindowUnit ?? 'hour';
         const unitMultipliers: Record<string, number> = {
@@ -1141,7 +1149,7 @@ export const chartRouter = createTRPCRouter({
             projectId: chartInput.projectId,
             startDate: currentPeriod.startDate!,
             endDate: currentPeriod.endDate!,
-            stepConditions,
+            stepConditions: stepConditionsFor(currentPeriod),
             funnelWindowSeconds,
             groupBy: group,
             allEventNames,
@@ -1161,7 +1169,7 @@ export const chartRouter = createTRPCRouter({
                 projectId: chartInput.projectId,
                 startDate: previousPeriod.startDate!,
                 endDate: previousPeriod.endDate!,
-                stepConditions,
+                stepConditions: stepConditionsFor(previousPeriod),
                 funnelWindowSeconds,
                 groupBy: group,
                 allEventNames,
