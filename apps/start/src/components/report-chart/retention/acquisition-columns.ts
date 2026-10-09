@@ -7,6 +7,8 @@ export interface AcquisitionColumn {
   label: string;
   title: string;
   roas?: RoasWindow;
+  /** Needs store-reported revenue rows (app_store_daily_revenue). */
+  store?: boolean;
   /** Days of range the report needs before this window can have values. */
   minDay?: number;
 }
@@ -33,6 +35,13 @@ export const ACQUISITION_COLUMNS: AcquisitionColumn[] = [
     label: 'Revenue',
     title:
       "Cohort lifetime revenue; before install tracking, revenue booked in the period ('booked')",
+  },
+  {
+    key: 'store_revenue',
+    label: 'Store revenue',
+    title:
+      "Store revenue booked in the period, from the store's own report (Apple Sales & Trends; last ~2 days are RevenueCat estimates, marked ~). Not install-cohort revenue",
+    store: true,
   },
   {
     key: 'roas_d0',
@@ -62,24 +71,43 @@ export const ACQUISITION_COLUMNS: AcquisitionColumn[] = [
     title: 'Everything the cohort has paid so far / spend',
     roas: 'lifetime',
   },
+  {
+    key: 'store_roas',
+    label: 'Store ROAS',
+    title:
+      'Store revenue in the period / matched paid spend in the period (blended, same spend as the Spend column)',
+    store: true,
+  },
 ];
 
 export const ALL_ACQUISITION_COLUMN_KEYS = ACQUISITION_COLUMNS.map(
   (c) => c.key
 );
 
-/** Columns this result can fill. ROAS needs a revenue property measure. */
-export function availableAcquisitionColumns(roasAvailable: boolean) {
-  return ACQUISITION_COLUMNS.filter((c) => roasAvailable || !c.roas);
+/**
+ * Columns this result can fill. ROAS needs a revenue property measure; store
+ * columns need the project to have store-reported revenue.
+ */
+export function availableAcquisitionColumns(
+  roasAvailable: boolean,
+  storeRevenueAvailable = false
+) {
+  return ACQUISITION_COLUMNS.filter(
+    (c) => (roasAvailable || !c.roas) && (storeRevenueAvailable || !c.store)
+  );
 }
 
 /** Ticked columns in display order; undefined = every column. */
 export function resolveAcquisitionColumns(
   selected: IAcquisitionColumn[] | undefined,
-  roasAvailable: boolean
+  roasAvailable: boolean,
+  storeRevenueAvailable = false
 ) {
   const ticked = new Set(selected ?? ALL_ACQUISITION_COLUMN_KEYS);
-  return availableAcquisitionColumns(roasAvailable).filter((c) =>
+  return availableAcquisitionColumns(
+    roasAvailable,
+    storeRevenueAvailable
+  ).filter((c) =>
     ticked.has(c.key)
   );
 }

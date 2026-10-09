@@ -4,6 +4,7 @@ import {
   buildExternalInstallsQuery,
   buildSpendFilter,
   buildSpendQuery,
+  buildStoreRevenueQuery,
   cohortIntervalKey,
   cohortSizesByInterval,
   findAttributionBreakdown,
@@ -825,5 +826,108 @@ describe('tracking start override', () => {
     ];
     expect(findTrackingStart(daily, 'brainrot-app')).toBe('2026-04-04');
     expect(findTrackingStart(daily, 'regain-app')).toBe('2026-05-10');
+  });
+});
+
+describe('store revenue columns', () => {
+  const storeSpend: SpendRow[] = [
+    { day: '2026-09-29', platform: 'meta_ads', campaign_id: 'm1', campaign_name: 'Meta', spend_inr: 1000, os: 'ios' },
+    { day: '2026-10-01', platform: 'meta_ads', campaign_id: 'm1', campaign_name: 'Meta', spend_inr: 3000, os: 'ios' },
+    { day: '2026-10-07', platform: 'apple_ads', campaign_id: 'a1', campaign_name: 'ASA', spend_inr: 500, os: 'ios' },
+  ];
+  const rowsIn = (days: string[]) => days.map((d) => ({ cohort_interval: d, sum: 10 }));
+  const store = [
+    { day: '2026-09-29', revenue: 2000, estimated: 0 },
+    { day: '2026-10-01', revenue: 6000, estimated: 0 },
+    { day: '2026-10-07', revenue: 250, estimated: 1 },
+  ];
+
+  it('builds a FINAL, project- and day-bounded query with an estimate flag', () => {
+    const sql = buildStoreRevenueQuery({ projectId: "reg'ain-ios", startDay: '2026-09-01', endDay: '2026-10-08' });
+    expect(sql).toContain('FROM app_store_daily_revenue AS r FINAL');
+    expect(sql).toContain("r.project_id = 'reg\\'ain-ios'");
+    expect(sql).toContain("r.day BETWEEN toDate('2026-09-01') AND toDate('2026-10-08')");
+    expect(sql).toContain('r.gross_inr AS revenue');
+    expect(sql).toContain("r.source = 'revenuecat_webhook_estimate' AS estimated");
+    expect(sql).toContain('toString(r.day) AS day');
+  });
+
+  it('buckets by day', () => {
+    const { rows } = attachAcquisitionCost(rowsIn(['2026-09-29', '2026-10-01']), storeSpend, {
+      interval: 'day',
+      attribution: null,
+      storeRevenue: store,
+    });
+    expect(rows[0]).toMatchObject({ storeRevenue: 2000, storeRevenueEstimated: false, storeRoas: 2 });
+    expect(rows[1]).toMatchObject({ storeRevenue: 6000, storeRoas: 2 });
+  });
+
+  it('sums a week (Sunday start) and a month, flagging estimates', () => {
+    const week = attachAcquisitionCost(rowsIn(['2026-09-27', '2026-10-04']), storeSpend, {
+      interval: 'week',
+      attribution: null,
+      storeRevenue: store,
+    }).rows;
+    // 09-27 week holds 09-29 + 10-01; 10-04 week holds 10-07 (estimate).
+    expect(week[0]).toMatchObject({ storeRevenue: 8000, storeRevenueEstimated: false, storeRoas: 2 });
+    expect(week[1]).toMatchObject({ storeRevenue: 250, storeRevenueEstimated: true, storeRoas: 0.5 });
+    const month = attachAcquisitionCost(rowsIn(['2026-09-01', '2026-10-01']), storeSpend, {
+      interval: 'month',
+      attribution: null,
+      storeRevenue: store,
+    }).rows;
+    expect(month[0]).toMatchObject({ storeRevenue: 2000, storeRevenueEstimated: false, storeRoas: 2 });
+    expect(month[1]).toMatchObject({ storeRevenue: 6250, storeRevenueEstimated: true });
+  });
+
+  it('summary row totals the tracked rows; ROAS is null without spend', () => {
+    const { rows } = attachAcquisitionCost(
+      [...rowsIn(['2026-09-29', '2026-10-01', '2026-10-03']), { cohort_interval: 'Weighted Average', sum: 30 }],
+      storeSpend,
+      { interval: 'day', attribution: null, storeRevenue: [...store, { day: '2026-10-03', revenue: 40, estimated: 0 }] }
+    );
+    expect(rows[2]).toMatchObject({ storeRevenue: 40, storeRoas: null });
+    expect(rows[3]).toMatchObject({ storeRevenue: 8040, storeRevenueEstimated: false, storeRoas: 2.01 });
+  });
+
+  it('a day with no store row is null, not zero', () => {
+    const { rows } = attachAcquisitionCost(rowsIn(['2026-09-29', '2026-09-30']), storeSpend, {
+      interval: 'day',
+      attribution: null,
+      storeRevenue: store,
+    });
+    expect(rows[1]).toMatchObject({ storeRevenue: null, storeRoas: null });
+  });
+
+  it('adds no fields without store rows or in matched views', () => {
+    const none = attachAcquisitionCost(rowsIn(['2026-09-29']), storeSpend, { interval: 'day', attribution: null });
+    expect(none.rows[0]).not.toHaveProperty('storeRevenue');
+    expect(none.rows[0]).not.toHaveProperty('storeRoas');
+    const matched = attachAcquisitionCost(
+      [{ cohort_interval: '2026-09-29', sum: 10, breakdowns: ['meta'] }],
+      storeSpend,
+      { interval: 'day', attribution: findAttributionBreakdown(['properties.install_source']), storeRevenue: store }
+    );
+    expect(matched.rows[0]).not.toHaveProperty('storeRevenue');
+  });
+
+  it('does not change any existing column', () => {
+    const base = attachAcquisitionCost(rowsIn(['2026-09-29', '2026-10-01']), storeSpend, {
+      interval: 'day',
+      attribution: null,
+      externalInstalls: [{ day: '2026-09-29', installs: 500 }],
+    });
+    const withStore = attachAcquisitionCost(rowsIn(['2026-09-29', '2026-10-01']), storeSpend, {
+      interval: 'day',
+      attribution: null,
+      externalInstalls: [{ day: '2026-09-29', installs: 500 }],
+      storeRevenue: store,
+    });
+    const strip = (r: Record<string, unknown>) => {
+      const { storeRevenue, storeRevenueEstimated, storeRoas, ...rest } = r;
+      return rest;
+    };
+    expect(withStore.rows.map(strip)).toEqual(base.rows.map(strip));
+    expect(withStore.attributedSpend).toBe(base.attributedSpend);
   });
 });

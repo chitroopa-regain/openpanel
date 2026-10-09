@@ -352,10 +352,12 @@ export const zAcquisitionColumn = z.enum([
   'spend',
   'cpi',
   'revenue',
+  'store_revenue',
   'roas_d0',
   'roas_d7',
   'roas_d30',
   'roas_lifetime',
+  'store_roas',
 ]);
 export type IAcquisitionColumn = z.infer<typeof zAcquisitionColumn>;
 export const zReportDisplayMode = z.enum(['both', 'chart', 'table']);

@@ -109,6 +109,8 @@ export interface AcquisitionCostSummary {
   currency: 'INR';
   /** ROAS needs a revenue property measure (property_sum / property_average). */
   roasAvailable: boolean;
+  /** Store-reported revenue columns have data (blended views of synced projects). */
+  storeRevenueAvailable: boolean;
   /** Days of return window the range covers; D7/D30 need at least 7/30. */
   roasMaxDay: number;
   /** Matched modes only: platform → first attributable cohort day. */
@@ -309,6 +311,28 @@ export function buildExternalInstallsQuery({
   return `SELECT toString(p.day) AS day, p.device_installs AS installs
 FROM play_installs_daily AS p FINAL
 WHERE p.project_id = ${sqlstring.escape(projectId)} AND p.day BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
+}
+
+export const ESTIMATE_SOURCE = 'revenuecat_webhook_estimate';
+
+/**
+ * Daily store revenue from the store's own report (app_store_daily_revenue:
+ * Apple Sales & Trends, with RevenueCat webhook estimates for the last ~2
+ * days). One row per project-day; `estimated` marks the estimate days.
+ */
+export function buildStoreRevenueQuery({
+  projectId,
+  startDay,
+  endDay,
+}: {
+  projectId: string;
+  startDay: string;
+  endDay: string;
+}) {
+  // Qualified r.day: an unqualified `day` would resolve to the String alias.
+  return `SELECT toString(r.day) AS day, r.gross_inr AS revenue, r.source = ${sqlstring.escape(ESTIMATE_SOURCE)} AS estimated
+FROM app_store_daily_revenue AS r FINAL
+WHERE r.project_id = ${sqlstring.escape(projectId)} AND r.day BETWEEN toDate(${sqlstring.escape(startDay)}) AND toDate(${sqlstring.escape(endDay)})`;
 }
 
 /** Daily aggregate purchases imported from before event tracking. */
@@ -638,6 +662,15 @@ export type WithAcquisitionCost<T> = T & {
   externalInstalls?: number;
   /** Play Console installs in the row's period (blended views only). */
   playInstalls?: number | null;
+  /**
+   * Store-reported revenue booked in the row's period (blended views, only
+   * for projects with app_store_daily_revenue rows). Not install-cohort revenue.
+   */
+  storeRevenue?: number | null;
+  /** Some day in the period is a RevenueCat estimate, not a settled figure. */
+  storeRevenueEstimated?: boolean;
+  /** storeRevenue / the row's spend; null without spend. */
+  storeRoas?: number | null;
   /** Cohort lifetime revenue, or revenue booked in the period before tracking. */
   lifetimeRevenue?: number | null;
   revenueBasis?: 'cohort' | 'booked';
@@ -824,6 +857,7 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     trackingStart = null,
     externalInstalls = [],
     bookedRevenue = [],
+    storeRevenue = [],
   }: {
     interval: string | undefined;
     attribution: AttributionBreakdown | null;
@@ -838,6 +872,12 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     externalInstalls?: Array<{ day: string; installs: number | string }>;
     /** Daily booked revenue, for rows before tracking. */
     bookedRevenue?: Array<{ day: string; revenue: number | string }>;
+    /** Daily store-reported revenue; `estimated` marks non-settled days. */
+    storeRevenue?: Array<{
+      day: string;
+      revenue: number | string;
+      estimated?: number | boolean | string;
+    }>;
   }
 ): { rows: WithAcquisitionCost<T>[]; attributedSpend: number } {
   // Before tracking began there are no cohorts to charge: spend from those
@@ -929,6 +969,40 @@ export function attachAcquisitionCost<T extends CostRowInput>(
         0
       )
     : undefined;
+  // Store revenue is booked per period, not per source: blended views only.
+  const showStore = !attribution && storeRevenue.length > 0;
+  const storeByInterval = sumByInterval(
+    storeRevenue.map((e) => ({ day: e.day, value: Number(e.revenue) })),
+    interval
+  );
+  const storeEstimated = new Set(
+    storeRevenue
+      .filter((e) => e.estimated === true || Number(e.estimated) === 1)
+      .map((e) => cohortIntervalKey(e.day, interval))
+  );
+  const storeCells = (cohortInterval: string, spendValue: number | null) => {
+    if (!showStore) {
+      return {};
+    }
+    const value = storeByInterval.get(cohortInterval);
+    if (value === undefined) {
+      return { storeRevenue: null, storeRevenueEstimated: false, storeRoas: null };
+    }
+    return {
+      storeRevenue: round2(value),
+      storeRevenueEstimated: storeEstimated.has(cohortInterval),
+      storeRoas: spendValue ? ratio(value, spendValue) : null,
+    };
+  };
+  const trackedStoreTotal = showStore
+    ? cohortRows.reduce(
+        (acc, r) => acc + (storeByInterval.get(r.cohort_interval) ?? 0),
+        0
+      )
+    : 0;
+  const trackedStoreEstimated = showStore
+    ? cohortRows.some((r) => storeEstimated.has(r.cohort_interval))
+    : false;
   const cohortRevenueTotal = (key: string) =>
     round2(
       cohortRows
@@ -942,7 +1016,7 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     dailyMembers
   );
 
-  const out = rows.map((row) => {
+  const baseOut = rows.map((row) => {
     if (isBeforeTracking(row)) {
       // Matched views cannot split untracked spend; blended can show it.
       if (attribution) {
@@ -989,6 +1063,22 @@ export function attachAcquisitionCost<T extends CostRowInput>(
       revenueBasis: 'cohort' as const,
     };
   });
+  // Store-revenue columns are layered on last, from each row's final spend, so
+  // no existing field can change.
+  const out = showStore
+    ? baseOut.map((row) => {
+        const spendValue = (row as { spend?: number | null }).spend ?? null;
+        if (row.cohort_interval === AVERAGE_ROW) {
+          return {
+            ...row,
+            storeRevenue: round2(trackedStoreTotal),
+            storeRevenueEstimated: trackedStoreEstimated,
+            storeRoas: spendValue ? ratio(trackedStoreTotal, spendValue) : null,
+          };
+        }
+        return { ...row, ...storeCells(row.cohort_interval, spendValue) };
+      })
+    : baseOut;
   return { rows: out, attributedSpend: round2(attributed) };
 }
 

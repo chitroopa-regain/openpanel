@@ -14,6 +14,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * - CPI: total spend / the installs each row's own CPI uses (Play installs on
  *   rows before tracking, cohort size after).
  * - Lifetime ROAS: total revenue / total spend.
+ * - Store revenue: sum; Store ROAS: total store revenue / total spend.
  * - D0/D7/D30 and the day columns are not additive: left blank.
  */
 export function buildTotalRow(data: CohortRow[]): CohortRow | null {
@@ -28,6 +29,9 @@ export function buildTotalRow(data: CohortRow[]): CohortRow | null {
   let hasPlay = false;
   let revenue = 0;
   let hasRevenue = false;
+  let store = 0;
+  let hasStore = false;
+  let storeEstimated = false;
   for (const r of rows) {
     spend += r.spend ?? 0;
     size += Number(r.sum) || 0;
@@ -43,6 +47,11 @@ export function buildTotalRow(data: CohortRow[]): CohortRow | null {
       revenue += r.lifetimeRevenue;
       hasRevenue = true;
     }
+    if (r.storeRevenue !== null && r.storeRevenue !== undefined) {
+      store += r.storeRevenue;
+      hasStore = true;
+      storeEstimated ||= Boolean(r.storeRevenueEstimated);
+    }
   }
   const width = rows[0]?.values.length ?? 0;
   const blanks = Array.from({ length: width }, () => null);
@@ -57,6 +66,13 @@ export function buildTotalRow(data: CohortRow[]): CohortRow | null {
     playInstalls: hasPlay ? play : null,
     lifetimeRevenue: hasRevenue ? round2(revenue) : null,
     revenueBasis: 'total',
+    ...(hasStore
+      ? {
+          storeRevenue: round2(store),
+          storeRevenueEstimated: storeEstimated,
+          storeRoas: spend > 0 ? Math.round((store / spend) * 1000) / 1000 : null,
+        }
+      : {}),
     roas: {
       d0: null,
       d7: null,

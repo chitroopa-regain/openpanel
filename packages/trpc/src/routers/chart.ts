@@ -87,6 +87,7 @@ import {
   buildCampaignNameMapQuery,
   buildCohortOsQuery,
   buildExternalInstallsQuery,
+  buildStoreRevenueQuery,
   buildSpendFilter,
   buildSpendQuery,
   buildTrackingDailyQuery,
@@ -2282,7 +2283,7 @@ export const chartRouter = createTRPCRouter({
           ].filter((k): k is string => Boolean(k))
         );
         try {
-          const [spend, osCounts, nameRows, trackingDaily, externalInstalls] = await Promise.all([
+          const [spend, osCounts, nameRows, trackingDaily, externalInstalls, storeRevenue] = await Promise.all([
             chQuery<SpendRow>(buildSpendQuery({ projectId, startDay, endDay })),
             chQuery<{ os: string; events: number }>(
               buildCohortOsQuery({
@@ -2306,6 +2307,10 @@ export const chartRouter = createTRPCRouter({
             // Play Console installs exist only where they were imported.
             chQuery<{ day: string; installs: number }>(
               buildExternalInstallsQuery({ projectId, startDay, endDay })
+            ).catch(() => []),
+            // Store-reported revenue exists only for projects that sync it.
+            chQuery<{ day: string; revenue: number; estimated: number }>(
+              buildStoreRevenueQuery({ projectId, startDay, endDay })
             ).catch(() => []),
           ]);
           const today = new Intl.DateTimeFormat('en-CA', {
@@ -2355,6 +2360,8 @@ export const chartRouter = createTRPCRouter({
             // Play installs cannot be narrowed by a spend filter: unfiltered only.
             externalInstalls:
               spendFilter.applied.length > 0 ? [] : externalInstalls,
+            // Store revenue is period-booked, not cohort-filterable: unfiltered only.
+            storeRevenue: spendFilter.applied.length > 0 ? [] : storeRevenue,
             attribution,
             campaignNameToIds,
           };
@@ -2398,6 +2405,7 @@ export const chartRouter = createTRPCRouter({
           coverageFrom: ATTRIBUTION_COVERAGE_FROM[projectId] ?? {},
           trackingStart: loaded.trackingStart,
           externalInstalls: loaded.externalInstalls,
+          storeRevenue: loaded.storeRevenue,
           bookedRevenue: loaded.bookedRevenue,
         });
       };
@@ -2420,6 +2428,9 @@ export const chartRouter = createTRPCRouter({
               attributedSpend,
               currency: 'INR',
               roasAvailable: Boolean(retentionPropertyExpr),
+              storeRevenueAvailable:
+                loaded.storeRevenue.length > 0 &&
+                (blended || !loaded.attribution),
               roasMaxDay: retentionUnit === 'day' ? diffInterval : 0,
               coverageFrom:
                 blended || !loaded.attribution

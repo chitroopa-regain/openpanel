@@ -47,6 +47,10 @@ export type CohortRow = CohortData[number] & {
   installsSource?: 'play';
   externalInstalls?: number;
   playInstalls?: number | null;
+  /** Store-reported revenue in the period; `storeRevenueEstimated` = has estimate days. */
+  storeRevenue?: number | null;
+  storeRevenueEstimated?: boolean;
+  storeRoas?: number | null;
   lifetimeRevenue?: number | null;
   revenueBasis?: 'cohort' | 'booked' | 'total';
   /** revenue / spend per window; `null` = unpaid, unspent or incomplete. */
@@ -230,6 +234,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
       options.metric === 'property_sum');
   const isPercentage = !isPropertyMeasure && unit === '%';
   const roasAvailable = Boolean(acquisitionCost?.roasAvailable);
+  const storeRevenueAvailable = Boolean(acquisitionCost?.storeRevenueAvailable);
   const totalRow = acquisitionCost ? buildTotalRow(data) : null;
   const trackingStartKey = acquisitionCost?.trackingStart ?? null;
   // Rows wholly before install tracking have no cohort to show.
@@ -245,7 +250,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
   // only change what this screen shows; the report editor's sidebar saves.
   const [ticked, setTicked] = useState<Set<string>>(
     () =>
-      new Set(resolveAcquisitionColumns(savedColumns, true).map((c) => c.key))
+      new Set(resolveAcquisitionColumns(savedColumns, true, true).map((c) => c.key))
   );
   const savedColumnsKey = JSON.stringify(savedColumns ?? null);
   useEffect(() => {
@@ -253,13 +258,14 @@ const CohortTable: React.FC<CohortTableProps> = ({
       new Set(
         resolveAcquisitionColumns(
           JSON.parse(savedColumnsKey) ?? undefined,
+          true,
           true
         ).map((c) => c.key)
       )
     );
   }, [savedColumnsKey]);
   const costColumns: AcquisitionColumn[] = acquisitionCost
-    ? availableAcquisitionColumns(roasAvailable).filter((c) =>
+    ? availableAcquisitionColumns(roasAvailable, storeRevenueAvailable).filter((c) =>
         ticked.has(c.key)
       )
     : [];
@@ -420,6 +426,35 @@ const CohortTable: React.FC<CohortTableProps> = ({
     }
     if (column.key === 'revenue') {
       return renderRevenueCell(row);
+    }
+    if (column.key === 'store_revenue') {
+      const has = row.storeRevenue !== null && row.storeRevenue !== undefined;
+      return (
+        <div
+          className="px-3 text-right font-mono"
+          title={
+            has && row.storeRevenueEstimated
+              ? 'Includes RevenueCat estimates for the latest days (~); the store report settles later'
+              : undefined
+          }
+        >
+          {has ? `${inr.format(row.storeRevenue ?? 0)}${row.storeRevenueEstimated ? '~' : ''}` : '—'}
+        </div>
+      );
+    }
+    if (column.key === 'store_roas') {
+      return (
+        <div
+          className="px-3 text-right font-mono"
+          title={row.storeRevenueEstimated ? 'Uses estimated store revenue (~)' : undefined}
+        >
+          {formatRoas(row.storeRoas)}
+          {row.storeRoas !== null &&
+            row.storeRoas !== undefined &&
+            row.storeRevenueEstimated &&
+            '~'}
+        </div>
+      );
     }
     if (column.key === 'spend') {
       return (
@@ -584,7 +619,7 @@ const CohortTable: React.FC<CohortTableProps> = ({
           className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
           data-testid="retention-acquisition-columns"
         >
-          {availableAcquisitionColumns(roasAvailable).map((column) => {
+          {availableAcquisitionColumns(roasAvailable, storeRevenueAvailable).map((column) => {
             const id = `${disclosureId}-col-${column.key}`;
             const short =
               column.minDay !== undefined &&
