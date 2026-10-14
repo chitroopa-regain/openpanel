@@ -523,6 +523,29 @@ function buildSpendLookup(spend: SpendRow[], interval: string | undefined) {
       .reduce((acc, s) => acc + Number(s.spend_inr), 0);
 }
 
+/**
+ * Country a campaign buys installs in, from the team's naming convention
+ * `<App> - <CC> - <nn> - <OS> - <goal>` (e.g. `BrainPal - PK - 01 - Android -
+ * Purchase - CBO`). Older names spell India out (`India Install Campaign`,
+ * `Regain_iOS_India`, `IN_Search_Result_Category`). Both apps bought India
+ * only until the 2026-10-12 regional launch and creators are Indian, so a
+ * name without a country (and UGC) is India.
+ */
+export const DEFAULT_SPEND_COUNTRY = 'IN';
+const COUNTRY_TOKEN = /^[A-Z]{2}$/;
+
+export function campaignCountry(campaignName: string) {
+  const tokens = campaignName.split(/\s*-\s*|_/).map((t) => t.trim());
+  const code = tokens.find((t) => COUNTRY_TOKEN.test(t));
+  if (code) {
+    return code;
+  }
+  return DEFAULT_SPEND_COUNTRY;
+}
+
+/** Filters on these keys narrow spend to the campaigns of those countries. */
+const COUNTRY_KEYS = new Set(['country']);
+
 export interface SpendFilterInput {
   name: string;
   operator: string;
@@ -543,7 +566,8 @@ export interface SpendFilter {
 /**
  * Turn the cohort event's filters into a spend filter, so a report filtered
  * to e.g. Google installs is charged Google spend only. `is` keeps spend
- * matching any value, `isNot` drops it; other operators and non-attribution
+ * matching any value, `isNot` drops it. A country filter keeps the campaigns
+ * of those countries (see campaignCountry). Other operators and
  * properties cannot be mapped onto ad spend and are reported as ignored.
  */
 export function buildSpendFilter(
@@ -552,6 +576,7 @@ export function buildSpendFilter(
 ): SpendFilter {
   const include: Matcher[][] = [];
   const exclude: Matcher[] = [];
+  const countryChecks: Array<(country: string) => boolean> = [];
   const applied: string[] = [];
   const ignored: string[] = [];
   let unpaidOnly = false;
@@ -565,6 +590,17 @@ export function buildSpendFilter(
       .map(String);
     const label =
       `${getBreakdownKey(f.name)} ${f.operator} ${values.join(', ')}`.trim();
+    if (
+      COUNTRY_KEYS.has(getBreakdownKey(f.name)) &&
+      (f.operator === 'is' || f.operator === 'isNot') &&
+      values.length > 0
+    ) {
+      const codes = new Set(values.map((v) => v.trim().toUpperCase()));
+      const keep = f.operator === 'is';
+      countryChecks.push((country) => codes.has(country) === keep);
+      applied.push(label);
+      continue;
+    }
     if (
       !attribution ||
       (f.operator !== 'is' && f.operator !== 'isNot') ||
@@ -591,7 +627,8 @@ export function buildSpendFilter(
   return {
     allows: (row) =>
       include.every((any) => any.some((m) => spendMatches(row, m))) &&
-      !exclude.some((m) => spendMatches(row, m)),
+      !exclude.some((m) => spendMatches(row, m)) &&
+      countryChecks.every((check) => check(campaignCountry(row.campaign_name))),
     applied,
     ignored,
     unpaidOnly,
@@ -986,7 +1023,11 @@ export function attachAcquisitionCost<T extends CostRowInput>(
     }
     const value = storeByInterval.get(cohortInterval);
     if (value === undefined) {
-      return { storeRevenue: null, storeRevenueEstimated: false, storeRoas: null };
+      return {
+        storeRevenue: null,
+        storeRevenueEstimated: false,
+        storeRoas: null,
+      };
     }
     return {
       storeRevenue: round2(value),

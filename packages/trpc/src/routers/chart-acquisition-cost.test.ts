@@ -3,6 +3,7 @@ import {
   attachAcquisitionCost,
   buildExternalInstallsQuery,
   buildSpendFilter,
+  campaignCountry,
   buildSpendQuery,
   buildStoreRevenueQuery,
   cohortIntervalKey,
@@ -606,12 +607,55 @@ describe('acquisition cost', () => {
       ],
       new Map()
     );
-    expect(other.applied).toEqual([]);
-    expect(other.ignored).toEqual([
-      'country is IN',
-      'utm_source contains goog',
+    expect(other.applied).toEqual(['country is IN']);
+    expect(other.ignored).toEqual(['utm_source contains goog']);
+  });
+
+  it("a country filter keeps only that country's campaigns", () => {
+    const row = (campaign_name: string, platform = 'meta_ads'): SpendRow => ({
+      day: '2026-10-13',
+      platform,
+      campaign_id: campaign_name,
+      campaign_name,
+      spend_inr: 100,
+      os: 'android',
+    });
+    const rows = [
+      row('BrainPal - IN - 07 - Android - ROAS'),
+      row('BrainPal - PK - 01 - Android - Purchase - CBO'),
+      row('zzz - Regain - US - 01 - IOS - App Install - ABO'),
+      row('BrainPal - ID - 01 - Android - Purchase - tCPA', 'google_ads'),
+      row('India Install Campaign', 'google_ads'),
+      row('Regain_iOS_India', 'apple_ads'),
+      row('IN_Search_Result_Category', 'apple_ads'),
+      row('zzz - ABO: Creative testing'),
+      row('UGC creators', 'ugc'),
+    ];
+    expect(rows.map((r) => campaignCountry(r.campaign_name))).toEqual([
+      'IN',
+      'PK',
+      'US',
+      'ID',
+      'IN',
+      'IN',
+      'IN',
+      'IN',
+      'IN',
     ]);
-    expect(spend.every(other.allows)).toBe(true);
+    const india = buildSpendFilter(
+      [{ name: 'profile.properties.country', operator: 'is', value: ['IN'] }],
+      new Map()
+    );
+    expect(rows.filter(india.allows)).toHaveLength(6);
+    const abroad = buildSpendFilter(
+      [{ name: 'country', operator: 'isNot', value: ['in'] }],
+      new Map()
+    );
+    expect(rows.filter(abroad.allows).map((r) => r.campaign_name)).toEqual([
+      'BrainPal - PK - 01 - Android - Purchase - CBO',
+      'zzz - Regain - US - 01 - IOS - App Install - ABO',
+      'BrainPal - ID - 01 - Android - Purchase - tCPA',
+    ]);
   });
 
   it('finds when tracking went live, ignoring days of test traffic', () => {
