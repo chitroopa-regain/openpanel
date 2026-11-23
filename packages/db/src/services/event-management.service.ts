@@ -533,19 +533,23 @@ export async function dropManagedEvent(
   const project = await getProjectOrThrow(input.projectId);
   const usage = await getUsageOfEvent(project, input.name);
   const boards = affectedBoards(usage);
+  // Read before the lock: the transaction holds a pool connection meanwhile.
+  const { timezone } = await getSettingsForProject(project.id);
 
   const result = await withEventLock(project.id, input.name, async (tx) => {
     const meta = await tx.eventMeta.findUnique({
       where: { name_projectId: { name: input.name, projectId: project.id } },
       select: { droppedAt: true },
     });
-    const { action, reason } = assertCanDrop({
+    const guard = {
       name: input.name,
       confirmName: input.confirmName,
       reason: input.reason,
       isDropped: Boolean(meta?.droppedAt),
-      usageCount: usageCount(usage),
-    });
+    };
+    // Confirmation, protected and already-dropped first; the cooldown comes
+    // before the reason requirement of a used event.
+    assertCanDrop({ ...guard, usageCount: 0 });
     // A re-drop while a replay still copies messages back would lose copies,
     // so Drop waits for every replay to finish and for 24 h after an undrop.
     const activeReplay = await tx.eventReplayRequest.findFirst({
@@ -566,7 +570,6 @@ export async function dropManagedEvent(
       select: { createdAt: true },
     });
     if (activeReplay || lastUndrop) {
-      const { timezone } = await getSettingsForProject(project.id);
       const block = getRedropBlock({
         replayActive: Boolean(activeReplay),
         lastUndropAt: lastUndrop?.createdAt ?? null,
@@ -577,6 +580,10 @@ export async function dropManagedEvent(
         throw new EventDropError('REDROP_COOLDOWN', block.message);
       }
     }
+    const { action, reason } = assertCanDrop({
+      ...guard,
+      usageCount: usageCount(usage),
+    });
     // Taken before the Redis write so the replay window covers every held event.
     const droppedAt = new Date();
     await tx.eventMeta.upsert({

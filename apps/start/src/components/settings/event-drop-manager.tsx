@@ -27,6 +27,24 @@ import {
 
 const PAGE_SIZE = 100;
 const REPLAY_POLL_MS = 15 * 1000;
+const COOLDOWN_REFETCH_SLACK_MS = 1000;
+
+function nextEventsRefetch(events: ManagedEvent[] | undefined): number | false {
+  if (!events) {
+    return false;
+  }
+  if (events.some((e) => e.dropBlocked?.reason === 'replay')) {
+    return REPLAY_POLL_MS;
+  }
+  const now = Date.now();
+  const ends = events
+    .map((e) => (e.dropBlocked?.until ? new Date(e.dropBlocked.until).getTime() : null))
+    .filter((t): t is number => t !== null && t > now);
+  if (ends.length === 0) {
+    return false;
+  }
+  return Math.min(...ends) - now + COOLDOWN_REFETCH_SLACK_MS;
+}
 const HIGH_VOLUME_PCT = 0.5;
 
 type Filter = 'all' | 'unused' | 'used' | 'dropped' | 'protected';
@@ -232,19 +250,17 @@ function ActionCell({
           variant="outline"
           size="sm"
           disabled
-          title={blocked.message}
+          aria-describedby={`drop-blocked-${event.name}`}
           className="whitespace-nowrap"
         >
           {blocked.reason === 'replay' ? 'Replaying…' : 'Drop'}
         </Button>
-        {blocked.until && (
-          <div
-            className="mt-1 whitespace-nowrap text-sm text-muted-foreground"
-            title={blocked.message}
-          >
-            again after {dateTime(blocked.until)}
-          </div>
-        )}
+        <div
+          id={`drop-blocked-${event.name}`}
+          className="mt-1 max-w-[260px] text-right text-sm text-muted-foreground"
+        >
+          {blocked.message}
+        </div>
       </div>
     );
   }
@@ -288,18 +304,12 @@ export default function EventDropManager({
   const [undropFor, setUndropFor] = useState<ManagedEvent | null>(null);
 
   // While a replay is pending or running, poll both lists so "Replaying…" and
-  // the audit row's replay status update when the worker finishes.
+  // the audit row's replay status update when the worker finishes. During a
+  // re-drop cooldown, refetch when the earliest one ends so Drop comes back.
   const eventsQuery = useQuery(
     trpc.event.managedEvents.queryOptions(
       { projectId },
-      {
-        refetchInterval: (query) =>
-          query.state.data?.events.some(
-            (e) => e.dropBlocked?.reason === 'replay'
-          )
-            ? REPLAY_POLL_MS
-            : false,
-      }
+      { refetchInterval: (query) => nextEventsRefetch(query.state.data?.events) }
     )
   );
   const auditQuery = useQuery(

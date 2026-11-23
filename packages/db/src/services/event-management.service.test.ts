@@ -332,6 +332,41 @@ describe('dropManagedEvent', () => {
     }
   });
 
+  it('reports the cooldown, not "give a reason", for a used event dropped with no reason', async () => {
+    db.eventDropAudit.findFirst.mockResolvedValue({ createdAt: new Date(Date.now() - 60 * 1000) });
+    await expect(
+      dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'Home Page: Shown',
+        confirmName: 'Home Page: Shown',
+        source: 'UI',
+      })
+    ).rejects.toMatchObject({ code: 'REDROP_COOLDOWN', httpStatus: 409 });
+
+    // Without the cooldown the same request still needs a reason.
+    db.eventDropAudit.findFirst.mockResolvedValue(null);
+    await expect(
+      dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'Home Page: Shown',
+        confirmName: 'Home Page: Shown',
+        source: 'UI',
+      })
+    ).rejects.toMatchObject({ code: 'REASON_REQUIRED' });
+  });
+
+  it('still reports a confirmation typo before the cooldown', async () => {
+    db.eventDropAudit.findFirst.mockResolvedValue({ createdAt: new Date(Date.now() - 60 * 1000) });
+    await expect(
+      dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'App Init: Theme Set',
+        confirmName: 'App Init: Theme',
+        source: 'UI',
+      })
+    ).rejects.toMatchObject({ code: 'CONFIRM_MISMATCH' });
+  });
+
   it('needs requestedBy for Agent drops and an http(s) chat URL', async () => {
     await expect(
       dropManagedEvent({
