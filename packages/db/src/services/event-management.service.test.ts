@@ -507,28 +507,23 @@ describe('listManagedEvents', () => {
     db.eventReplayRequest.findMany.mockResolvedValue([{ eventName: 'Home Page: Shown' }]);
     const undropAt = new Date(Date.now() - 60 * 60 * 1000);
     db.eventDropAudit.groupBy.mockResolvedValue([
-      { eventName: 'App Init: Theme Set', _max: { createdAt: undropAt } },
+      { eventName: 'session_start', _max: { createdAt: undropAt } },
     ]);
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_daily')) {
         throw new Error('Code: 60. DB::Exception: Table openpanel.event_name_daily does not exist. (UNKNOWN_TABLE)');
       }
-      return chResult([
-        { name: 'Home Page: Shown' },
-        { name: 'session_start' },
-        { name: 'App Init: Theme Set' },
-        { name: '*' },
-      ]);
+      return chResult([{ name: 'Home Page: Shown' }, { name: 'session_start' }, { name: '*' }]);
     });
     const result = await listManagedEvents({ projectId: 'regain-app' });
     expect(result.volumeAvailable).toBe(false);
     const byName = (name: string) => result.events.find((e) => e.name === name);
     expect(byName('Home Page: Shown')?.dropBlocked).toMatchObject({ reason: 'replay', until: null });
-    expect(byName('App Init: Theme Set')?.dropBlocked).toMatchObject({
+    expect(byName('session_start')?.dropBlocked).toMatchObject({
       reason: 'cooldown',
       until: new Date(undropAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
     });
-    expect(byName('session_start')?.dropBlocked).toBeNull();
+    expect(byName('Old Thing')?.dropBlocked).toBeNull();
     expect(db.eventDropAudit.groupBy.mock.calls[0]![0].where).toMatchObject({
       projectId: 'regain-app',
       action: { in: ['undrop', 'undrop_replay'] },
