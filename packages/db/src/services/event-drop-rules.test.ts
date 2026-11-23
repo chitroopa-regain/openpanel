@@ -198,6 +198,7 @@ describe('getRedropBlock (409 REDROP_COOLDOWN)', () => {
       reason: 'replay',
       message: 'Replay of this event is still running; try again when it finishes',
       until: null,
+      remainingMs: null,
     });
   });
 
@@ -208,6 +209,7 @@ describe('getRedropBlock (409 REDROP_COOLDOWN)', () => {
       message:
         'This event was undropped at 23 Nov 2026, 09:00 GMT+5:30; it can be dropped again after 24 Nov 2026, 09:00 GMT+5:30',
       until: '2026-11-24T03:30:00.000Z',
+      remainingMs: 15.5 * 60 * 60 * 1000,
     });
   });
 

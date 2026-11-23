@@ -658,8 +658,11 @@ export async function undropManagedEvent(
       data: { droppedAt: null, clearedAt: null },
     });
     await removeDroppedEvent(project.id, input.name);
+    // Taken after the SREM: the re-drop cooldown and the replay window count
+    // from here, not from the transaction start (which may wait on the lock).
+    const undroppedAt = new Date();
     // Ingest may keep holding for up to its refresh interval after the SREM.
-    const held = getReplayWindow(meta!.droppedAt!, new Date());
+    const held = getReplayWindow(meta!.droppedAt!, undroppedAt);
     // A quick drop → undrop → drop again could overlap the previous replay's
     // grace period; start after it so no message is copied twice.
     const previous = await tx.eventReplayRequest.findFirst({
@@ -699,6 +702,7 @@ export async function undropManagedEvent(
         chatUrl: input.chatUrl || null,
         boardsAffected: boards,
         replayRequestId: replay?.id ?? null,
+        createdAt: undroppedAt,
       },
       select: { id: true },
     });

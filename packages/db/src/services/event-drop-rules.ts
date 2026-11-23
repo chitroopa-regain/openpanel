@@ -176,6 +176,8 @@ export type RedropBlock = {
   message: string;
   /** End of the cooldown; null while a replay is unfinished. */
   until: string | null;
+  /** Server-measured time left, so clients need not trust their own clock. */
+  remainingMs: number | null;
 };
 
 function formatInZone(date: Date, timeZone: string) {
@@ -196,7 +198,12 @@ export function getRedropBlock(input: {
   timeZone: string;
 }): RedropBlock | null {
   if (input.replayActive) {
-    return { reason: 'replay', message: REPLAY_IN_PROGRESS_MESSAGE, until: null };
+    return {
+      reason: 'replay',
+      message: REPLAY_IN_PROGRESS_MESSAGE,
+      until: null,
+      remainingMs: null,
+    };
   }
   if (!input.lastUndropAt) {
     return null;
@@ -209,5 +216,6 @@ export function getRedropBlock(input: {
     reason: 'cooldown',
     message: `This event was undropped at ${formatInZone(input.lastUndropAt, input.timeZone)}; it can be dropped again after ${formatInZone(until, input.timeZone)}`,
     until: until.toISOString(),
+    remainingMs: until.getTime() - input.now.getTime(),
   };
 }

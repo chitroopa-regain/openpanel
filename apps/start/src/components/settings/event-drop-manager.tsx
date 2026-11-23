@@ -29,21 +29,32 @@ const PAGE_SIZE = 100;
 const REPLAY_POLL_MS = 15 * 1000;
 const COOLDOWN_REFETCH_SLACK_MS = 1000;
 
-function nextEventsRefetch(events: ManagedEvent[] | undefined): number | false {
+/**
+ * Replays: poll. Cooldowns: refetch when the first one ends, timed from the
+ * server's remainingMs and the fetch time, so a skewed browser clock does not
+ * matter. The server decides whether Drop is back.
+ */
+function nextEventsRefetch(
+  events: ManagedEvent[] | undefined,
+  fetchedAt: number
+): number | false {
   if (!events) {
     return false;
   }
   if (events.some((e) => e.dropBlocked?.reason === 'replay')) {
     return REPLAY_POLL_MS;
   }
-  const now = Date.now();
-  const ends = events
-    .map((e) => (e.dropBlocked?.until ? new Date(e.dropBlocked.until).getTime() : null))
-    .filter((t): t is number => t !== null && t > now);
-  if (ends.length === 0) {
+  const remaining = events
+    .map((e) => e.dropBlocked?.remainingMs)
+    .filter((ms): ms is number => typeof ms === 'number');
+  if (remaining.length === 0) {
     return false;
   }
-  return Math.min(...ends) - now + COOLDOWN_REFETCH_SLACK_MS;
+  const elapsed = Math.max(0, Date.now() - fetchedAt);
+  return Math.max(
+    COOLDOWN_REFETCH_SLACK_MS,
+    Math.min(...remaining) - elapsed + COOLDOWN_REFETCH_SLACK_MS
+  );
 }
 const HIGH_VOLUME_PCT = 0.5;
 
@@ -239,11 +250,9 @@ function ActionCell({
       </span>
     );
   }
+  // The server's answer decides; the list refetches when a cooldown ends.
   const blocked = event.dropBlocked;
-  const blockedNow =
-    blocked !== null &&
-    (blocked.until === null || new Date(blocked.until).getTime() > Date.now());
-  if (blocked && blockedNow) {
+  if (blocked) {
     return (
       <div className="flex flex-col items-end">
         <Button
@@ -309,7 +318,10 @@ export default function EventDropManager({
   const eventsQuery = useQuery(
     trpc.event.managedEvents.queryOptions(
       { projectId },
-      { refetchInterval: (query) => nextEventsRefetch(query.state.data?.events) }
+      {
+        refetchInterval: (query) =>
+          nextEventsRefetch(query.state.data?.events, query.state.dataUpdatedAt),
+      }
     )
   );
   const auditQuery = useQuery(

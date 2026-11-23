@@ -448,6 +448,26 @@ describe('undropManagedEvent', () => {
     });
   });
 
+  it('stamps the undrop audit row at the undrop itself, not at the transaction start', async () => {
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date(Date.now() - 60 * 1000) });
+    let srem = 0;
+    mocks.removeDroppedEvent.mockImplementationOnce(async () => {
+      srem = Date.now();
+    });
+    // The transaction starts, then waits 50 ms for the event lock.
+    db.$executeRaw.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve(1), 50)));
+    const txStart = Date.now();
+    await undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' });
+    const { createdAt } = db.eventDropAudit.create.mock.calls[0]![0].data;
+    expect(createdAt).toBeInstanceOf(Date);
+    expect(createdAt.getTime()).toBeGreaterThanOrEqual(srem);
+    expect(createdAt.getTime()).toBeGreaterThanOrEqual(txStart + 45);
+    // The replay window ends a grace period after that same instant.
+    expect(db.eventReplayRequest.create.mock.calls[0]![0].data.toTs.getTime()).toBe(
+      createdAt.getTime() + INGEST_REFRESH_GRACE_MS
+    );
+  });
+
   it('undrops without replay', async () => {
     db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date() });
     const result = await undropManagedEvent({
@@ -523,6 +543,7 @@ describe('listManagedEvents', () => {
       reason: 'cooldown',
       until: new Date(undropAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
     });
+    expect(byName('session_start')?.dropBlocked?.remainingMs).toBeGreaterThan(22.9 * 60 * 60 * 1000);
     expect(byName('Old Thing')?.dropBlocked).toBeNull();
     expect(db.eventDropAudit.groupBy.mock.calls[0]![0].where).toMatchObject({
       projectId: 'regain-app',
