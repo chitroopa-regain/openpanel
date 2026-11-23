@@ -491,6 +491,18 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
     expect(daily()).toContain("day > toDate('2026-11-21') - 7 AND day <= toDate('2026-11-21')");
     expect(daily()).toContain('FINAL');
     expect(rollup()).toContain('pass >= 1 AND running = 0');
+    // Anchor has no lower bound; the day list is the 30 days ending on it.
+    expect(rollup()).toContain("WHERE pass >= 1 AND running = 0 AND day < toDate('2026-11-23')");
+    expect(rollup()).toContain('day <= anchor AND day > anchor - 30');
+  });
+
+  it('an old newest finished day (rollup stalled) still anchors the windows, not "today so far"', async () => {
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) =>
+      chResult(query.includes('event_name_rollup_days') ? [{ day: '2026-10-01' }, { day: '2026-09-20' }] : [])
+    );
+    const result = await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
+    expect(result).toMatchObject({ volumeDay: '2026-10-01', partial: false });
+    expect(daily()).toContain("day > toDate('2026-10-01') - 30 AND day <= toDate('2026-10-01')");
   });
 
   it('7d/30d leave out days that are not finished (e.g. a recount still running)', async () => {

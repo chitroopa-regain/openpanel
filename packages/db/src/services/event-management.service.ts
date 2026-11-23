@@ -126,8 +126,8 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const UNKNOWN_TABLE = /UNKNOWN_TABLE|Code: 60\b/;
 
 /**
- * Finished rollup days before today within the 30-day window, newest first;
- * [] when none is finished yet. Only a missing rollup_days table (an older
+ * Finished rollup days in the 30-day window ending on the newest finished
+ * day before today, newest first; [] when none is finished yet. Only a missing rollup_days table (an older
  * rollup) gives null: then every day up to yesterday counts. Any other
  * error is thrown, so the page shows "—" rather than unfinished numbers.
  */
@@ -135,11 +135,18 @@ async function getFinishedVolumeDays(today: string): Promise<string[] | null> {
   const t = sqlstring.escape(today);
   try {
     const res = await ch.query({
+      // The newest finished day (no lower bound), then every finished day in
+      // the 30-day window that ends on it. No finished day: NULL bounds, no rows.
       query: `
+        WITH (
+          SELECT maxOrNull(day)
+          FROM ${EVENT_NAME_ROLLUP_DAYS_TABLE} FINAL
+          WHERE pass >= 1 AND running = 0 AND day < toDate(${t})
+        ) AS anchor
         SELECT toString(day) AS day
         FROM ${EVENT_NAME_ROLLUP_DAYS_TABLE} FINAL
         WHERE pass >= 1 AND running = 0
-          AND day < toDate(${t}) AND day >= toDate(${t}) - ${TREND_DAYS}
+          AND day <= anchor AND day > anchor - ${TREND_DAYS}
         ORDER BY day DESC`,
       format: 'JSONEachRow',
     });
