@@ -489,6 +489,8 @@ model EventDropAudit {
   chatUrl          String?
   /// List of { id, name, url, active } boards that used the event
   boardsAffected   Json     @default("[]")
+  /// undrop rows: when the event had been dropped (start of the data gap)
+  droppedFrom      DateTime?
   slackPosted      Boolean?
   createdAt        DateTime @default(now())
 

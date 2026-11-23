@@ -41,6 +41,15 @@ describe('buildDropPeriods', () => {
     ]);
   });
 
+  it('a legacy drop (no drop audit row) keeps its gap after undrop, from the undrop row', () => {
+    const periods = buildDropPeriods([], [
+      { eventName: 'Legacy', action: 'undrop', createdAt: d('2026-11-23T08:00:00Z'), droppedFrom: d('2026-04-08T12:00:00Z') },
+    ]);
+    expect(periods.get('Legacy')).toEqual([
+      { eventName: 'Legacy', from: d('2026-04-08T12:00:00Z'), to: d('2026-11-23T08:00:00Z') },
+    ]);
+  });
+
   it('a drop made before the audit log existed still shows (event_meta only)', () => {
     const periods = buildDropPeriods([{ name: 'Legacy', droppedAt: d('2026-04-08T12:00:00Z') }], []);
     expect(periods.get('Legacy')?.[0]).toMatchObject({ to: null });

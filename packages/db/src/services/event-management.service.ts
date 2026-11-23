@@ -11,7 +11,11 @@ import sqlstring from 'sqlstring';
 import { ch, TABLE_NAMES } from '../clickhouse/client';
 import { logger } from '../logger';
 import { db } from '../prisma-client';
-import { addDroppedEvent, removeDroppedEvent } from './drop-events.service';
+import {
+  addDroppedEvent,
+  projectDropLockKey,
+  removeDroppedEvent,
+} from './drop-events.service';
 import {
   assertCanDrop,
   assertCanUndrop,
@@ -419,7 +423,7 @@ async function reconcileRedis(projectId: string, name: string) {
     // commit between our read and our Redis write.
     await db.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey(projectId, name)}))`;
+        await lockEvent(tx, projectId, name);
         const meta = await tx.eventMeta.findUnique({
           where: { name_projectId: { name, projectId } },
           select: { droppedAt: true },
@@ -446,6 +450,15 @@ function lockKey(projectId: string, name: string) {
 }
 
 /**
+ * Shared project lock first (a full Redis resync takes it exclusive), then
+ * the per-event lock that serializes drop/undrop of one name.
+ */
+async function lockEvent(tx: Tx, projectId: string, name: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${projectDropLockKey(projectId)}))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey(projectId, name)}))`;
+}
+
+/**
  * Runs one drop/undrop for (project, event) at a time: a transaction-scoped
  * Postgres advisory lock serializes concurrent requests, and the Redis write
  * happens inside it, so Redis and event_meta change together.
@@ -458,7 +471,7 @@ async function withEventLock<T>(
   try {
     return await db.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey(projectId, name)}))`;
+        await lockEvent(tx, projectId, name);
         return fn(tx);
       },
       { timeout: ACTION_TX_TIMEOUT_MS, maxWait: ACTION_TX_TIMEOUT_MS }
@@ -576,6 +589,9 @@ export async function undropManagedEvent(
         projectId: project.id,
         eventName: input.name,
         action: 'undrop',
+        // Start of the gap, so the board note shows it even for a drop that
+        // has no audit row (made before the audit log existed).
+        droppedFrom: meta!.droppedAt,
         reason: input.reason?.trim() || null,
         source: input.source,
         requestedBy: input.requestedBy?.trim() || null,
@@ -606,6 +622,9 @@ export async function undropManagedEvent(
     auditId: result.auditId,
   };
 }
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function listEventDropAudit(projectId: string, limit = 50) {
   const take = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);

@@ -39,7 +39,13 @@ const UNDROP_ACTIONS = new Set(['undrop']);
  */
 export function buildDropPeriods(
   droppedMetas: { name: string; droppedAt: Date | null }[],
-  audit: { eventName: string; action: string; createdAt: Date }[]
+  audit: {
+    eventName: string;
+    action: string;
+    createdAt: Date;
+    /** undrop rows: when the event had been dropped */
+    droppedFrom?: Date | null;
+  }[]
 ): Map<string, DropPeriod[]> {
   const periods = new Map<string, DropPeriod[]>();
   const add = (period: DropPeriod) => {
@@ -56,7 +62,9 @@ export function buildDropPeriods(
     if (DROP_ACTIONS.has(row.action)) {
       open.set(row.eventName, row.createdAt);
     } else if (UNDROP_ACTIONS.has(row.action)) {
-      const from = open.get(row.eventName);
+      // The undrop's own record of the drop start covers drops that have
+      // no audit row (made before the audit log existed).
+      const from = row.droppedFrom ?? open.get(row.eventName);
       if (from) {
         add({
           eventName: row.eventName,

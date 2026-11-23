@@ -12,6 +12,7 @@ CREATE TABLE "event_drop_audit" (
     "requestedBy" TEXT,
     "chatUrl" TEXT,
     "boardsAffected" JSONB NOT NULL DEFAULT '[]',
+    "droppedFrom" TIMESTAMP(3),
     "slackPosted" BOOLEAN,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

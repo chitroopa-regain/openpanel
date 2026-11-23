@@ -203,9 +203,12 @@ describe('dropManagedEvent', () => {
       confirmName: 'App Init: Theme Set',
       source: 'UI',
     });
-    expect(db.$executeRaw).toHaveBeenCalledOnce();
-    expect(db.$executeRaw.mock.calls[0]).toContain('event-drop:regain-app:App Init: Theme Set');
-    const lockOrder = db.$executeRaw.mock.invocationCallOrder[0]!;
+    // Shared project lock (a full resync takes it exclusive), then the event lock.
+    expect(db.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(db.$executeRaw.mock.calls[0]!.join('')).toContain('pg_advisory_xact_lock_shared');
+    expect(db.$executeRaw.mock.calls[0]).toContain('event-drop-project:regain-app');
+    expect(db.$executeRaw.mock.calls[1]).toContain('event-drop:regain-app:App Init: Theme Set');
+    const lockOrder = db.$executeRaw.mock.invocationCallOrder[1]!;
     const upsertOrder = db.eventMeta.upsert.mock.invocationCallOrder[0]!;
     const auditOrder = db.eventDropAudit.create.mock.invocationCallOrder[0]!;
     const redisOrder = mocks.addDroppedEvent.mock.invocationCallOrder[0]!;
@@ -304,7 +307,8 @@ describe('dropManagedEvent', () => {
 
 describe('undropManagedEvent', () => {
   it('undrops: lets new events in, clears droppedAt, audits; no replay', async () => {
-    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) });
+    const droppedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt });
     const result = await undropManagedEvent({
       projectId: 'regain-app',
       name: 'Group Preview: Page Changed',
@@ -318,6 +322,8 @@ describe('undropManagedEvent', () => {
     expect(db.eventDropAudit.create.mock.calls[0]![0].data).toMatchObject({
       action: 'undrop',
       eventName: 'Group Preview: Page Changed',
+      // Start of the gap, for the board note.
+      droppedFrom: droppedAt,
     });
     expect(db.eventDropAudit.create.mock.calls[0]![0].data).not.toHaveProperty('replayRequestId');
     expect(result).toEqual({ name: 'Group Preview: Page Changed', status: 'active', auditId: 'audit-1' });

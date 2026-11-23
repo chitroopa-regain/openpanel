@@ -56,16 +56,41 @@ export async function getDroppedEvents(projectId: string): Promise<string[]> {
   return getRedisCache().smembers(DROPPED_SET_KEY(projectId));
 }
 
+/**
+ * Advisory lock key shared by every drop/undrop of a project (taken shared)
+ * and the full resync below (taken exclusive), so a resync never reads
+ * Postgres before an action commits and then overwrites its Redis write.
+ */
+export function projectDropLockKey(projectId: string) {
+  return `event-drop-project:${projectId}`;
+}
+
+const SYNC_TX_TIMEOUT_MS = 30 * 1000;
+
+/** Rebuilds op:dropped:<projectId> from event_meta, atomically. */
 export async function syncDroppedEventsToRedis(projectId: string) {
   const { db } = await import('../prisma-client');
-  const dropped = await db.eventMeta.findMany({
-    where: { projectId, droppedAt: { not: null } },
-    select: { name: true },
-  });
-  const key = DROPPED_SET_KEY(projectId);
-  const redis = getRedisCache();
-  await redis.del(key);
-  if (dropped.length > 0) {
-    await redis.sadd(key, ...dropped.map((d) => d.name));
-  }
+  await db.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${projectDropLockKey(projectId)}))`;
+      const dropped = await tx.eventMeta.findMany({
+        where: { projectId, droppedAt: { not: null } },
+        select: { name: true },
+      });
+      const key = DROPPED_SET_KEY(projectId);
+      // One MULTI: ingest never sees the set empty in between.
+      const multi = getRedisCache().multi().del(key);
+      if (dropped.length > 0) {
+        multi.sadd(key, ...dropped.map((d) => d.name));
+      }
+      const results = await withTimeout(multi.exec(), 5000, 'syncDroppedEventsToRedis');
+      const failed = results?.find(([error]) => error);
+      if (!results || failed) {
+        throw new Error(
+          `syncDroppedEventsToRedis: Redis transaction failed for ${projectId}: ${failed?.[0]?.message ?? 'aborted'}`,
+        );
+      }
+    },
+    { timeout: SYNC_TX_TIMEOUT_MS, maxWait: SYNC_TX_TIMEOUT_MS },
+  );
 }

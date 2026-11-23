@@ -60,7 +60,7 @@ export async function getDropNotes(
     // drop/undrop pair and lose an old gap.
     db.eventDropAudit.findMany({
       where: { projectId: input.projectId },
-      select: { eventName: true, action: true, createdAt: true },
+      select: { eventName: true, action: true, createdAt: true, droppedFrom: true },
     }),
   ]);
   if (droppedMetas.length === 0 && audit.length === 0) {
