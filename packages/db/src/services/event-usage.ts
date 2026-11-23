@@ -301,10 +301,9 @@ export function buildEventUsage(source: UsageSource): Map<string, EventUsage> {
       boardId: board.id,
       lastEditedAt: report.updatedAt.toISOString(),
       lastViewedAt: lastViewed?.toISOString() ?? null,
-      // Reports are mostly read on their board, so an active board makes its reports active.
-      active:
-        board.active ||
-        (lastViewed !== null && isActive(lastViewed, report.updatedAt, source.now)),
+      // Reports are mostly read on their board, so an active board makes its
+      // reports active; otherwise the report's own view (or edit) decides.
+      active: board.active || isActive(lastViewed, report.updatedAt, source.now),
     };
     for (const name of names) {
       let perBoard = byEvent.get(name);

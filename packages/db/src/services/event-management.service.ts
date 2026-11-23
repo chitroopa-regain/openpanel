@@ -405,93 +405,136 @@ function assertActor(input: EventActionInput) {
   }
 }
 
+/**
+ * Ingest re-reads the dropped set every 5 s, so an undrop takes up to that
+ * long to reach it. The replay window runs this much past the undrop; the
+ * replay worker must not start a request before its to_ts.
+ */
+export const INGEST_REFRESH_GRACE_MS = 30 * 1000;
+const ACTION_TX_TIMEOUT_MS = 20 * 1000;
+
+/** The client Prisma hands to an interactive transaction. */
+type Tx = Omit<
+  typeof db,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
+/**
+ * After a failed action, put Redis back to what Postgres committed (the
+ * source of truth), instead of blindly undoing our own write: another
+ * request may have changed the state in between.
+ */
+async function reconcileRedis(projectId: string, name: string) {
+  try {
+    const meta = await db.eventMeta.findUnique({
+      where: { name_projectId: { name, projectId } },
+      select: { droppedAt: true },
+    });
+    if (meta?.droppedAt) {
+      await addDroppedEvent(projectId, name);
+    } else {
+      await removeDroppedEvent(projectId, name);
+    }
+  } catch (error) {
+    logger.error('Could not reconcile dropped-event Redis set', {
+      projectId,
+      name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Runs one drop/undrop for (project, event) at a time: a transaction-scoped
+ * Postgres advisory lock serializes concurrent requests, and the Redis write
+ * happens inside it, so Redis and event_meta change together.
+ */
+async function withEventLock<T>(
+  projectId: string,
+  name: string,
+  fn: (tx: Tx) => Promise<T>
+): Promise<T> {
+  try {
+    return await db.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`event-drop:${projectId}:${name}`}))`;
+        return fn(tx);
+      },
+      { timeout: ACTION_TX_TIMEOUT_MS, maxWait: ACTION_TX_TIMEOUT_MS }
+    );
+  } catch (error) {
+    // Guards throw before anything is written.
+    if (error instanceof EventDropError) {
+      throw error;
+    }
+    // Redis or Postgres failed mid-way: make Redis match what was committed.
+    await reconcileRedis(projectId, name);
+    logger.error('Event drop action failed', {
+      projectId,
+      name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new EventDropError(
+      'UNAVAILABLE',
+      'Failed to update the event: Redis or the database is unavailable. Please try again.'
+    );
+  }
+}
+
 export async function dropManagedEvent(
   input: EventActionInput & { reason?: string | null }
 ) {
   assertActor(input);
   const project = await getProjectOrThrow(input.projectId);
-  const [meta, usage] = await Promise.all([
-    db.eventMeta.findUnique({
-      where: { name_projectId: { name: input.name, projectId: project.id } },
-      select: { droppedAt: true },
-    }),
-    getUsageOfEvent(project, input.name),
-  ]);
-  const { action, reason } = assertCanDrop({
-    name: input.name,
-    confirmName: input.confirmName,
-    reason: input.reason,
-    isDropped: Boolean(meta?.droppedAt),
-    usageCount: usageCount(usage),
-  });
+  const usage = await getUsageOfEvent(project, input.name);
   const boards = affectedBoards(usage);
 
-  // Redis first: ingest starts holding new events right away.
-  try {
-    await addDroppedEvent(project.id, input.name);
-  } catch (error) {
-    logger.error('drop: Redis write failed', { error });
-    throw new EventDropError(
-      'UNAVAILABLE',
-      'Failed to drop event: Redis is unavailable. Please try again.'
-    );
-  }
-
-  const droppedAt = new Date();
-  let auditId: string;
-  try {
-    auditId = await db.$transaction(async (tx) => {
-      const current = await tx.eventMeta.findUnique({
-        where: { name_projectId: { name: input.name, projectId: project.id } },
-        select: { droppedAt: true },
-      });
-      if (current?.droppedAt) {
-        throw new EventDropError(
-          'ALREADY_DROPPED',
-          `"${input.name}" is already dropped`
-        );
-      }
-      await tx.eventMeta.upsert({
-        where: { name_projectId: { name: input.name, projectId: project.id } },
-        create: { projectId: project.id, name: input.name, droppedAt },
-        update: { droppedAt },
-      });
-      const audit = await tx.eventDropAudit.create({
-        data: {
-          projectId: project.id,
-          eventName: input.name,
-          action,
-          reason,
-          source: input.source,
-          requestedBy: input.requestedBy?.trim() || null,
-          chatUrl: input.chatUrl || null,
-          boardsAffected: boards,
-        },
-        select: { id: true },
-      });
-      return audit.id;
+  const result = await withEventLock(project.id, input.name, async (tx) => {
+    const meta = await tx.eventMeta.findUnique({
+      where: { name_projectId: { name: input.name, projectId: project.id } },
+      select: { droppedAt: true },
     });
-  } catch (error) {
-    if (!(error instanceof EventDropError && error.code === 'ALREADY_DROPPED')) {
-      await removeDroppedEvent(project.id, input.name).catch(() => {});
-    }
-    if (error instanceof EventDropError) {
-      throw error;
-    }
-    logger.error('drop: database write failed', { error });
-    throw new EventDropError(
-      'UNAVAILABLE',
-      'Failed to drop event: database error. Please try again.'
-    );
-  }
+    const { action, reason } = assertCanDrop({
+      name: input.name,
+      confirmName: input.confirmName,
+      reason: input.reason,
+      isDropped: Boolean(meta?.droppedAt),
+      usageCount: usageCount(usage),
+    });
+    // Taken before the Redis write so the replay window covers every held event.
+    const droppedAt = new Date();
+    await tx.eventMeta.upsert({
+      where: { name_projectId: { name: input.name, projectId: project.id } },
+      create: { projectId: project.id, name: input.name, droppedAt },
+      update: { droppedAt },
+    });
+    const audit = await tx.eventDropAudit.create({
+      data: {
+        projectId: project.id,
+        eventName: input.name,
+        action,
+        reason,
+        source: input.source,
+        requestedBy: input.requestedBy?.trim() || null,
+        chatUrl: input.chatUrl || null,
+        boardsAffected: boards,
+      },
+      select: { id: true },
+    });
+    // Last step before commit: ingest starts holding new events.
+    await addDroppedEvent(project.id, input.name);
+    return { action, reason, droppedAt, auditId: audit.id };
+  });
   await getEventMetasCached.clear(project.id).catch(() => {});
 
-  const recoverableUntil = new Date(droppedAt.getTime() + HOLD_WINDOW_MS);
-  await postAuditToSlack(auditId, {
+  const recoverableUntil = new Date(
+    result.droppedAt.getTime() + HOLD_WINDOW_MS
+  );
+  await postAuditToSlack(result.auditId, {
     projectName: project.name,
     eventName: input.name,
-    action,
-    reason,
+    action: result.action,
+    reason: result.reason,
     source: input.source,
     requestedBy: input.requestedBy,
     chatUrl: input.chatUrl,
@@ -502,9 +545,9 @@ export async function dropManagedEvent(
   return {
     name: input.name,
     status: 'dropped' as const,
-    droppedAt: droppedAt.toISOString(),
+    droppedAt: result.droppedAt.toISOString(),
     recoverableUntil: recoverableUntil.toISOString(),
-    auditId,
+    auditId: result.auditId,
     boardsAffected: boards,
   };
 }
@@ -514,85 +557,56 @@ export async function undropManagedEvent(
 ) {
   assertActor(input);
   const project = await getProjectOrThrow(input.projectId);
-  const meta = await db.eventMeta.findUnique({
-    where: { name_projectId: { name: input.name, projectId: project.id } },
-    select: { droppedAt: true },
-  });
-  assertCanUndrop({
-    name: input.name,
-    confirmName: input.confirmName,
-    isDropped: Boolean(meta?.droppedAt),
-  });
-  const droppedAt = meta!.droppedAt!;
   const usage = await getUsageOfEvent(project, input.name);
   const boards = affectedBoards(usage);
 
-  try {
-    await removeDroppedEvent(project.id, input.name);
-  } catch (error) {
-    logger.error('undrop: Redis write failed', { error });
-    throw new EventDropError(
-      'UNAVAILABLE',
-      'Failed to undrop event: Redis is unavailable. Please try again.'
-    );
-  }
-
-  const now = new Date();
-  const window = getReplayWindow(droppedAt, now);
-  let result: { auditId: string; replayRequestId: string | null };
-  try {
-    result = await db.$transaction(async (tx) => {
-      const updated = await tx.eventMeta.updateMany({
-        where: {
-          name: input.name,
-          projectId: project.id,
-          droppedAt: { not: null },
-        },
-        data: { droppedAt: null, clearedAt: null },
-      });
-      if (updated.count === 0) {
-        throw new EventDropError('NOT_DROPPED', `"${input.name}" is not dropped`);
-      }
-      const replay = input.replay
-        ? await tx.eventReplayRequest.create({
-            data: {
-              projectId: project.id,
-              eventName: input.name,
-              fromTs: window.fromTs,
-              toTs: window.toTs,
-            },
-            select: { id: true },
-          })
-        : null;
-      const audit = await tx.eventDropAudit.create({
-        data: {
-          projectId: project.id,
-          eventName: input.name,
-          action: replay ? 'undrop_replay' : 'undrop',
-          reason: input.reason?.trim() || null,
-          source: input.source,
-          requestedBy: input.requestedBy?.trim() || null,
-          chatUrl: input.chatUrl || null,
-          boardsAffected: boards,
-          replayRequestId: replay?.id ?? null,
-        },
-        select: { id: true },
-      });
-      return { auditId: audit.id, replayRequestId: replay?.id ?? null };
+  const result = await withEventLock(project.id, input.name, async (tx) => {
+    const meta = await tx.eventMeta.findUnique({
+      where: { name_projectId: { name: input.name, projectId: project.id } },
+      select: { droppedAt: true },
     });
-  } catch (error) {
-    if (!(error instanceof EventDropError && error.code === 'NOT_DROPPED')) {
-      await addDroppedEvent(project.id, input.name).catch(() => {});
-    }
-    if (error instanceof EventDropError) {
-      throw error;
-    }
-    logger.error('undrop: database write failed', { error });
-    throw new EventDropError(
-      'UNAVAILABLE',
-      'Failed to undrop event: database error. Please try again.'
+    assertCanUndrop({
+      name: input.name,
+      confirmName: input.confirmName,
+      isDropped: Boolean(meta?.droppedAt),
+    });
+    await tx.eventMeta.update({
+      where: { name_projectId: { name: input.name, projectId: project.id } },
+      data: { droppedAt: null, clearedAt: null },
+    });
+    await removeDroppedEvent(project.id, input.name);
+    // Ingest may keep holding for up to its refresh interval after the SREM.
+    const window = getReplayWindow(
+      meta!.droppedAt!,
+      new Date(Date.now() + INGEST_REFRESH_GRACE_MS)
     );
-  }
+    const replay = input.replay
+      ? await tx.eventReplayRequest.create({
+          data: {
+            projectId: project.id,
+            eventName: input.name,
+            fromTs: window.fromTs,
+            toTs: window.toTs,
+          },
+          select: { id: true },
+        })
+      : null;
+    const audit = await tx.eventDropAudit.create({
+      data: {
+        projectId: project.id,
+        eventName: input.name,
+        action: replay ? 'undrop_replay' : 'undrop',
+        reason: input.reason?.trim() || null,
+        source: input.source,
+        requestedBy: input.requestedBy?.trim() || null,
+        chatUrl: input.chatUrl || null,
+        boardsAffected: boards,
+        replayRequestId: replay?.id ?? null,
+      },
+      select: { id: true },
+    });
+    return { auditId: audit.id, replayRequestId: replay?.id ?? null, window };
+  });
   await getEventMetasCached.clear(project.id).catch(() => {});
 
   await postAuditToSlack(result.auditId, {
@@ -605,7 +619,7 @@ export async function undropManagedEvent(
     chatUrl: input.chatUrl,
     boards,
     extra: result.replayRequestId
-      ? `replaying ${formatUtc(window.fromTs)} → ${formatUtc(window.toTs)}`
+      ? `replaying ${formatUtc(result.window.fromTs)} → ${formatUtc(result.window.toTs)}`
       : 'no replay',
   });
 
@@ -617,8 +631,11 @@ export async function undropManagedEvent(
   };
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function getReplayRequest(id: string) {
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!UUID_PATTERN.test(id)) {
     throw new EventDropError('NOT_FOUND', 'Replay request not found');
   }
   const row = await db.eventReplayRequest.findUnique({ where: { id } });
@@ -686,6 +703,23 @@ export async function recordResourceView(input: {
   resourceType: 'dashboard' | 'report';
   resourceId: string;
 }) {
+  // Only record views of a board/report that belongs to the project the
+  // caller has access to (tRPC checks access to projectId).
+  const owned =
+    input.resourceType === 'dashboard'
+      ? await db.dashboard.findFirst({
+          where: { id: input.resourceId, projectId: input.projectId },
+          select: { id: true },
+        })
+      : UUID_PATTERN.test(input.resourceId)
+        ? await db.report.findFirst({
+            where: { id: input.resourceId, projectId: input.projectId },
+            select: { id: true },
+          })
+        : null;
+  if (!owned) {
+    return false;
+  }
   const now = new Date();
   const cutoff = new Date(now.getTime() - VIEW_THROTTLE_MS);
   await db.$executeRaw`
@@ -694,6 +728,7 @@ export async function recordResourceView(input: {
     ON CONFLICT ("resourceType", "resourceId") DO UPDATE
       SET "lastViewedAt" = EXCLUDED."lastViewedAt", "viewCount" = "resource_views"."viewCount" + 1
       WHERE "resource_views"."lastViewedAt" < ${cutoff.toISOString()}::timestamp`;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

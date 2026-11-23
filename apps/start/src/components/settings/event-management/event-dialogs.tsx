@@ -26,11 +26,11 @@ const MIN_REASON_LENGTH = 3;
 
 export function ActiveBadge({ active }: { active: boolean }) {
   return active ? (
-    <Badge className="border-transparent bg-emerald-500/15 text-emerald-500">
+    <Badge className="border-transparent text-[12px] bg-emerald-500/15 text-emerald-500">
       active
     </Badge>
   ) : (
-    <Badge className="border-transparent bg-def-200 text-muted-foreground">
+    <Badge className="border-transparent text-[12px] bg-def-200 text-muted-foreground">
       idle
     </Badge>
   );
@@ -55,7 +55,7 @@ export function UsedInSheet({
     <Sheet open={event !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         onClose={onClose}
-        className="w-full sm:max-w-[560px]"
+        className="w-full leading-normal sm:max-w-[560px]"
         aria-describedby={undefined}
       >
         {event && (
@@ -70,16 +70,16 @@ export function UsedInSheet({
             </div>
 
             <section>
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <div className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
                 Boards and reports ({reportCount} report
                 {reportCount === 1 ? '' : 's'})
               </div>
               {groups.length === 0 ? (
                 <div className="text-sm text-muted-foreground">None</div>
               ) : (
-                <table className="w-full text-sm">
+                <table className="w-full leading-normal text-sm">
                   <thead>
-                    <tr className="border-b text-left text-xs text-muted-foreground">
+                    <tr className="border-b text-left text-sm text-muted-foreground">
                       <th className="py-2 pr-2 font-medium">Name</th>
                       <th className="py-2 pr-2 font-medium">Type</th>
                       <th className="py-2 pr-2 font-medium">Last edited</th>
@@ -102,10 +102,10 @@ export function UsedInSheet({
 
             {event.otherUses.length > 0 && (
               <section>
-                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <div className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
                   Also used by
                 </div>
-                <table className="w-full text-sm">
+                <table className="w-full leading-normal text-sm">
                   <tbody>
                     {event.otherUses.map((use) => (
                       <tr
@@ -123,7 +123,7 @@ export function UsedInSheet({
               </section>
             )}
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Idle = board not viewed in 30 days. "Last viewed" is new
               tracking, so it is empty (—) until recording starts; until then
               active/idle uses last edited.
@@ -207,7 +207,7 @@ export function DropDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="sm:max-w-[540px]" aria-describedby={undefined}>
+      <DialogContent className="leading-normal sm:max-w-[540px]" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-lg">
             {anyway ? 'Drop anyway' : 'Drop'}{' '}
@@ -243,7 +243,7 @@ export function DropDialog({
                   >
                     <span>
                       {board.name}{' '}
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-sm text-muted-foreground">
                         · {reports.length} report
                         {reports.length === 1 ? '' : 's'}
                       </span>
@@ -338,7 +338,7 @@ export function UndropDialog({
     new Date(event.recoverableUntil).getTime() > Date.now();
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="sm:max-w-[540px]" aria-describedby={undefined}>
+      <DialogContent className="leading-normal sm:max-w-[540px]" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="text-lg">
             Undrop <span className="font-mono">"{event.name}"</span>?
@@ -362,7 +362,7 @@ export function UndropDialog({
           />
           <span>
             <span className="font-medium">Replay last 24 h</span>
-            <span className="block text-xs text-muted-foreground">
+            <span className="block text-sm text-muted-foreground">
               Events held since{' '}
               {dateTime(
                 recoverable
@@ -373,7 +373,7 @@ export function UndropDialog({
             </span>
           </span>
         </label>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           Logged in the audit log and posted to Slack #analytics.
         </div>
         <DialogFooter>
@@ -395,7 +395,7 @@ export function UndropDialog({
 }
 
 export function StatusBadge({ status }: { status: ManagedEvent['status'] }) {
-  const base = 'border-transparent';
+  const base = 'border-transparent text-[12px]';
   if (status === 'dropped') {
     return (
       <Badge className={cn(base, 'bg-destructive/15 text-destructive')}>

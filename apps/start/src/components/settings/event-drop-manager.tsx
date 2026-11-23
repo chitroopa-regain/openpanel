@@ -159,13 +159,13 @@ function Stats({ data }: { data: ManagedEventsData | undefined }) {
         <div className="text-lg font-semibold tabular-nums">
           {totals ? totals.events.toLocaleString('en-IN') : '—'}
         </div>
-        <div className="text-xs text-muted-foreground">events</div>
+        <div className="text-sm text-muted-foreground">events</div>
       </div>
       <div>
         <div className="text-lg font-semibold tabular-nums">
           {totals?.volume1d != null ? `${shortCount(totals.volume1d)}/day` : '—'}
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           volume{data?.volumeDay ? `, ${shortDate(data.volumeDay)}` : ''}
         </div>
       </div>
@@ -175,7 +175,7 @@ function Stats({ data }: { data: ManagedEventsData | undefined }) {
           {totals?.unusedVolume1d != null &&
             ` · ${shortCount(totals.unusedVolume1d)}/day`}
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           not used anywhere
           {unusedShare !== null && ` (${unusedShare}% of volume)`}
         </div>
@@ -203,7 +203,7 @@ function ActionCell({
           Undrop
         </Button>
         {recoverable && (
-          <div className="mt-1 whitespace-nowrap text-xs text-muted-foreground">
+          <div className="mt-1 whitespace-nowrap text-sm text-muted-foreground">
             until {dateTime(event.recoverableUntil)}
           </div>
         )}
@@ -213,7 +213,7 @@ function ActionCell({
   if (event.status === 'protected') {
     return (
       <span
-        className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
+        className="inline-flex items-center gap-1 whitespace-nowrap text-sm text-muted-foreground"
         title={PROTECTED_TITLE}
       >
         <LockIcon className="size-3" /> Locked
@@ -354,7 +354,7 @@ export default function EventDropManager({
   const visible = rows.slice(0, limit);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 leading-normal">
       <div>
         <h3 className="text-lg font-medium">Event Management</h3>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -427,7 +427,7 @@ export default function EventDropManager({
                   }}
                 >
                   {f.label}{' '}
-                  <span className="text-xs tabular-nums opacity-70">
+                  <span className="text-sm tabular-nums opacity-70">
                     {counts[f.key]}
                   </span>
                 </button>
@@ -453,9 +453,9 @@ export default function EventDropManager({
           </div>
 
           <div className="overflow-x-auto rounded-md border">
-            <table className="w-full min-w-[1080px] text-sm">
+            <table className="w-full leading-normal min-w-[1080px] text-sm">
               <thead>
-                <tr className="border-b bg-def-100 text-xs text-muted-foreground">
+                <tr className="border-b bg-def-100 text-sm text-muted-foreground">
                   <SortHeader
                     label="Event"
                     sortKey="name"
@@ -540,7 +540,7 @@ export default function EventDropManager({
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       {formatPct(event.pctOfProject)}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-xs">
+                    <td className="whitespace-nowrap px-3 py-2.5 text-sm">
                       {event.status === 'dropped' ? (
                         dateTime(event.droppedAt)
                       ) : (
@@ -578,7 +578,7 @@ export default function EventDropManager({
             </table>
           </div>
 
-          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
             <span>
               Showing {visible.length.toLocaleString('en-IN')} of{' '}
               {rows.length.toLocaleString('en-IN')} events.

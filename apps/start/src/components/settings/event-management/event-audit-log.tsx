@@ -72,9 +72,9 @@ export function EventAuditLog({
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto rounded-md border">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full leading-normal min-w-[900px] text-sm">
           <thead>
-            <tr className="border-b bg-def-100 text-left text-xs text-muted-foreground">
+            <tr className="border-b bg-def-100 text-left text-sm text-muted-foreground">
               <th className="px-3 py-2 font-medium">When</th>
               <th className="px-3 py-2 font-medium">Who</th>
               <th className="px-3 py-2 font-medium">Event</th>
@@ -104,7 +104,7 @@ export function EventAuditLog({
                 <td className="px-3 py-2">
                   <Badge
                     className={cn(
-                      'border-transparent',
+                      'border-transparent text-[12px]',
                       row.action.startsWith('undrop')
                         ? 'bg-emerald-500/15 text-emerald-500'
                         : 'bg-destructive/15 text-destructive'
@@ -125,7 +125,7 @@ export function EventAuditLog({
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         The team shares one OpenPanel admin login, so "Who" is always OpenPanel
         admin. Source is UI (someone clicked here) or Agent (Claude dropped it
         on request; shows who asked and links the chat). The Slack #analytics

@@ -8,9 +8,10 @@ const mocks = vi.hoisted(() => {
       findMany: vi.fn(),
       upsert: vi.fn(),
       updateMany: vi.fn(),
+      update: vi.fn(),
     },
-    dashboard: { findMany: vi.fn() },
-    report: { findMany: vi.fn() },
+    dashboard: { findMany: vi.fn(), findFirst: vi.fn() },
+    report: { findMany: vi.fn(), findFirst: vi.fn() },
     customEvent: { findMany: vi.fn() },
     customCohort: { findMany: vi.fn() },
     resourceView: { findMany: vi.fn() },
@@ -48,7 +49,9 @@ import { EventDropError } from './event-drop-rules';
 import {
   buildSlackText,
   dropManagedEvent,
+  INGEST_REFRESH_GRACE_MS,
   listManagedEvents,
+  recordResourceView,
   undropManagedEvent,
 } from './event-management.service';
 
@@ -68,6 +71,7 @@ beforeEach(() => {
   db.eventMeta.findMany.mockResolvedValue([]);
   db.eventMeta.upsert.mockResolvedValue({});
   db.eventMeta.updateMany.mockResolvedValue({ count: 1 });
+  db.eventMeta.update.mockResolvedValue({});
   db.dashboard.findMany.mockResolvedValue([
     { id: 'd-c73', name: 'C73 OB offer spin A/B', updatedAt: new Date() },
   ]);
@@ -196,6 +200,55 @@ describe('dropManagedEvent', () => {
     });
   });
 
+  it('takes the per-event lock and writes Redis last, after the DB rows', async () => {
+    await dropManagedEvent({
+      projectId: 'regain-app',
+      name: 'App Init: Theme Set',
+      confirmName: 'App Init: Theme Set',
+      source: 'UI',
+    });
+    expect(db.$executeRaw).toHaveBeenCalledOnce();
+    const lockOrder = db.$executeRaw.mock.invocationCallOrder[0]!;
+    const upsertOrder = db.eventMeta.upsert.mock.invocationCallOrder[0]!;
+    const auditOrder = db.eventDropAudit.create.mock.invocationCallOrder[0]!;
+    const redisOrder = mocks.addDroppedEvent.mock.invocationCallOrder[0]!;
+    expect(lockOrder).toBeLessThan(upsertOrder);
+    expect(upsertOrder).toBeLessThan(redisOrder);
+    expect(auditOrder).toBeLessThan(redisOrder);
+  });
+
+  it('reconciles Redis to the committed state when Redis fails', async () => {
+    mocks.addDroppedEvent.mockRejectedValueOnce(new Error('redis timeout'));
+    // The transaction rolled back, so Postgres says "not dropped".
+    db.eventMeta.findUnique.mockResolvedValue(null);
+    await expect(
+      dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'App Init: Theme Set',
+        confirmName: 'App Init: Theme Set',
+        source: 'UI',
+      })
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE', httpStatus: 503 });
+    expect(mocks.removeDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
+  });
+
+  it('reconciles to "dropped" when another request committed the drop meanwhile', async () => {
+    db.eventDropAudit.create.mockRejectedValueOnce(new Error('pg blip'));
+    db.eventMeta.findUnique
+      .mockResolvedValueOnce(null) // inside the transaction
+      .mockResolvedValueOnce({ droppedAt: new Date() }); // committed state, read after
+    await expect(
+      dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'App Init: Theme Set',
+        confirmName: 'App Init: Theme Set',
+        source: 'UI',
+      })
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+    expect(mocks.addDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
+    expect(mocks.removeDroppedEvent).not.toHaveBeenCalled();
+  });
+
   it('rolls Redis back when the database write fails', async () => {
     db.eventMeta.upsert.mockRejectedValue(new Error('pg down'));
     await expect(
@@ -253,6 +306,10 @@ describe('undropManagedEvent', () => {
     const replay = db.eventReplayRequest.create.mock.calls[0]![0].data;
     expect(replay).toMatchObject({ projectId: 'regain-app', eventName: 'Group Preview: Page Changed' });
     expect(replay.fromTs).toEqual(droppedAt);
+    // The window runs past the undrop by ingest's refresh grace.
+    expect(replay.toTs.getTime()).toBeGreaterThanOrEqual(
+      Date.now() + INGEST_REFRESH_GRACE_MS - 1000
+    );
     expect(db.eventDropAudit.create.mock.calls[0]![0].data).toMatchObject({
       action: 'undrop_replay',
       replayRequestId: 'replay-1',
@@ -278,6 +335,36 @@ describe('undropManagedEvent', () => {
       undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' })
     ).rejects.toMatchObject({ code: 'NOT_DROPPED' });
     expect(mocks.removeDroppedEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('recordResourceView', () => {
+  it('records a view of a board in the project', async () => {
+    db.dashboard.findFirst.mockResolvedValue({ id: 'd1' });
+    await expect(
+      recordResourceView({ projectId: 'regain-app', resourceType: 'dashboard', resourceId: 'd1' })
+    ).resolves.toBe(true);
+    expect(db.$executeRaw).toHaveBeenCalledOnce();
+  });
+
+  it('ignores boards and reports of other projects and bad report ids', async () => {
+    db.dashboard.findFirst.mockResolvedValue(null);
+    db.report.findFirst.mockResolvedValue(null);
+    await expect(
+      recordResourceView({ projectId: 'regain-app', resourceType: 'dashboard', resourceId: 'other' })
+    ).resolves.toBe(false);
+    await expect(
+      recordResourceView({
+        projectId: 'regain-app',
+        resourceType: 'report',
+        resourceId: '3f2b6a1e-0000-4000-8000-000000000001',
+      })
+    ).resolves.toBe(false);
+    await expect(
+      recordResourceView({ projectId: 'regain-app', resourceType: 'report', resourceId: 'not-a-uuid' })
+    ).resolves.toBe(false);
+    expect(db.report.findFirst).toHaveBeenCalledOnce();
+    expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 });
 
