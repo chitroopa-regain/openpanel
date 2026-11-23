@@ -212,6 +212,9 @@ const startServer = async () => {
       instance.register(trackRouter, { prefix: '/track' });
       instance.register(manageRouter, { prefix: '/manage' });
       instance.register(eventDropRouter, { prefix: '/manage' });
+      // Production nginx only forwards /trpc, /live, /oauth and /api/* to the
+      // api (path kept), so the same routes also live under /api/manage.
+      instance.register(eventDropRouter, { prefix: '/api/manage' });
       // Keep existing endpoints for backward compatibility
       instance.get('/healthcheck', healthcheck);
       // New Kubernetes-style health endpoints

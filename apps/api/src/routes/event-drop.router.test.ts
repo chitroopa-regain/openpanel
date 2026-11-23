@@ -29,6 +29,7 @@ const app = Fastify();
 beforeAll(async () => {
   process.env.OPENPANEL_ADMIN_API_TOKEN = TOKEN;
   await app.register(eventDropRouter, { prefix: '/manage', rateLimit: false });
+  await app.register(eventDropRouter, { prefix: '/api/manage', rateLimit: false });
   await app.ready();
 });
 
@@ -180,5 +181,32 @@ describe('/manage event drop API with a token', () => {
     const res = await app.inject({ method: 'GET', url: '/manage/projects/p1/audit?limit=5', headers: auth });
     expect(res.statusCode).toBe(200);
     expect(service.listEventDropAudit).toHaveBeenCalledWith('p1', 5);
+  });
+});
+
+describe('/api/manage (the path production nginx forwards to the api)', () => {
+  it('serves the same routes with the same auth', async () => {
+    service.listManagedEvents.mockResolvedValue({ events: [] });
+    const unauthorized = await app.inject({ method: 'GET', url: '/api/manage/projects/p1/events' });
+    expect(unauthorized.statusCode).toBe(401);
+    const ok = await app.inject({ method: 'GET', url: '/api/manage/projects/p1/events', headers: auth });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('returns 409 with a clear message while a replay is running', async () => {
+    service.dropManagedEvent.mockRejectedValueOnce(
+      new EventDropError('REPLAY_IN_PROGRESS', 'Replay of this event is still running; try again when it finishes')
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/manage/projects/p1/events/drop',
+      headers: auth,
+      payload: { name: 'A', confirmName: 'A', source: 'UI' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'REPLAY_IN_PROGRESS',
+      message: 'Replay of this event is still running; try again when it finishes',
+    });
   });
 });

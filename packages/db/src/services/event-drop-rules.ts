@@ -21,6 +21,12 @@ export const PROTECTED_EVENT_PATTERN =
 /** Share of the project's daily volume above which an unused event is "high volume". */
 export const HIGH_VOLUME_PCT = 0.5;
 
+/** Replay requests in these states still copy messages back. */
+export const ACTIVE_REPLAY_STATUSES = ['pending', 'running'] as const;
+
+export const REPLAY_IN_PROGRESS_MESSAGE =
+  'Replay of this event is still running; try again when it finishes';
+
 /** Dropped messages sit in destination-messages-short for this long. */
 export const HOLD_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -44,7 +50,8 @@ export type EventDropErrorCode =
   | 'NOT_DROPPED'
   | 'INVALID_INPUT'
   | 'NOT_FOUND'
-  | 'UNAVAILABLE';
+  | 'UNAVAILABLE'
+  | 'REPLAY_IN_PROGRESS';
 
 const HTTP_STATUS: Record<EventDropErrorCode, number> = {
   CONFIRM_MISMATCH: 400,
@@ -54,6 +61,7 @@ const HTTP_STATUS: Record<EventDropErrorCode, number> = {
   PROTECTED: 403,
   NOT_FOUND: 404,
   REASON_REQUIRED: 409,
+  REPLAY_IN_PROGRESS: 409,
   UNAVAILABLE: 503,
 };
 

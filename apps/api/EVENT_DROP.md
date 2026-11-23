@@ -39,7 +39,14 @@ Never print the token; keep it in the Maker vault / server env only.
 
 ## REST API
 
-All need `Authorization: Bearer $OPENPANEL_ADMIN_API_TOKEN`.
+All need `Authorization: Bearer $OPENPANEL_ADMIN_API_TOKEN`. The routes answer under both
+`/manage/...` and `/api/manage/...`. Production (regainapp `server/jitsu/ha_setup/openpanel/nginx.conf`)
+only forwards `/trpc/`, `/live/`, `/oauth/` and `/api/` to the api, keeping the path, so from outside use
+**`https://openpanel.regainapp.ai/api/manage/...`** (prod HA: `https://openpanel-prod.regainapp.ai/api/manage/...`).
+
+A Drop is refused with 409 `REPLAY_IN_PROGRESS` while a replay request for the same event is
+`pending` or `running`. All timestamps in `event_replay_requests` are `timestamptz` written from
+JS Dates (UTC instants).
 
 - `GET  /manage/projects/:projectId/events?filter=all|unused|used|dropped|protected|unused_high&q=`
 - `POST /manage/projects/:projectId/events/drop` `{name, confirmName, reason?, source:"UI"|"Agent", requestedBy?, chatUrl?}`

@@ -12,6 +12,7 @@ import { logger } from '../logger';
 import { db } from '../prisma-client';
 import { addDroppedEvent, removeDroppedEvent } from './drop-events.service';
 import {
+  ACTIVE_REPLAY_STATUSES,
   assertCanDrop,
   assertCanUndrop,
   EventDropError,
@@ -20,6 +21,7 @@ import {
   HIGH_VOLUME_PCT,
   HOLD_WINDOW_MS,
   isProtectedEventName,
+  REPLAY_IN_PROGRESS_MESSAGE,
 } from './event-drop-rules';
 import { getEventMetasCached } from './event.service';
 import {
@@ -64,6 +66,8 @@ export type ManagedEvent = {
   status: ManagedEventStatus;
   droppedAt: string | null;
   recoverableUntil: string | null;
+  /** A replay request is pending or running: Drop is refused until it ends. */
+  replayInProgress: boolean;
 };
 
 export type ManagedEventsResult = {
@@ -279,7 +283,7 @@ export async function listManagedEvents({
   q?: string;
 }): Promise<ManagedEventsResult> {
   const project = await getProjectOrThrow(projectId);
-  const [volumes, knownNames, metas, usage] = await Promise.all([
+  const [volumes, knownNames, metas, usage, activeReplays] = await Promise.all([
     getEventVolumes(projectId),
     getKnownEventNames(projectId),
     db.eventMeta.findMany({
@@ -287,7 +291,12 @@ export async function listManagedEvents({
       select: { name: true, droppedAt: true },
     }),
     getEventUsageForProject(project),
+    db.eventReplayRequest.findMany({
+      where: { projectId, status: { in: [...ACTIVE_REPLAY_STATUSES] } },
+      select: { eventName: true },
+    }),
   ]);
+  const replaying = new Set(activeReplays.map((r) => r.eventName));
 
   const droppedAt = new Map(
     metas.filter((m) => m.droppedAt).map((m) => [m.name, m.droppedAt!])
@@ -336,6 +345,7 @@ export async function listManagedEvents({
       recoverableUntil: dropped
         ? new Date(dropped.getTime() + HOLD_WINDOW_MS).toISOString()
         : null,
+      replayInProgress: replaying.has(name),
     });
   }
 
@@ -513,6 +523,19 @@ export async function dropManagedEvent(
       isDropped: Boolean(meta?.droppedAt),
       usageCount: usageCount(usage),
     });
+    // A re-drop while a replay still copies messages back would lose copies
+    // (the worker fails such a request as REDROPPED).
+    const activeReplay = await tx.eventReplayRequest.findFirst({
+      where: {
+        projectId: project.id,
+        eventName: input.name,
+        status: { in: [...ACTIVE_REPLAY_STATUSES] },
+      },
+      select: { id: true },
+    });
+    if (activeReplay) {
+      throw new EventDropError('REPLAY_IN_PROGRESS', REPLAY_IN_PROGRESS_MESSAGE);
+    }
     // Taken before the Redis write so the replay window covers every held event.
     const droppedAt = new Date();
     await tx.eventMeta.upsert({

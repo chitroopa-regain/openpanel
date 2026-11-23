@@ -95,6 +95,7 @@ beforeEach(() => {
   db.eventDropAudit.update.mockResolvedValue({});
   db.eventReplayRequest.create.mockResolvedValue({ id: 'replay-1' });
   db.eventReplayRequest.findFirst.mockResolvedValue(null);
+  db.eventReplayRequest.findMany.mockResolvedValue([]);
   db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
   mocks.addDroppedEvent.mockResolvedValue(undefined);
   mocks.removeDroppedEvent.mockResolvedValue(undefined);
@@ -264,6 +265,29 @@ describe('dropManagedEvent', () => {
     expect(mocks.removeDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
   });
 
+  it('refuses a re-drop (409) while a replay of the event is pending or running', async () => {
+    db.eventReplayRequest.findFirst.mockResolvedValue({ id: 'replay-9' });
+    await expect(
+      dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'App Init: Theme Set',
+        confirmName: 'App Init: Theme Set',
+        source: 'Agent',
+        requestedBy: 'Chitroopa',
+      })
+    ).rejects.toMatchObject({
+      code: 'REPLAY_IN_PROGRESS',
+      httpStatus: 409,
+      message: 'Replay of this event is still running; try again when it finishes',
+    });
+    expect(db.eventReplayRequest.findFirst.mock.calls[0]![0].where).toMatchObject({
+      eventName: 'App Init: Theme Set',
+      status: { in: ['pending', 'running'] },
+    });
+    expect(mocks.addDroppedEvent).not.toHaveBeenCalled();
+    expect(db.eventMeta.upsert).not.toHaveBeenCalled();
+  });
+
   it('needs requestedBy for Agent drops and an http(s) chat URL', async () => {
     await expect(
       dropManagedEvent({
@@ -407,8 +431,11 @@ describe('listManagedEvents', () => {
     db.eventMeta.findMany.mockResolvedValue([
       { name: 'Old Thing', droppedAt: new Date('2026-11-23T10:00:00Z') },
     ]);
+    db.eventReplayRequest.findMany.mockResolvedValue([{ eventName: 'Home Page: Shown' }]);
     const result = await listManagedEvents({ projectId: 'regain-app' });
     expect(result.volumeAvailable).toBe(false);
+    expect(result.events.find((e) => e.name === 'Home Page: Shown')?.replayInProgress).toBe(true);
+    expect(result.events.find((e) => e.name === 'session_start')?.replayInProgress).toBe(false);
     expect(result.events.map((e) => [e.name, e.status, e.volume1d])).toEqual(
       expect.arrayContaining([
         ['Home Page: Shown', 'active', null],

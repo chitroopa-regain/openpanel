@@ -16,7 +16,7 @@ function reasonText(row: AuditRow) {
       row.replay.status === 'done'
         ? `${shortCount(row.replay.copied)} events replayed`
         : row.replay.status === 'failed'
-          ? `replay failed${row.replay.error ? `: ${row.replay.error}` : ''}`
+          ? `replay failed${row.replay.copied > 0 ? ` after ${shortCount(row.replay.copied)} copied` : ''}${row.replay.error ? `: ${row.replay.error}` : ''}`
           : `replay ${row.replay.status}`
     );
   }
@@ -113,7 +113,14 @@ export function EventAuditLog({
                     {ACTION_LABEL[row.action] ?? row.action}
                   </Badge>
                 </td>
-                <td className="px-3 py-2">{reasonText(row)}</td>
+                <td
+                  className={cn(
+                    'px-3 py-2',
+                    row.replay?.status === 'failed' && 'text-destructive'
+                  )}
+                >
+                  {reasonText(row)}
+                </td>
                 <td className="px-3 py-2">
                   <SourceCell row={row} />
                 </td>

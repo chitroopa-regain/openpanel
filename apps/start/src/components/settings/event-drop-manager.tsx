@@ -220,6 +220,19 @@ function ActionCell({
       </span>
     );
   }
+  if (event.replayInProgress) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        disabled
+        title="Replay of this event is still running; try again when it finishes"
+        className="whitespace-nowrap"
+      >
+        Replaying…
+      </Button>
+    );
+  }
   if (event.usageCount > 0) {
     return (
       <Button

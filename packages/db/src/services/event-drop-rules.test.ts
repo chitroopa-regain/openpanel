@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACTIVE_REPLAY_STATUSES,
   assertCanDrop,
   assertCanUndrop,
   EventDropError,
@@ -173,5 +174,12 @@ describe('getReplayWindow', () => {
       fromTs: new Date('2026-11-22T12:00:00Z'),
       toTs: now,
     });
+  });
+});
+
+describe('REPLAY_IN_PROGRESS', () => {
+  it('is a 409 and covers pending and running requests', () => {
+    expect(new EventDropError('REPLAY_IN_PROGRESS', 'x').httpStatus).toBe(409);
+    expect([...ACTIVE_REPLAY_STATUSES]).toEqual(['pending', 'running']);
   });
 });
