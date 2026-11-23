@@ -503,6 +503,8 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
     const result = await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
     expect(result).toMatchObject({ volumeDay: '2026-10-01', partial: false });
     expect(daily()).toContain("day > toDate('2026-10-01') - 30 AND day <= toDate('2026-10-01')");
+    // Last seen still reads the rows after the anchor, up to today.
+    expect(daily()).toContain("AND day > toDate('2026-10-01') - 30 AND day <= toDate('2026-11-23')");
   });
 
   it('7d/30d leave out days that are not finished (e.g. a recount still running)', async () => {

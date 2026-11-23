@@ -206,7 +206,9 @@ export async function getEventVolumes(
         toUnixTimestamp64Milli(max(computed_at)) AS ca
       FROM ${EVENT_NAME_DAILY_TABLE} FINAL
       WHERE project_id = ${sqlstring.escape(projectId)}
-        AND day > toDate(${a}) - ${TREND_DAYS} AND day <= toDate(${a})
+        -- Up to today, so "Last seen" includes days after the anchor; the
+        -- 1d/7d/30d sums stop at the anchor.
+        AND day > toDate(${a}) - ${TREND_DAYS} AND day <= toDate(${sqlstring.escape(today)})
       GROUP BY name, day
     )
     GROUP BY name`;
