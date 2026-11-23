@@ -208,6 +208,7 @@ describe('dropManagedEvent', () => {
       source: 'UI',
     });
     expect(db.$executeRaw).toHaveBeenCalledOnce();
+    expect(db.$executeRaw.mock.calls[0]).toContain('event-drop:regain-app:App Init: Theme Set');
     const lockOrder = db.$executeRaw.mock.invocationCallOrder[0]!;
     const upsertOrder = db.eventMeta.upsert.mock.invocationCallOrder[0]!;
     const auditOrder = db.eventDropAudit.create.mock.invocationCallOrder[0]!;
@@ -315,6 +316,17 @@ describe('undropManagedEvent', () => {
       replayRequestId: 'replay-1',
     });
     expect(result.replayRequestId).toBe('replay-1');
+  });
+
+  it('keeps the 24 h start clamp at the real undrop time', async () => {
+    const droppedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt });
+    const before = Date.now();
+    await undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' });
+    const { fromTs, toTs } = db.eventReplayRequest.create.mock.calls[0]![0].data;
+    expect(fromTs.getTime()).toBeGreaterThanOrEqual(before - 24 * 60 * 60 * 1000);
+    expect(fromTs.getTime()).toBeLessThanOrEqual(Date.now() - 24 * 60 * 60 * 1000);
+    expect(toTs.getTime() - fromTs.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 + INGEST_REFRESH_GRACE_MS - 50);
   });
 
   it('undrops without replay', async () => {

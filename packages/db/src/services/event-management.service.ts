@@ -426,15 +426,23 @@ type Tx = Omit<
  */
 async function reconcileRedis(projectId: string, name: string) {
   try {
-    const meta = await db.eventMeta.findUnique({
-      where: { name_projectId: { name, projectId } },
-      select: { droppedAt: true },
-    });
-    if (meta?.droppedAt) {
-      await addDroppedEvent(projectId, name);
-    } else {
-      await removeDroppedEvent(projectId, name);
-    }
+    // Same advisory lock as the actions, so a concurrent drop/undrop cannot
+    // commit between our read and our Redis write.
+    await db.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey(projectId, name)}))`;
+        const meta = await tx.eventMeta.findUnique({
+          where: { name_projectId: { name, projectId } },
+          select: { droppedAt: true },
+        });
+        if (meta?.droppedAt) {
+          await addDroppedEvent(projectId, name);
+        } else {
+          await removeDroppedEvent(projectId, name);
+        }
+      },
+      { timeout: ACTION_TX_TIMEOUT_MS, maxWait: ACTION_TX_TIMEOUT_MS }
+    );
   } catch (error) {
     logger.error('Could not reconcile dropped-event Redis set', {
       projectId,
@@ -442,6 +450,10 @@ async function reconcileRedis(projectId: string, name: string) {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function lockKey(projectId: string, name: string) {
+  return `event-drop:${projectId}:${name}`;
 }
 
 /**
@@ -457,7 +469,7 @@ async function withEventLock<T>(
   try {
     return await db.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`event-drop:${projectId}:${name}`}))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey(projectId, name)}))`;
         return fn(tx);
       },
       { timeout: ACTION_TX_TIMEOUT_MS, maxWait: ACTION_TX_TIMEOUT_MS }
@@ -576,10 +588,11 @@ export async function undropManagedEvent(
     });
     await removeDroppedEvent(project.id, input.name);
     // Ingest may keep holding for up to its refresh interval after the SREM.
-    const window = getReplayWindow(
-      meta!.droppedAt!,
-      new Date(Date.now() + INGEST_REFRESH_GRACE_MS)
-    );
+    const held = getReplayWindow(meta!.droppedAt!, new Date());
+    const window = {
+      fromTs: held.fromTs,
+      toTs: new Date(held.toTs.getTime() + INGEST_REFRESH_GRACE_MS),
+    };
     const replay = input.replay
       ? await tx.eventReplayRequest.create({
           data: {
