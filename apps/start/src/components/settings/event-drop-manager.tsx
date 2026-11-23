@@ -26,6 +26,7 @@ import {
 } from './event-management/format';
 
 const PAGE_SIZE = 100;
+const REPLAY_POLL_MS = 15 * 1000;
 const HIGH_VOLUME_PCT = 0.5;
 
 type Filter = 'all' | 'unused' | 'used' | 'dropped' | 'protected';
@@ -272,11 +273,33 @@ export default function EventDropManager({
   const [dropFor, setDropFor] = useState<ManagedEvent | null>(null);
   const [undropFor, setUndropFor] = useState<ManagedEvent | null>(null);
 
+  // While a replay is pending or running, poll both lists so "Replaying…" and
+  // the audit row's replay status update when the worker finishes.
   const eventsQuery = useQuery(
-    trpc.event.managedEvents.queryOptions({ projectId })
+    trpc.event.managedEvents.queryOptions(
+      { projectId },
+      {
+        refetchInterval: (query) =>
+          query.state.data?.events.some((e) => e.replayInProgress)
+            ? REPLAY_POLL_MS
+            : false,
+      }
+    )
   );
   const auditQuery = useQuery(
-    trpc.event.eventDropAudit.queryOptions({ projectId, limit: 100 })
+    trpc.event.eventDropAudit.queryOptions(
+      { projectId, limit: 100 },
+      {
+        refetchInterval: (query) =>
+          query.state.data?.some(
+            (row) =>
+              row.replay?.status === 'pending' ||
+              row.replay?.status === 'running'
+          )
+            ? REPLAY_POLL_MS
+            : false,
+      }
+    )
   );
 
   const invalidate = () => {
