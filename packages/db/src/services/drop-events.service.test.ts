@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
-  const multi = { del: vi.fn(), sadd: vi.fn(), exec: vi.fn() };
-  multi.del.mockReturnValue(multi);
-  multi.sadd.mockReturnValue(multi);
+  const multi = { persist: vi.fn(), rename: vi.fn(), exec: vi.fn() };
+  const redis = {
+    del: vi.fn(),
+    sadd: vi.fn(),
+    expire: vi.fn(),
+    multi: vi.fn(() => multi),
+  };
   const tx = { $executeRaw: vi.fn(), eventMeta: { findMany: vi.fn() } };
   const db = {
     $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
     project: { findMany: vi.fn() },
   };
-  return { multi, tx, db, redis: { multi: vi.fn(() => multi) } };
+  return { multi, redis, tx, db };
 });
 
 vi.mock('@openpanel/redis', () => ({ getRedisCache: () => mocks.redis }));
@@ -19,13 +23,16 @@ import { syncAllDroppedEventsToRedis, syncDroppedEventsToRedis } from './drop-ev
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.multi.del.mockReturnValue(mocks.multi);
-  mocks.multi.sadd.mockReturnValue(mocks.multi);
-  mocks.multi.exec.mockResolvedValue([[null, 1], [null, 2]]);
+  mocks.multi.persist.mockReturnValue(mocks.multi);
+  mocks.multi.rename.mockReturnValue(mocks.multi);
+  mocks.multi.exec.mockResolvedValue([[null, 1], [null, 'OK']]);
+  mocks.redis.del.mockResolvedValue(1);
+  mocks.redis.sadd.mockResolvedValue(2);
+  mocks.redis.expire.mockResolvedValue(1);
 });
 
 describe('syncDroppedEventsToRedis', () => {
-  it('takes the project lock exclusive, then replaces the set in one MULTI', async () => {
+  it('takes the project lock exclusive, builds a temp set and swaps it in with RENAME', async () => {
     mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }, { name: 'B' }]);
     await syncDroppedEventsToRedis('p1');
     expect(mocks.tx.$executeRaw.mock.calls[0]!.join('')).toContain('pg_advisory_xact_lock(');
@@ -33,24 +40,35 @@ describe('syncDroppedEventsToRedis', () => {
     expect(mocks.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.tx.eventMeta.findMany.mock.invocationCallOrder[0]!
     );
-    expect(mocks.redis.multi).toHaveBeenCalledOnce();
-    expect(mocks.multi.del).toHaveBeenCalledWith('op:dropped:p1');
-    expect(mocks.multi.sadd).toHaveBeenCalledWith('op:dropped:p1', 'A', 'B');
-    expect(mocks.multi.exec).toHaveBeenCalledOnce();
+    const tmp = mocks.redis.sadd.mock.calls[0]![0] as string;
+    expect(tmp).toMatch(/^op:dropped:p1:resync:/);
+    expect(mocks.redis.sadd).toHaveBeenCalledWith(tmp, 'A', 'B');
+    expect(mocks.multi.persist).toHaveBeenCalledWith(tmp);
+    expect(mocks.multi.rename).toHaveBeenCalledWith(tmp, 'op:dropped:p1');
+    // The live set is never deleted on the way.
+    expect(mocks.redis.del).not.toHaveBeenCalled();
   });
 
   it('clears the set when nothing is dropped', async () => {
     mocks.tx.eventMeta.findMany.mockResolvedValue([]);
-    mocks.multi.exec.mockResolvedValue([[null, 1]]);
     await syncDroppedEventsToRedis('p1');
-    expect(mocks.multi.del).toHaveBeenCalledWith('op:dropped:p1');
-    expect(mocks.multi.sadd).not.toHaveBeenCalled();
+    expect(mocks.redis.del).toHaveBeenCalledWith('op:dropped:p1');
+    expect(mocks.redis.sadd).not.toHaveBeenCalled();
+    expect(mocks.multi.rename).not.toHaveBeenCalled();
   });
 
-  it('fails loudly when the Redis transaction fails', async () => {
+  it('leaves the live set untouched when building the new one fails', async () => {
     mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
-    mocks.multi.exec.mockResolvedValue([[new Error('OOM'), null]]);
+    mocks.redis.sadd.mockRejectedValue(new Error('OOM command not allowed'));
     await expect(syncDroppedEventsToRedis('p1')).rejects.toThrow('OOM');
+    expect(mocks.multi.rename).not.toHaveBeenCalled();
+    expect(mocks.redis.del).not.toHaveBeenCalled();
+  });
+
+  it('fails loudly when the swap fails', async () => {
+    mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
+    mocks.multi.exec.mockResolvedValue([[null, 1], [new Error('ERR no such key'), null]]);
+    await expect(syncDroppedEventsToRedis('p1')).rejects.toThrow('no such key');
   });
 });
 
@@ -59,6 +77,6 @@ describe('syncAllDroppedEventsToRedis (startup, reconnect and the 60 s safety re
     mocks.db.project.findMany.mockResolvedValue([{ id: 'p1' }, { id: 'p2' }]);
     mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
     await expect(syncAllDroppedEventsToRedis()).resolves.toBe(2);
-    expect(mocks.multi.del.mock.calls).toEqual([['op:dropped:p1'], ['op:dropped:p2']]);
+    expect(mocks.multi.rename.mock.calls.map((c) => c[1]).sort()).toEqual(['op:dropped:p1', 'op:dropped:p2']);
   });
 });

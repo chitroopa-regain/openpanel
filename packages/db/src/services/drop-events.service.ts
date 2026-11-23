@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { getRedisCache } from '@openpanel/redis';
+import { db } from '../prisma-client';
 
 const DROPPED_SET_KEY = (projectId: string) => `op:dropped:${projectId}`;
 
@@ -67,9 +69,14 @@ export function projectDropLockKey(projectId: string) {
 
 const SYNC_TX_TIMEOUT_MS = 30 * 1000;
 
-/** Rebuilds op:dropped:<projectId> from event_meta, atomically. */
+const RESYNC_TMP_TTL_SECONDS = 60;
+
+/**
+ * Rebuilds op:dropped:<projectId> from event_meta. The new set is built under
+ * a temporary key and swapped in with one RENAME, so a failure part-way
+ * leaves the old set untouched and ingest never sees it empty.
+ */
 export async function syncDroppedEventsToRedis(projectId: string) {
-  const { db } = await import('../prisma-client');
   await db.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${projectDropLockKey(projectId)}))`;
@@ -78,16 +85,30 @@ export async function syncDroppedEventsToRedis(projectId: string) {
         select: { name: true },
       });
       const key = DROPPED_SET_KEY(projectId);
-      // One MULTI: ingest never sees the set empty in between.
-      const multi = getRedisCache().multi().del(key);
-      if (dropped.length > 0) {
-        multi.sadd(key, ...dropped.map((d) => d.name));
+      const redis = getRedisCache();
+      if (dropped.length === 0) {
+        await withTimeout(redis.del(key), 5000, 'syncDroppedEventsToRedis');
+        return;
       }
-      const results = await withTimeout(multi.exec(), 5000, 'syncDroppedEventsToRedis');
+      const tmp = `${key}:resync:${randomUUID()}`;
+      await withTimeout(
+        redis.sadd(tmp, ...dropped.map((d) => d.name)),
+        5000,
+        'syncDroppedEventsToRedis build',
+      );
+      // Cleans up after a crash between SADD and RENAME.
+      await withTimeout(redis.expire(tmp, RESYNC_TMP_TTL_SECONDS), 5000, 'syncDroppedEventsToRedis expire');
+      // RENAME carries the TTL over, so clear it in the same MULTI: the live
+      // set must never expire.
+      const results = await withTimeout(
+        redis.multi().persist(tmp).rename(tmp, key).exec(),
+        5000,
+        'syncDroppedEventsToRedis swap',
+      );
       const failed = results?.find(([error]) => error);
       if (!results || failed) {
         throw new Error(
-          `syncDroppedEventsToRedis: Redis transaction failed for ${projectId}: ${failed?.[0]?.message ?? 'aborted'}`,
+          `syncDroppedEventsToRedis: swap failed for ${projectId}: ${failed?.[0]?.message ?? 'aborted'}`,
         );
       }
     },
@@ -104,7 +125,6 @@ export const DROPPED_SET_RESYNC_MS = 60 * 1000;
 
 /** Resyncs every project's set; returns how many projects were synced. */
 export async function syncAllDroppedEventsToRedis(): Promise<number> {
-  const { db } = await import('../prisma-client');
   const projects = await db.project.findMany({ select: { id: true } });
   await Promise.all(projects.map((p) => syncDroppedEventsToRedis(p.id)));
   return projects.length;
