@@ -73,6 +73,15 @@ describe('syncDroppedEventsToRedis', () => {
     expect(mocks.redis.rename).not.toHaveBeenCalled();
   });
 
+  it('deletes the temp set when the swap fails', async () => {
+    mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
+    mocks.redis.rename.mockRejectedValueOnce(new Error('LOADING'));
+    await expect(syncDroppedEventsToRedis('p1')).rejects.toThrow('LOADING');
+    const tmp = mocks.redis.sadd.mock.calls[0]![0] as string;
+    expect(mocks.redis.del).toHaveBeenCalledWith(tmp);
+    expect(mocks.redis.del).not.toHaveBeenCalledWith('op:dropped:p1');
+  });
+
   it('swaps only after the TTL is cleared', async () => {
     mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
     await syncDroppedEventsToRedis('p1');

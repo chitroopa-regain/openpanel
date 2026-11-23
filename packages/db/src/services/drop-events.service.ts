@@ -104,7 +104,13 @@ export async function syncDroppedEventsToRedis(projectId: string) {
       if (persisted !== 1) {
         throw new Error(`syncDroppedEventsToRedis: could not clear the TTL of ${tmp}`);
       }
-      await withTimeout(redis.rename(tmp, key), 5000, 'syncDroppedEventsToRedis swap');
+      try {
+        await withTimeout(redis.rename(tmp, key), 5000, 'syncDroppedEventsToRedis swap');
+      } catch (error) {
+        // Best effort: do not leave the (now TTL-less) temp set behind.
+        await redis.del(tmp).catch(() => {});
+        throw error;
+      }
     },
     { timeout: SYNC_TX_TIMEOUT_MS, maxWait: SYNC_TX_TIMEOUT_MS },
   );
