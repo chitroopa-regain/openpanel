@@ -98,19 +98,13 @@ export async function syncDroppedEventsToRedis(projectId: string) {
       );
       // Cleans up after a crash between SADD and RENAME.
       await withTimeout(redis.expire(tmp, RESYNC_TMP_TTL_SECONDS), 5000, 'syncDroppedEventsToRedis expire');
-      // RENAME carries the TTL over, so clear it in the same MULTI: the live
-      // set must never expire.
-      const results = await withTimeout(
-        redis.multi().persist(tmp).rename(tmp, key).exec(),
-        5000,
-        'syncDroppedEventsToRedis swap',
-      );
-      const failed = results?.find(([error]) => error);
-      if (!results || failed) {
-        throw new Error(
-          `syncDroppedEventsToRedis: swap failed for ${projectId}: ${failed?.[0]?.message ?? 'aborted'}`,
-        );
+      // RENAME carries the TTL over, so clear it first and swap only once
+      // that worked: the live set must never expire.
+      const persisted = await withTimeout(redis.persist(tmp), 5000, 'syncDroppedEventsToRedis persist');
+      if (persisted !== 1) {
+        throw new Error(`syncDroppedEventsToRedis: could not clear the TTL of ${tmp}`);
       }
+      await withTimeout(redis.rename(tmp, key), 5000, 'syncDroppedEventsToRedis swap');
     },
     { timeout: SYNC_TX_TIMEOUT_MS, maxWait: SYNC_TX_TIMEOUT_MS },
   );
