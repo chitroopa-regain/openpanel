@@ -1,7 +1,6 @@
 import {
   dropManagedEvent,
   EventDropError,
-  getReplayRequest,
   listEventDropAudit,
   listManagedEvents,
   MANAGED_EVENT_FILTERS,
@@ -26,8 +25,17 @@ const zDropBody = z.object({
   chatUrl: z.string().max(2000).optional().nullable(),
 });
 
+// There is no replay: events sent while dropped are gone. `replay: true`
+// is refused (400) so an old caller does not think it got one.
 const zUndropBody = zDropBody.omit({ reason: true }).extend({
-  replay: z.boolean(),
+  replay: z
+    .literal(false, {
+      errorMap: () => ({
+        message:
+          'Replay is not supported: events sent while dropped are not recovered',
+      }),
+    })
+    .optional(),
   reason: z.string().max(1000).optional().nullable(),
 });
 
@@ -89,32 +97,14 @@ export async function undropEvent(
   reply: FastifyReply
 ) {
   try {
-    const body = zUndropBody.parse(request.body ?? {});
+    const { replay: _replay, ...body } = zUndropBody.parse(
+      request.body ?? {}
+    );
     const result = await undropManagedEvent({
       ...body,
       projectId: request.params.id,
     });
     return reply.send(result);
-  } catch (error) {
-    return sendError(reply, error);
-  }
-}
-
-export async function getReplay(
-  request: FastifyRequest<{ Params: { id: string } }>,
-  reply: FastifyReply
-) {
-  try {
-    const replay = await getReplayRequest(request.params.id);
-    return reply.send({
-      status: replay.status,
-      copied: replay.copied,
-      error: replay.error,
-      projectId: replay.projectId,
-      eventName: replay.eventName,
-      fromTs: replay.fromTs,
-      toTs: replay.toTs,
-    });
   } catch (error) {
     return sendError(reply, error);
   }

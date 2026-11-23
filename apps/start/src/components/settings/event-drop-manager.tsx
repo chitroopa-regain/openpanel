@@ -26,36 +26,6 @@ import {
 } from './event-management/format';
 
 const PAGE_SIZE = 100;
-const REPLAY_POLL_MS = 15 * 1000;
-const COOLDOWN_REFETCH_SLACK_MS = 1000;
-
-/**
- * Replays: poll. Cooldowns: refetch when the first one ends, timed from the
- * server's remainingMs and the fetch time, so a skewed browser clock does not
- * matter. The server decides whether Drop is back.
- */
-function nextEventsRefetch(
-  events: ManagedEvent[] | undefined,
-  fetchedAt: number
-): number | false {
-  if (!events) {
-    return false;
-  }
-  if (events.some((e) => e.dropBlocked?.reason === 'replay')) {
-    return REPLAY_POLL_MS;
-  }
-  const remaining = events
-    .map((e) => e.dropBlocked?.remainingMs)
-    .filter((ms): ms is number => typeof ms === 'number');
-  if (remaining.length === 0) {
-    return false;
-  }
-  const elapsed = Math.max(0, Date.now() - fetchedAt);
-  return Math.max(
-    COOLDOWN_REFETCH_SLACK_MS,
-    Math.min(...remaining) - elapsed + COOLDOWN_REFETCH_SLACK_MS
-  );
-}
 const HIGH_VOLUME_PCT = 0.5;
 
 type Filter = 'all' | 'unused' | 'used' | 'dropped' | 'protected';
@@ -224,20 +194,10 @@ function ActionCell({
   onUndrop: (e: ManagedEvent) => void;
 }) {
   if (event.status === 'dropped') {
-    const recoverable =
-      event.recoverableUntil &&
-      new Date(event.recoverableUntil).getTime() > Date.now();
     return (
-      <div className="flex flex-col items-end">
-        <Button variant="outline" size="sm" onClick={() => onUndrop(event)}>
-          Undrop
-        </Button>
-        {recoverable && (
-          <div className="mt-1 whitespace-nowrap text-sm text-muted-foreground">
-            until {dateTime(event.recoverableUntil)}
-          </div>
-        )}
-      </div>
+      <Button variant="outline" size="sm" onClick={() => onUndrop(event)}>
+        Undrop
+      </Button>
     );
   }
   if (event.status === 'protected') {
@@ -248,29 +208,6 @@ function ActionCell({
       >
         <LockIcon className="size-3" /> Locked
       </span>
-    );
-  }
-  // The server's answer decides; the list refetches when a cooldown ends.
-  const blocked = event.dropBlocked;
-  if (blocked) {
-    return (
-      <div className="flex flex-col items-end">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled
-          aria-describedby={`drop-blocked-${event.name}`}
-          className="whitespace-nowrap"
-        >
-          {blocked.reason === 'replay' ? 'Replaying…' : 'Drop'}
-        </Button>
-        <div
-          id={`drop-blocked-${event.name}`}
-          className="mt-1 max-w-[260px] text-right text-sm text-muted-foreground"
-        >
-          {blocked.message}
-        </div>
-      </div>
     );
   }
   if (event.usageCount > 0) {
@@ -312,32 +249,11 @@ export default function EventDropManager({
   const [dropFor, setDropFor] = useState<ManagedEvent | null>(null);
   const [undropFor, setUndropFor] = useState<ManagedEvent | null>(null);
 
-  // While a replay is pending or running, poll both lists so "Replaying…" and
-  // the audit row's replay status update when the worker finishes. During a
-  // re-drop cooldown, refetch when the earliest one ends so Drop comes back.
   const eventsQuery = useQuery(
-    trpc.event.managedEvents.queryOptions(
-      { projectId },
-      {
-        refetchInterval: (query) =>
-          nextEventsRefetch(query.state.data?.events, query.state.dataUpdatedAt),
-      }
-    )
+    trpc.event.managedEvents.queryOptions({ projectId })
   );
   const auditQuery = useQuery(
-    trpc.event.eventDropAudit.queryOptions(
-      { projectId, limit: 100 },
-      {
-        refetchInterval: (query) =>
-          query.state.data?.some(
-            (row) =>
-              row.replay?.status === 'pending' ||
-              row.replay?.status === 'running'
-          )
-            ? REPLAY_POLL_MS
-            : false,
-      }
-    )
+    trpc.event.eventDropAudit.queryOptions({ projectId, limit: 100 })
   );
 
   const invalidate = () => {
@@ -357,7 +273,7 @@ export default function EventDropManager({
       onSuccess: (result) => {
         setDropFor(null);
         invalidate();
-        toast(`Dropped "${result.name}". Recoverable for 24 h.`);
+        toast(`Dropped "${result.name}". Events sent while dropped are not kept.`);
       },
       onError: handleError,
     })
@@ -367,9 +283,7 @@ export default function EventDropManager({
       onSuccess: (result) => {
         setUndropFor(null);
         invalidate();
-        toast(
-          `Undropped "${result.name}"${result.replayRequestId ? ', replay started' : ''}.`
-        );
+        toast(`Undropped "${result.name}". New events will be stored again.`);
       },
       onError: handleError,
     })
@@ -432,8 +346,8 @@ export default function EventDropManager({
       <div>
         <h3 className="text-lg font-medium">Event Management</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Drop sends new events to a 24 h holding topic instead of ClickHouse.
-          Past data is never deleted.
+          Drop stops storing new events of that name; events sent while dropped
+          are not kept. Past data is never deleted.
         </p>
       </div>
 
@@ -702,12 +616,11 @@ export default function EventDropManager({
           event={undropFor}
           isPending={undropMutation.isPending}
           onCancel={() => setUndropFor(null)}
-          onConfirm={({ replay }) =>
+          onConfirm={() =>
             undropMutation.mutate({
               projectId,
               name: undropFor.name,
               confirmName: undropFor.name,
-              replay,
             })
           }
         />

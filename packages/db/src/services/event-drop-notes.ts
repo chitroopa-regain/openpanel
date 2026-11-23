@@ -9,15 +9,12 @@ export type DropPeriod = {
   from: Date;
   /** null while the event is still dropped */
   to: Date | null;
-  /** the undrop asked for a replay of the held window */
-  replayRequested: boolean;
 };
 
 export type DropNote = {
   eventName: string;
   from: string;
   to: string | null;
-  replayRequested: boolean;
 };
 
 /** A note with its times written out in the project timezone, for the UI. */
@@ -33,7 +30,7 @@ export type LabeledDropNote = DropNote & {
 };
 
 const DROP_ACTIONS = new Set(['drop', 'drop_anyway']);
-const UNDROP_ACTIONS = new Set(['undrop', 'undrop_replay']);
+const UNDROP_ACTIONS = new Set(['undrop']);
 
 /**
  * Past periods come from drop → undrop pairs in the audit log; the current
@@ -65,7 +62,6 @@ export function buildDropPeriods(
           eventName: row.eventName,
           from,
           to: row.createdAt,
-          replayRequested: row.action === 'undrop_replay',
         });
         open.delete(row.eventName);
       }
@@ -78,7 +74,6 @@ export function buildDropPeriods(
         eventName: meta.name,
         from: meta.droppedAt,
         to: null,
-        replayRequested: false,
       });
     }
   }
@@ -104,7 +99,6 @@ export function dropNotesForReport(
           eventName: period.eventName,
           from: period.from.toISOString(),
           to: period.to?.toISOString() ?? null,
-          replayRequested: period.replayRequested,
         });
       }
     }

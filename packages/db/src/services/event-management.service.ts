@@ -3,8 +3,9 @@
  * code path for listing, dropping and undropping event names.
  *
  * Drop = add the name to the Redis set op:dropped:<projectId> (Jitsu ingest
- * reads it and sends new events to the 24 h holding topic) + stamp
- * event_meta.droppedAt. ClickHouse history is never deleted.
+ * reads it and stops storing new events of that name; they are not kept) +
+ * stamp event_meta.droppedAt. ClickHouse history is never deleted. Undrop
+ * only lets new events in again.
  */
 import sqlstring from 'sqlstring';
 import { ch, TABLE_NAMES } from '../clickhouse/client';
@@ -12,22 +13,14 @@ import { logger } from '../logger';
 import { db } from '../prisma-client';
 import { addDroppedEvent, removeDroppedEvent } from './drop-events.service';
 import {
-  ACTIVE_REPLAY_STATUSES,
   assertCanDrop,
   assertCanUndrop,
   EventDropError,
   type EventDropSource,
-  getReplayWindow,
   HIGH_VOLUME_PCT,
-  HOLD_WINDOW_MS,
-  getRedropBlock,
   isProtectedEventName,
-  REDROP_COOLDOWN_MS,
-  type RedropBlock,
-  UNDROP_ACTIONS,
 } from './event-drop-rules';
 import { getEventMetasCached } from './event.service';
-import { getSettingsForProject } from './organization.service';
 import {
   affectedBoards,
   buildEventUsage,
@@ -69,9 +62,6 @@ export type ManagedEvent = {
   usageCount: number;
   status: ManagedEventStatus;
   droppedAt: string | null;
-  recoverableUntil: string | null;
-  /** Drop is refused (409 REDROP_COOLDOWN): a replay is unfinished, or undropped < 24 h ago. */
-  dropBlocked: RedropBlock | null;
 };
 
 export type ManagedEventsResult = {
@@ -287,8 +277,7 @@ export async function listManagedEvents({
   q?: string;
 }): Promise<ManagedEventsResult> {
   const project = await getProjectOrThrow(projectId);
-  const now = new Date();
-  const [volumes, knownNames, metas, usage, activeReplays, recentUndrops, settings] = await Promise.all([
+  const [volumes, knownNames, metas, usage] = await Promise.all([
     getEventVolumes(projectId),
     getKnownEventNames(projectId),
     db.eventMeta.findMany({
@@ -296,25 +285,7 @@ export async function listManagedEvents({
       select: { name: true, droppedAt: true },
     }),
     getEventUsageForProject(project),
-    db.eventReplayRequest.findMany({
-      where: { projectId, status: { in: [...ACTIVE_REPLAY_STATUSES] } },
-      select: { eventName: true },
-    }),
-    db.eventDropAudit.groupBy({
-      by: ['eventName'],
-      where: {
-        projectId,
-        action: { in: [...UNDROP_ACTIONS] },
-        createdAt: { gt: new Date(now.getTime() - REDROP_COOLDOWN_MS) },
-      },
-      _max: { createdAt: true },
-    }),
-    getSettingsForProject(projectId),
   ]);
-  const replaying = new Set(activeReplays.map((r) => r.eventName));
-  const lastUndrop = new Map(
-    recentUndrops.map((r) => [r.eventName, r._max.createdAt ?? null])
-  );
 
   const droppedAt = new Map(
     metas.filter((m) => m.droppedAt).map((m) => [m.name, m.droppedAt!])
@@ -360,15 +331,6 @@ export async function listManagedEvents({
       usageCount: usageCount(eventUsage),
       status,
       droppedAt: dropped?.toISOString() ?? null,
-      recoverableUntil: dropped
-        ? new Date(dropped.getTime() + HOLD_WINDOW_MS).toISOString()
-        : null,
-      dropBlocked: getRedropBlock({
-        replayActive: replaying.has(name),
-        lastUndropAt: lastUndrop.get(name) ?? null,
-        now,
-        timeZone: settings.timezone,
-      }),
     });
   }
 
@@ -438,12 +400,6 @@ function assertActor(input: EventActionInput) {
   }
 }
 
-/**
- * Ingest re-reads the dropped set every 5 s, so an undrop takes up to that
- * long to reach it. The replay window runs this much past the undrop; the
- * replay worker must not start a request before its to_ts.
- */
-export const INGEST_REFRESH_GRACE_MS = 30 * 1000;
 const ACTION_TX_TIMEOUT_MS = 20 * 1000;
 
 /** The client Prisma hands to an interactive transaction. */
@@ -533,58 +489,19 @@ export async function dropManagedEvent(
   const project = await getProjectOrThrow(input.projectId);
   const usage = await getUsageOfEvent(project, input.name);
   const boards = affectedBoards(usage);
-  // Read before the lock: the transaction holds a pool connection meanwhile.
-  const { timezone } = await getSettingsForProject(project.id);
 
   const result = await withEventLock(project.id, input.name, async (tx) => {
     const meta = await tx.eventMeta.findUnique({
       where: { name_projectId: { name: input.name, projectId: project.id } },
       select: { droppedAt: true },
     });
-    const guard = {
+    const { action, reason } = assertCanDrop({
       name: input.name,
       confirmName: input.confirmName,
       reason: input.reason,
       isDropped: Boolean(meta?.droppedAt),
-    };
-    // Confirmation, protected and already-dropped first; the cooldown comes
-    // before the reason requirement of a used event.
-    assertCanDrop({ ...guard, usageCount: 0 });
-    // A re-drop while a replay still copies messages back would lose copies,
-    // so Drop waits for every replay to finish and for 24 h after an undrop.
-    const activeReplay = await tx.eventReplayRequest.findFirst({
-      where: {
-        projectId: project.id,
-        eventName: input.name,
-        status: { in: [...ACTIVE_REPLAY_STATUSES] },
-      },
-      select: { id: true },
-    });
-    const lastUndrop = await tx.eventDropAudit.findFirst({
-      where: {
-        projectId: project.id,
-        eventName: input.name,
-        action: { in: [...UNDROP_ACTIONS] },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { createdAt: true },
-    });
-    if (activeReplay || lastUndrop) {
-      const block = getRedropBlock({
-        replayActive: Boolean(activeReplay),
-        lastUndropAt: lastUndrop?.createdAt ?? null,
-        now: new Date(),
-        timeZone: timezone,
-      });
-      if (block) {
-        throw new EventDropError('REDROP_COOLDOWN', block.message);
-      }
-    }
-    const { action, reason } = assertCanDrop({
-      ...guard,
       usageCount: usageCount(usage),
     });
-    // Taken before the Redis write so the replay window covers every held event.
     const droppedAt = new Date();
     await tx.eventMeta.upsert({
       where: { name_projectId: { name: input.name, projectId: project.id } },
@@ -604,15 +521,12 @@ export async function dropManagedEvent(
       },
       select: { id: true },
     });
-    // Last step before commit: ingest starts holding new events.
+    // Last step before commit: ingest stops storing new events.
     await addDroppedEvent(project.id, input.name);
     return { action, reason, droppedAt, auditId: audit.id };
   });
   await getEventMetasCached.clear(project.id).catch(() => {});
 
-  const recoverableUntil = new Date(
-    result.droppedAt.getTime() + HOLD_WINDOW_MS
-  );
   await postAuditToSlack(result.auditId, {
     projectName: project.name,
     eventName: input.name,
@@ -622,21 +536,20 @@ export async function dropManagedEvent(
     requestedBy: input.requestedBy,
     chatUrl: input.chatUrl,
     boards,
-    extra: `recoverable until ${formatUtc(recoverableUntil)}`,
+    extra: 'events sent while dropped are not kept',
   });
 
   return {
     name: input.name,
     status: 'dropped' as const,
     droppedAt: result.droppedAt.toISOString(),
-    recoverableUntil: recoverableUntil.toISOString(),
     auditId: result.auditId,
     boardsAffected: boards,
   };
 }
 
 export async function undropManagedEvent(
-  input: EventActionInput & { replay: boolean; reason?: string | null }
+  input: EventActionInput & { reason?: string | null }
 ) {
   assertActor(input);
   const project = await getProjectOrThrow(input.projectId);
@@ -658,102 +571,39 @@ export async function undropManagedEvent(
       data: { droppedAt: null, clearedAt: null },
     });
     await removeDroppedEvent(project.id, input.name);
-    // Taken after the SREM: the re-drop cooldown and the replay window count
-    // from here, not from the transaction start (which may wait on the lock).
-    const undroppedAt = new Date();
-    // Ingest may keep holding for up to its refresh interval after the SREM.
-    const held = getReplayWindow(meta!.droppedAt!, undroppedAt);
-    // A quick drop → undrop → drop again could overlap the previous replay's
-    // grace period; start after it so no message is copied twice.
-    const previous = await tx.eventReplayRequest.findFirst({
-      // A failed replay did not cover its window, so it does not count.
-      where: {
-        projectId: project.id,
-        eventName: input.name,
-        status: { not: 'failed' },
-      },
-      orderBy: { toTs: 'desc' },
-      select: { toTs: true },
-    });
-    const window = {
-      fromTs:
-        previous && previous.toTs > held.fromTs ? previous.toTs : held.fromTs,
-      toTs: new Date(held.toTs.getTime() + INGEST_REFRESH_GRACE_MS),
-    };
-    const replay = input.replay
-      ? await tx.eventReplayRequest.create({
-          data: {
-            projectId: project.id,
-            eventName: input.name,
-            fromTs: window.fromTs,
-            toTs: window.toTs,
-          },
-          select: { id: true },
-        })
-      : null;
     const audit = await tx.eventDropAudit.create({
       data: {
         projectId: project.id,
         eventName: input.name,
-        action: replay ? 'undrop_replay' : 'undrop',
+        action: 'undrop',
         reason: input.reason?.trim() || null,
         source: input.source,
         requestedBy: input.requestedBy?.trim() || null,
         chatUrl: input.chatUrl || null,
         boardsAffected: boards,
-        replayRequestId: replay?.id ?? null,
-        createdAt: undroppedAt,
       },
       select: { id: true },
     });
-    return { auditId: audit.id, replayRequestId: replay?.id ?? null, window };
+    return { auditId: audit.id };
   });
   await getEventMetasCached.clear(project.id).catch(() => {});
 
   await postAuditToSlack(result.auditId, {
     projectName: project.name,
     eventName: input.name,
-    action: result.replayRequestId ? 'undrop_replay' : 'undrop',
+    action: 'undrop',
     reason: input.reason?.trim() || null,
     source: input.source,
     requestedBy: input.requestedBy,
     chatUrl: input.chatUrl,
     boards,
-    extra: result.replayRequestId
-      ? `replaying ${formatUtc(result.window.fromTs)} → ${formatUtc(result.window.toTs)}`
-      : 'no replay',
+    extra: 'new events are stored again; events sent while dropped are not recovered',
   });
 
   return {
     name: input.name,
     status: 'active' as const,
-    replayRequestId: result.replayRequestId,
     auditId: result.auditId,
-  };
-}
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export async function getReplayRequest(id: string) {
-  if (!UUID_PATTERN.test(id)) {
-    throw new EventDropError('NOT_FOUND', 'Replay request not found');
-  }
-  const row = await db.eventReplayRequest.findUnique({ where: { id } });
-  if (!row) {
-    throw new EventDropError('NOT_FOUND', 'Replay request not found');
-  }
-  return {
-    id: row.id,
-    projectId: row.projectId,
-    eventName: row.eventName,
-    fromTs: row.fromTs.toISOString(),
-    toTs: row.toTs.toISOString(),
-    status: row.status as 'pending' | 'running' | 'done' | 'failed',
-    copied: row.copied,
-    error: row.error,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -764,22 +614,12 @@ export async function listEventDropAudit(projectId: string, limit = 50) {
     orderBy: { createdAt: 'desc' },
     take,
   });
-  const replayIds = rows
-    .map((r) => r.replayRequestId)
-    .filter((id): id is string => Boolean(id));
-  const replays = replayIds.length
-    ? await db.eventReplayRequest.findMany({
-        where: { id: { in: replayIds } },
-        select: { id: true, status: true, copied: true, error: true },
-      })
-    : [];
-  const replayById = new Map(replays.map((r) => [r.id, r]));
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.createdAt.toISOString(),
     projectId: row.projectId,
     eventName: row.eventName,
-    action: row.action as 'drop' | 'drop_anyway' | 'undrop' | 'undrop_replay',
+    action: row.action as 'drop' | 'drop_anyway' | 'undrop',
     reason: row.reason,
     source: row.source as EventDropSource,
     actor: row.actor,
@@ -789,9 +629,6 @@ export async function listEventDropAudit(projectId: string, limit = 50) {
       ? (row.boardsAffected as { id: string; name: string; url: string; active: boolean }[])
       : [],
     slackPosted: row.slackPosted,
-    replay: row.replayRequestId
-      ? (replayById.get(row.replayRequestId) ?? null)
-      : null,
   }));
 }
 
@@ -840,12 +677,7 @@ const ACTION_LABEL: Record<string, string> = {
   drop: 'Dropped',
   drop_anyway: 'Dropped anyway',
   undrop: 'Undropped',
-  undrop_replay: 'Undropped + replay',
 };
-
-function formatUtc(date: Date) {
-  return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-}
 
 function slackEscape(text: string) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -54,7 +54,7 @@ describe('labelNote', () => {
   it('writes times in the project timezone, with the year only when it is not this year', () => {
     const thisYear = new Date().getUTCFullYear();
     const note = labelNote(
-      { eventName: 'A', from: `${thisYear}-03-01T20:00:00.000Z`, to: `${thisYear}-03-02T04:30:00.000Z`, replayRequested: false },
+      { eventName: 'A', from: `${thisYear}-03-01T20:00:00.000Z`, to: `${thisYear}-03-02T04:30:00.000Z` },
       'Asia/Kolkata'
     );
     expect(note).toMatchObject({
@@ -64,7 +64,7 @@ describe('labelNote', () => {
       toDayTime: '2 Mar, 10:00',
       toTime: '10:00',
     });
-    expect(labelNote({ eventName: 'A', from: '2020-01-05T00:00:00.000Z', to: null, replayRequested: false }, 'UTC').fromDay).toBe('5 Jan 2020');
+    expect(labelNote({ eventName: 'A', from: '2020-01-05T00:00:00.000Z', to: null }, 'UTC').fromDay).toBe('5 Jan 2020');
   });
 });
 

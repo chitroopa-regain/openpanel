@@ -15,8 +15,7 @@ const mocks = vi.hoisted(() => {
     customEvent: { findMany: vi.fn() },
     customCohort: { findMany: vi.fn() },
     resourceView: { findMany: vi.fn() },
-    eventDropAudit: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), groupBy: vi.fn() },
-    eventReplayRequest: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn() },
+    eventDropAudit: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   };
@@ -30,9 +29,6 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('../prisma-client', () => ({ db: mocks.db }));
-vi.mock('./organization.service', () => ({
-  getSettingsForProject: async () => ({ timezone: 'Asia/Kolkata' }),
-}));
 vi.mock('../clickhouse/client', () => ({
   ch: { query: mocks.chQuery },
   TABLE_NAMES: { event_names_mv: 'distinct_event_names_mv' },
@@ -52,7 +48,6 @@ import { EventDropError } from './event-drop-rules';
 import {
   buildSlackText,
   dropManagedEvent,
-  INGEST_REFRESH_GRACE_MS,
   listManagedEvents,
   recordResourceView,
   undropManagedEvent,
@@ -96,11 +91,6 @@ beforeEach(() => {
   db.resourceView.findMany.mockResolvedValue([]);
   db.eventDropAudit.create.mockResolvedValue({ id: 'audit-1' });
   db.eventDropAudit.update.mockResolvedValue({});
-  db.eventReplayRequest.create.mockResolvedValue({ id: 'replay-1' });
-  db.eventReplayRequest.findFirst.mockResolvedValue(null);
-  db.eventReplayRequest.findMany.mockResolvedValue([]);
-  db.eventDropAudit.findFirst.mockResolvedValue(null);
-  db.eventDropAudit.groupBy.mockResolvedValue([]);
   db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
   mocks.addDroppedEvent.mockResolvedValue(undefined);
   mocks.removeDroppedEvent.mockResolvedValue(undefined);
@@ -142,9 +132,8 @@ describe('dropManagedEvent', () => {
     // Slack webhook unset: skipped silently.
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result.auditId).toBe('audit-1');
-    expect(
-      new Date(result.recoverableUntil).getTime() - new Date(result.droppedAt).getTime()
-    ).toBe(24 * 60 * 60 * 1000);
+    // No recovery promise: dropped events are not kept.
+    expect(result).not.toHaveProperty('recoverableUntil');
   });
 
   it('refuses a used event without a reason before touching Redis', async () => {
@@ -270,101 +259,18 @@ describe('dropManagedEvent', () => {
     expect(mocks.removeDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
   });
 
-  it('refuses a re-drop (409) while a replay of the event is pending or running', async () => {
-    db.eventReplayRequest.findFirst.mockResolvedValue({ id: 'replay-9' });
-    await expect(
-      dropManagedEvent({
-        projectId: 'regain-app',
-        name: 'App Init: Theme Set',
-        confirmName: 'App Init: Theme Set',
-        source: 'Agent',
-        requestedBy: 'Chitroopa',
-      })
-    ).rejects.toMatchObject({
-      code: 'REDROP_COOLDOWN',
-      httpStatus: 409,
-      message: 'Replay of this event is still running; try again when it finishes',
+  it('allows a re-drop right after an undrop (no cooldown, no replay)', async () => {
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date() });
+    await undropManagedEvent({ projectId: 'regain-app', name: 'App Init: Theme Set', confirmName: 'App Init: Theme Set', source: 'UI' });
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: null });
+    const result = await dropManagedEvent({
+      projectId: 'regain-app',
+      name: 'App Init: Theme Set',
+      confirmName: 'App Init: Theme Set',
+      source: 'UI',
     });
-    expect(db.eventReplayRequest.findFirst.mock.calls[0]![0].where).toMatchObject({
-      eventName: 'App Init: Theme Set',
-      status: { in: ['pending', 'running'] },
-    });
-    expect(mocks.addDroppedEvent).not.toHaveBeenCalled();
-    expect(db.eventMeta.upsert).not.toHaveBeenCalled();
-  });
-
-  it('refuses a re-drop (409) for 24 h after the last undrop', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-23T12:00:00Z'));
-    try {
-      db.eventDropAudit.findFirst.mockResolvedValue({ createdAt: new Date('2026-11-23T03:30:00Z') });
-      await expect(
-        dropManagedEvent({
-          projectId: 'regain-app',
-          name: 'App Init: Theme Set',
-          confirmName: 'App Init: Theme Set',
-          source: 'UI',
-        })
-      ).rejects.toMatchObject({
-        code: 'REDROP_COOLDOWN',
-        httpStatus: 409,
-        message:
-          'This event was undropped at 23 Nov 2026, 09:00 GMT+5:30; it can be dropped again after 24 Nov 2026, 09:00 GMT+5:30',
-      });
-      expect(db.eventDropAudit.findFirst.mock.calls[0]![0]).toMatchObject({
-        where: { eventName: 'App Init: Theme Set', action: { in: ['undrop', 'undrop_replay'] } },
-        orderBy: { createdAt: 'desc' },
-      });
-      expect(mocks.addDroppedEvent).not.toHaveBeenCalled();
-      expect(db.eventMeta.upsert).not.toHaveBeenCalled();
-
-      // 24 h later the same drop goes ahead.
-      vi.setSystemTime(new Date('2026-11-24T03:30:01Z'));
-      await dropManagedEvent({
-        projectId: 'regain-app',
-        name: 'App Init: Theme Set',
-        confirmName: 'App Init: Theme Set',
-        source: 'UI',
-      });
-      expect(mocks.addDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('reports the cooldown, not "give a reason", for a used event dropped with no reason', async () => {
-    db.eventDropAudit.findFirst.mockResolvedValue({ createdAt: new Date(Date.now() - 60 * 1000) });
-    await expect(
-      dropManagedEvent({
-        projectId: 'regain-app',
-        name: 'Home Page: Shown',
-        confirmName: 'Home Page: Shown',
-        source: 'UI',
-      })
-    ).rejects.toMatchObject({ code: 'REDROP_COOLDOWN', httpStatus: 409 });
-
-    // Without the cooldown the same request still needs a reason.
-    db.eventDropAudit.findFirst.mockResolvedValue(null);
-    await expect(
-      dropManagedEvent({
-        projectId: 'regain-app',
-        name: 'Home Page: Shown',
-        confirmName: 'Home Page: Shown',
-        source: 'UI',
-      })
-    ).rejects.toMatchObject({ code: 'REASON_REQUIRED' });
-  });
-
-  it('still reports a confirmation typo before the cooldown', async () => {
-    db.eventDropAudit.findFirst.mockResolvedValue({ createdAt: new Date(Date.now() - 60 * 1000) });
-    await expect(
-      dropManagedEvent({
-        projectId: 'regain-app',
-        name: 'App Init: Theme Set',
-        confirmName: 'App Init: Theme',
-        source: 'UI',
-      })
-    ).rejects.toMatchObject({ code: 'CONFIRM_MISMATCH' });
+    expect(result.status).toBe('dropped');
+    expect(mocks.addDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
   });
 
   it('needs requestedBy for Agent drops and an http(s) chat URL', async () => {
@@ -397,93 +303,29 @@ describe('dropManagedEvent', () => {
 });
 
 describe('undropManagedEvent', () => {
-  it('undrops and queues a replay of the held window', async () => {
-    const droppedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    db.eventMeta.findUnique.mockResolvedValue({ droppedAt });
+  it('undrops: lets new events in, clears droppedAt, audits; no replay', async () => {
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) });
     const result = await undropManagedEvent({
       projectId: 'regain-app',
       name: 'Group Preview: Page Changed',
       confirmName: 'Group Preview: Page Changed',
-      replay: true,
       source: 'UI',
     });
     expect(mocks.removeDroppedEvent).toHaveBeenCalledWith('regain-app', 'Group Preview: Page Changed');
-    const replay = db.eventReplayRequest.create.mock.calls[0]![0].data;
-    expect(replay).toMatchObject({ projectId: 'regain-app', eventName: 'Group Preview: Page Changed' });
-    expect(replay.fromTs).toEqual(droppedAt);
-    // The window runs past the undrop by ingest's refresh grace.
-    expect(replay.toTs.getTime()).toBeGreaterThanOrEqual(
-      Date.now() + INGEST_REFRESH_GRACE_MS - 1000
+    expect(db.eventMeta.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { droppedAt: null, clearedAt: null } })
     );
     expect(db.eventDropAudit.create.mock.calls[0]![0].data).toMatchObject({
-      action: 'undrop_replay',
-      replayRequestId: 'replay-1',
+      action: 'undrop',
+      eventName: 'Group Preview: Page Changed',
     });
-    expect(result.replayRequestId).toBe('replay-1');
-  });
-
-  it('keeps the 24 h start clamp at the real undrop time', async () => {
-    const droppedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-    db.eventMeta.findUnique.mockResolvedValue({ droppedAt });
-    const before = Date.now();
-    await undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' });
-    const { fromTs, toTs } = db.eventReplayRequest.create.mock.calls[0]![0].data;
-    expect(fromTs.getTime()).toBeGreaterThanOrEqual(before - 24 * 60 * 60 * 1000);
-    expect(fromTs.getTime()).toBeLessThanOrEqual(Date.now() - 24 * 60 * 60 * 1000);
-    expect(toTs.getTime() - fromTs.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 + INGEST_REFRESH_GRACE_MS - 50);
-  });
-
-  it('starts after the previous replay so a quick drop/undrop/drop/undrop never copies twice', async () => {
-    const droppedAt = new Date(Date.now() - 10 * 1000);
-    const previousEnd = new Date(Date.now() + 20 * 1000); // earlier replay's grace still running
-    db.eventMeta.findUnique.mockResolvedValue({ droppedAt });
-    db.eventReplayRequest.findFirst.mockResolvedValue({ toTs: previousEnd });
-    await undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' });
-    const { fromTs, toTs } = db.eventReplayRequest.create.mock.calls[0]![0].data;
-    expect(fromTs).toEqual(previousEnd);
-    expect(toTs.getTime()).toBeGreaterThan(previousEnd.getTime());
-    // Failed earlier replays do not count as covered.
-    expect(db.eventReplayRequest.findFirst.mock.calls[0]![0].where).toMatchObject({
-      status: { not: 'failed' },
-    });
-  });
-
-  it('stamps the undrop audit row at the undrop itself, not at the transaction start', async () => {
-    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date(Date.now() - 60 * 1000) });
-    let srem = 0;
-    mocks.removeDroppedEvent.mockImplementationOnce(async () => {
-      srem = Date.now();
-    });
-    // The transaction starts, then waits 50 ms for the event lock.
-    db.$executeRaw.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve(1), 50)));
-    const txStart = Date.now();
-    await undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' });
-    const { createdAt } = db.eventDropAudit.create.mock.calls[0]![0].data;
-    expect(createdAt).toBeInstanceOf(Date);
-    expect(createdAt.getTime()).toBeGreaterThanOrEqual(srem);
-    expect(createdAt.getTime()).toBeGreaterThanOrEqual(txStart + 45);
-    // The replay window ends a grace period after that same instant.
-    expect(db.eventReplayRequest.create.mock.calls[0]![0].data.toTs.getTime()).toBe(
-      createdAt.getTime() + INGEST_REFRESH_GRACE_MS
-    );
-  });
-
-  it('undrops without replay', async () => {
-    db.eventMeta.findUnique.mockResolvedValue({ droppedAt: new Date() });
-    const result = await undropManagedEvent({
-      projectId: 'regain-app',
-      name: 'A',
-      confirmName: 'A',
-      replay: false,
-      source: 'UI',
-    });
-    expect(db.eventReplayRequest.create).not.toHaveBeenCalled();
-    expect(result.replayRequestId).toBeNull();
+    expect(db.eventDropAudit.create.mock.calls[0]![0].data).not.toHaveProperty('replayRequestId');
+    expect(result).toEqual({ name: 'Group Preview: Page Changed', status: 'active', auditId: 'audit-1' });
   });
 
   it('refuses an event that is not dropped', async () => {
     await expect(
-      undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' })
+      undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', source: 'UI' })
     ).rejects.toMatchObject({ code: 'NOT_DROPPED' });
     expect(mocks.removeDroppedEvent).not.toHaveBeenCalled();
   });
@@ -524,11 +366,6 @@ describe('listManagedEvents', () => {
     db.eventMeta.findMany.mockResolvedValue([
       { name: 'Old Thing', droppedAt: new Date('2026-11-23T10:00:00Z') },
     ]);
-    db.eventReplayRequest.findMany.mockResolvedValue([{ eventName: 'Home Page: Shown' }]);
-    const undropAt = new Date(Date.now() - 60 * 60 * 1000);
-    db.eventDropAudit.groupBy.mockResolvedValue([
-      { eventName: 'session_start', _max: { createdAt: undropAt } },
-    ]);
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_daily')) {
         throw new Error('Code: 60. DB::Exception: Table openpanel.event_name_daily does not exist. (UNKNOWN_TABLE)');
@@ -537,18 +374,6 @@ describe('listManagedEvents', () => {
     });
     const result = await listManagedEvents({ projectId: 'regain-app' });
     expect(result.volumeAvailable).toBe(false);
-    const byName = (name: string) => result.events.find((e) => e.name === name);
-    expect(byName('Home Page: Shown')?.dropBlocked).toMatchObject({ reason: 'replay', until: null });
-    expect(byName('session_start')?.dropBlocked).toMatchObject({
-      reason: 'cooldown',
-      until: new Date(undropAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-    });
-    expect(byName('session_start')?.dropBlocked?.remainingMs).toBeGreaterThan(22.9 * 60 * 60 * 1000);
-    expect(byName('Old Thing')?.dropBlocked).toBeNull();
-    expect(db.eventDropAudit.groupBy.mock.calls[0]![0].where).toMatchObject({
-      projectId: 'regain-app',
-      action: { in: ['undrop', 'undrop_replay'] },
-    });
     expect(result.events.map((e) => [e.name, e.status, e.volume1d])).toEqual(
       expect.arrayContaining([
         ['Home Page: Shown', 'active', null],
@@ -556,9 +381,7 @@ describe('listManagedEvents', () => {
         ['Old Thing', 'dropped', null],
       ])
     );
-    expect(result.events.find((e) => e.name === 'Old Thing')?.recoverableUntil).toBe(
-      '2026-11-24T10:00:00.000Z'
-    );
+    expect(result.events.find((e) => e.name === 'Old Thing')).not.toHaveProperty('recoverableUntil');
     expect(result.counts).toMatchObject({ all: 3, used: 1, unused: 0, dropped: 1, protected: 1 });
   });
 
@@ -595,12 +418,12 @@ describe('buildSlackText', () => {
       requestedBy: 'Chitroopa',
       chatUrl: 'https://maker.example.com/maker/abc',
       boards: [{ name: 'C64 Launch Board', url: 'https://op/x', active: false }],
-      extra: 'recoverable until 2026-11-24 12:15 UTC',
+      extra: 'events sent while dropped are not kept',
     });
     expect(text).toContain('*Dropped* `App Init: Logback Only` in Regain Android');
     expect(text).toContain('Reason: Not used &lt;anywhere&gt;');
     expect(text).toContain('Via: Agent (asked by Chitroopa, <https://maker.example.com/maker/abc|chat>)');
     expect(text).toContain('Boards: <https://op/x|C64 Launch Board>');
-    expect(text).toContain('recoverable until');
+    expect(text).toContain('events sent while dropped are not kept');
   });
 });

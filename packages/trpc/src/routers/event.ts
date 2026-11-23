@@ -439,7 +439,6 @@ export const eventRouter = createTRPCRouter({
         projectId: z.string(),
         name: z.string().min(1),
         confirmName: z.string(),
-        replay: z.boolean().default(false),
         reason: z.string().max(1000).optional(),
       })
     )

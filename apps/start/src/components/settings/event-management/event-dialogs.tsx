@@ -1,6 +1,5 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -257,8 +256,8 @@ export function DropDialog({
         )}
 
         <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>New events go to a 24 h holding topic, not ClickHouse.</li>
-          <li>Undrop within 24 h and replay them; after that they are gone.</li>
+          <li>New events of this name stop being stored.</li>
+          <li>Events sent while dropped are not kept.</li>
           <li>Past data stays. Nothing is deleted from ClickHouse.</li>
           <li>
             {anyway
@@ -330,12 +329,8 @@ export function UndropDialog({
   event: ManagedEvent;
   isPending: boolean;
   onCancel: () => void;
-  onConfirm: (input: { replay: boolean }) => void;
+  onConfirm: () => void;
 }) {
-  const [replay, setReplay] = useState(true);
-  const recoverable =
-    event.recoverableUntil !== null &&
-    new Date(event.recoverableUntil).getTime() > Date.now();
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="leading-normal sm:max-w-[540px]" aria-describedby={undefined}>
@@ -345,34 +340,12 @@ export function UndropDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="text-sm">
-          New events go to ClickHouse again. Dropped {dateTime(event.droppedAt)}
-          {recoverable
-            ? `, recoverable until ${dateTime(event.recoverableUntil)}.`
-            : '. Only the last 24 h are still held.'}
+          New events will be stored again. Events sent while dropped are not
+          recovered.
         </div>
-        <label
-          htmlFor="undrop-replay"
-          className="flex cursor-pointer items-start gap-3 text-sm"
-        >
-          <Checkbox
-            id="undrop-replay"
-            checked={replay}
-            onCheckedChange={(checked) => setReplay(checked === true)}
-            className="mt-0.5"
-          />
-          <span>
-            <span className="font-medium">Replay last 24 h</span>
-            <span className="block text-sm text-muted-foreground">
-              Events held since{' '}
-              {dateTime(
-                recoverable
-                  ? event.droppedAt
-                  : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-              )}{' '}
-              are copied back. Events already stored are skipped.
-            </span>
-          </span>
-        </label>
+        <div className="text-sm text-muted-foreground">
+          Dropped {dateTime(event.droppedAt)}.
+        </div>
         <div className="text-sm text-muted-foreground">
           Logged in the audit log and posted to Slack #analytics.
         </div>
@@ -384,7 +357,7 @@ export function UndropDialog({
             size="default"
             disabled={isPending}
             loading={isPending}
-            onClick={() => onConfirm({ replay })}
+            onClick={() => onConfirm()}
           >
             Undrop
           </Button>

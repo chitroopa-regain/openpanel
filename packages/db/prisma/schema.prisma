@@ -479,7 +479,7 @@ model EventDropAudit {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId        String
   eventName        String
-  /// 'drop' | 'drop_anyway' | 'undrop' | 'undrop_replay'
+  /// 'drop' | 'drop_anyway' | 'undrop'
   action           String
   reason           String?
   /// 'UI' | 'Agent'
@@ -489,7 +489,6 @@ model EventDropAudit {
   chatUrl          String?
   /// List of { id, name, url, active } boards that used the event
   boardsAffected   Json     @default("[]")
-  replayRequestId  String?  @db.Uuid
   slackPosted      Boolean?
   createdAt        DateTime @default(now())
 
@@ -510,27 +509,6 @@ model ResourceView {
   @@id([resourceType, resourceId])
   @@index([projectId])
   @@map("resource_views")
-}
-
-/// Undrop + replay: OpenPanel inserts 'pending'; the replay worker on a Kafka
-/// node claims it and copies held messages from destination-messages-short
-/// back to destination-messages. Column names are snake_case because the
-/// worker reads this table directly.
-model EventReplayRequest {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  projectId String   @map("project_id")
-  eventName String   @map("event_name")
-  fromTs    DateTime @map("from_ts") @db.Timestamptz(3)
-  toTs      DateTime @map("to_ts") @db.Timestamptz(3)
-  /// 'pending' | 'running' | 'done' | 'failed'
-  status    String   @default("pending")
-  copied    Int      @default(0)
-  error     String?
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  @@index([status, createdAt])
-  @@map("event_replay_requests")
 }
 
 model CustomEvent {

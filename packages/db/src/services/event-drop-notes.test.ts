@@ -9,7 +9,7 @@ describe('buildDropPeriods', () => {
       [{ name: 'Stamp Book: Card Shown', droppedAt: d('2026-11-23T03:40:00Z') }],
       [
         // out of order on purpose
-        { eventName: 'Auth Interceptor: Request Failed', action: 'undrop_replay', createdAt: d('2026-11-22T12:35:00Z') },
+        { eventName: 'Auth Interceptor: Request Failed', action: 'undrop', createdAt: d('2026-11-22T12:35:00Z') },
         { eventName: 'Auth Interceptor: Request Failed', action: 'drop', createdAt: d('2026-11-22T11:50:00Z') },
         { eventName: 'Stamp Book: Card Shown', action: 'drop_anyway', createdAt: d('2026-11-23T03:40:00Z') },
       ]
@@ -19,26 +19,25 @@ describe('buildDropPeriods', () => {
         eventName: 'Auth Interceptor: Request Failed',
         from: d('2026-11-22T11:50:00Z'),
         to: d('2026-11-22T12:35:00Z'),
-        replayRequested: true,
       },
     ]);
     // The open audit drop is not doubled: event_meta is the current period.
     expect(periods.get('Stamp Book: Card Shown')).toEqual([
-      { eventName: 'Stamp Book: Card Shown', from: d('2026-11-23T03:40:00Z'), to: null, replayRequested: false },
+      { eventName: 'Stamp Book: Card Shown', from: d('2026-11-23T03:40:00Z'), to: null },
     ]);
   });
 
-  it('keeps several past periods, ignores an undrop with no drop, and a plain undrop is not a replay', () => {
+  it('keeps several past periods and ignores an undrop with no drop', () => {
     const periods = buildDropPeriods([], [
       { eventName: 'A', action: 'undrop', createdAt: d('2026-10-01T00:00:00Z') },
       { eventName: 'A', action: 'drop', createdAt: d('2026-10-02T00:00:00Z') },
       { eventName: 'A', action: 'undrop', createdAt: d('2026-10-03T00:00:00Z') },
       { eventName: 'A', action: 'drop', createdAt: d('2026-10-10T00:00:00Z') },
-      { eventName: 'A', action: 'undrop_replay', createdAt: d('2026-10-10T06:00:00Z') },
+      { eventName: 'A', action: 'undrop', createdAt: d('2026-10-10T06:00:00Z') },
     ]);
     expect(periods.get('A')).toEqual([
-      { eventName: 'A', from: d('2026-10-02T00:00:00Z'), to: d('2026-10-03T00:00:00Z'), replayRequested: false },
-      { eventName: 'A', from: d('2026-10-10T00:00:00Z'), to: d('2026-10-10T06:00:00Z'), replayRequested: true },
+      { eventName: 'A', from: d('2026-10-02T00:00:00Z'), to: d('2026-10-03T00:00:00Z') },
+      { eventName: 'A', from: d('2026-10-10T00:00:00Z'), to: d('2026-10-10T06:00:00Z') },
     ]);
   });
 
@@ -60,7 +59,7 @@ describe('dropNotesForReport', () => {
 
   it('notes a current drop inside the chart range', () => {
     expect(dropNotesForReport(['Stamp Book: Card Shown', 'Stamp Book: Opened'], periods, last72h)).toEqual([
-      { eventName: 'Stamp Book: Card Shown', from: '2026-11-23T03:40:00.000Z', to: null, replayRequested: false },
+      { eventName: 'Stamp Book: Card Shown', from: '2026-11-23T03:40:00.000Z', to: null },
     ]);
   });
 
@@ -78,7 +77,7 @@ describe('dropNotesForReport', () => {
     expect(dropNotesForReport(['Old'], periods, last72h)).toEqual([]);
     const sept = { start: d('2026-08-25T00:00:00Z'), end: d('2026-09-30T00:00:00Z') };
     expect(dropNotesForReport(['Old'], periods, sept)).toEqual([
-      { eventName: 'Old', from: '2026-09-01T00:00:00.000Z', to: '2026-09-02T00:00:00.000Z', replayRequested: false },
+      { eventName: 'Old', from: '2026-09-01T00:00:00.000Z', to: '2026-09-02T00:00:00.000Z' },
     ]);
   });
 

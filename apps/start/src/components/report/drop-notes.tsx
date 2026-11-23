@@ -45,11 +45,7 @@ export function DropNoteBanner({
             Event "<span className="font-mono">{note.eventName}</span>"{' '}
             {note.to === null
               ? `dropped on ${note.fromDay} by OpenPanel admin: no new data after this date.`
-              : `dropped ${note.fromDayTime}–${note.toDayTime}; ${
-                  note.replayRequested
-                    ? 'replay of that window was requested.'
-                    : 'data missing in that window unless replayed.'
-                }`}
+              : `dropped ${note.fromDayTime}–${note.toDayTime}; no data in that window.`}
           </div>
         ))}
         {hasCurrent && (

@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/utils/cn';
-import { ACTION_LABEL, type AuditRow, dateTime, shortCount } from './format';
+import { ACTION_LABEL, type AuditRow, dateTime } from './format';
 
 function reasonText(row: AuditRow) {
   const parts: string[] = row.reason ? [row.reason] : [];
@@ -9,15 +9,6 @@ function reasonText(row: AuditRow) {
       `boards: ${row.boardsAffected
         .map((b) => `${b.name} (${b.active ? 'active' : 'idle'})`)
         .join(', ')}`
-    );
-  }
-  if (row.replay) {
-    parts.push(
-      row.replay.status === 'done'
-        ? `${shortCount(row.replay.copied)} events replayed`
-        : row.replay.status === 'failed'
-          ? `replay failed${row.replay.copied > 0 ? ` after ${shortCount(row.replay.copied)} copied` : ''}${row.replay.error ? `: ${row.replay.error}` : ''}`
-          : `replay ${row.replay.status}`
     );
   }
   return parts.length > 0 ? parts.join(' · ') : '—';
@@ -113,14 +104,7 @@ export function EventAuditLog({
                     {ACTION_LABEL[row.action] ?? row.action}
                   </Badge>
                 </td>
-                <td
-                  className={cn(
-                    'px-3 py-2',
-                    row.replay?.status === 'failed' && 'text-destructive'
-                  )}
-                >
-                  {reasonText(row)}
-                </td>
+                <td className="px-3 py-2">{reasonText(row)}</td>
                 <td className="px-3 py-2">
                   <SourceCell row={row} />
                 </td>

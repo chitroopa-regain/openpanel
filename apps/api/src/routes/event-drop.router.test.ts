@@ -5,7 +5,6 @@ const service = vi.hoisted(() => ({
   listManagedEvents: vi.fn(),
   dropManagedEvent: vi.fn(),
   undropManagedEvent: vi.fn(),
-  getReplayRequest: vi.fn(),
   listEventDropAudit: vi.fn(),
 }));
 
@@ -67,7 +66,6 @@ describe('/manage event drop API auth', () => {
     { method: 'POST' as const, url: '/manage/projects/p1/events/drop' },
     { method: 'POST' as const, url: '/manage/projects/p1/events/undrop' },
     { method: 'GET' as const, url: '/manage/projects/p1/audit' },
-    { method: 'GET' as const, url: '/manage/replays/00000000-0000-0000-0000-000000000000' },
   ];
 
   it.each(routes)('$method $url is 401 without a token', async ({ method, url }) => {
@@ -154,26 +152,37 @@ describe('/manage event drop API with a token', () => {
     expect(service.dropManagedEvent).not.toHaveBeenCalled();
   });
 
-  it('undrops with replay and returns the replay id', async () => {
-    service.undropManagedEvent.mockResolvedValue({ replayRequestId: 'r-1' });
+  it('undrops (no replay) and refuses replay: true with a clear 400', async () => {
+    service.undropManagedEvent.mockResolvedValue({ name: 'A', status: 'active', auditId: 'a-1' });
     const res = await app.inject({
       method: 'POST',
       url: '/manage/projects/p1/events/undrop',
       headers: auth,
-      payload: { name: 'A', confirmName: 'A', replay: true, source: 'UI' },
+      payload: { name: 'A', confirmName: 'A', source: 'UI' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ replayRequestId: 'r-1' });
+    expect(res.json()).toEqual({ name: 'A', status: 'active', auditId: 'a-1' });
+    expect(service.undropManagedEvent).toHaveBeenCalledWith({
+      name: 'A',
+      confirmName: 'A',
+      source: 'UI',
+      projectId: 'p1',
+    });
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: '/manage/projects/p1/events/undrop',
+      headers: auth,
+      payload: { name: 'A', confirmName: 'A', source: 'UI', replay: true },
+    });
+    expect(replay.statusCode).toBe(400);
+    expect(replay.body).toContain('Replay is not supported');
+    expect(service.undropManagedEvent).toHaveBeenCalledTimes(1);
   });
 
-  it('returns replay status and 404s unknown ids', async () => {
-    service.getReplayRequest.mockResolvedValueOnce({ status: 'done', copied: 1300000, error: null, projectId: 'p1', eventName: 'A', fromTs: 'x', toTs: 'y' });
-    const ok = await app.inject({ method: 'GET', url: '/manage/replays/r-1', headers: auth });
-    expect(ok.json()).toMatchObject({ status: 'done', copied: 1300000, error: null });
-
-    service.getReplayRequest.mockRejectedValueOnce(new EventDropError('NOT_FOUND', 'Replay request not found'));
-    const missing = await app.inject({ method: 'GET', url: '/manage/replays/nope', headers: auth });
-    expect(missing.statusCode).toBe(404);
+  it('has no /replays route', async () => {
+    const res = await app.inject({ method: 'GET', url: '/manage/replays/r-1', headers: auth });
+    expect(res.statusCode).toBe(404);
   });
 
   it('lists the audit log with a limit', async () => {
@@ -191,36 +200,5 @@ describe('/api/manage (the path production nginx forwards to the api)', () => {
     expect(unauthorized.statusCode).toBe(401);
     const ok = await app.inject({ method: 'GET', url: '/api/manage/projects/p1/events', headers: auth });
     expect(ok.statusCode).toBe(200);
-  });
-
-  it('returns 409 with a clear message while a replay is running', async () => {
-    service.dropManagedEvent.mockRejectedValueOnce(
-      new EventDropError('REDROP_COOLDOWN', 'Replay of this event is still running; try again when it finishes')
-    );
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/manage/projects/p1/events/drop',
-      headers: auth,
-      payload: { name: 'A', confirmName: 'A', source: 'UI' },
-    });
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toEqual({
-      error: 'REDROP_COOLDOWN',
-      message: 'Replay of this event is still running; try again when it finishes',
-    });
-  });
-
-  it('returns 409 REDROP_COOLDOWN with the cooldown times for 24 h after an undrop', async () => {
-    const message =
-      'This event was undropped at 23 Nov 2026, 09:00 GMT+5:30; it can be dropped again after 24 Nov 2026, 09:00 GMT+5:30';
-    service.dropManagedEvent.mockRejectedValueOnce(new EventDropError('REDROP_COOLDOWN', message));
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/manage/projects/p1/events/drop',
-      headers: auth,
-      payload: { name: 'A', confirmName: 'A', source: 'Agent', requestedBy: 'Chitroopa' },
-    });
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toEqual({ error: 'REDROP_COOLDOWN', message });
   });
 });

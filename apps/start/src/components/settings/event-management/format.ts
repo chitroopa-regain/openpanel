@@ -104,5 +104,4 @@ export const ACTION_LABEL: Record<AuditRow['action'], string> = {
   drop: 'Drop',
   drop_anyway: 'Drop anyway',
   undrop: 'Undrop',
-  undrop_replay: 'Undrop + replay 24 h',
 };

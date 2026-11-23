@@ -1,5 +1,3 @@
-import { DateTime } from '@openpanel/common';
-
 /**
  * Pure rules for dropping an event name. No IO here so the guard is unit
  * tested on its own and shared by the REST API and tRPC (one code path).
@@ -23,24 +21,6 @@ export const PROTECTED_EVENT_PATTERN =
 /** Share of the project's daily volume above which an unused event is "high volume". */
 export const HIGH_VOLUME_PCT = 0.5;
 
-/** Replay requests in these states still copy messages back. */
-export const ACTIVE_REPLAY_STATUSES = ['pending', 'running'] as const;
-
-export const REPLAY_IN_PROGRESS_MESSAGE =
-  'Replay of this event is still running; try again when it finishes';
-
-/** Undrop actions in event_drop_audit. */
-export const UNDROP_ACTIONS = ['undrop', 'undrop_replay'] as const;
-
-/**
- * After an undrop the event cannot be dropped again for this long, so the
- * replay worker never has to handle a re-drop racing its copy.
- */
-export const REDROP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-/** Dropped messages sit in destination-messages-short for this long. */
-export const HOLD_WINDOW_MS = 24 * 60 * 60 * 1000;
-
 /** A board is active when it was viewed (or, before views were recorded, edited) this recently. */
 export const ACTIVE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -61,8 +41,7 @@ export type EventDropErrorCode =
   | 'NOT_DROPPED'
   | 'INVALID_INPUT'
   | 'NOT_FOUND'
-  | 'UNAVAILABLE'
-  | 'REDROP_COOLDOWN';
+  | 'UNAVAILABLE';
 
 const HTTP_STATUS: Record<EventDropErrorCode, number> = {
   CONFIRM_MISMATCH: 400,
@@ -72,7 +51,6 @@ const HTTP_STATUS: Record<EventDropErrorCode, number> = {
   PROTECTED: 403,
   NOT_FOUND: 404,
   REASON_REQUIRED: 409,
-  REDROP_COOLDOWN: 409,
   UNAVAILABLE: 503,
 };
 
@@ -154,68 +132,4 @@ export function assertCanUndrop(input: {
   if (!input.isDropped) {
     throw new EventDropError('NOT_DROPPED', `"${input.name}" is not dropped`);
   }
-}
-
-/**
- * The replay window: from the drop (or 24 h ago, when the drop is older; the
- * holding topic keeps 24 h) to the undrop.
- */
-export function getReplayWindow(
-  droppedAt: Date,
-  now: Date
-): { fromTs: Date; toTs: Date } {
-  const oldestHeld = new Date(now.getTime() - HOLD_WINDOW_MS);
-  return {
-    fromTs: droppedAt > oldestHeld ? droppedAt : oldestHeld,
-    toTs: now,
-  };
-}
-
-export type RedropBlock = {
-  reason: 'replay' | 'cooldown';
-  message: string;
-  /** End of the cooldown; null while a replay is unfinished. */
-  until: string | null;
-  /** Server-measured time left, so clients need not trust their own clock. */
-  remainingMs: number | null;
-};
-
-function formatInZone(date: Date, timeZone: string) {
-  return DateTime.fromJSDate(date)
-    .setZone(timeZone)
-    .setLocale('en-US')
-    .toFormat('d LLL yyyy, HH:mm ZZZZ');
-}
-
-/**
- * Why a Drop is refused right now (409 REDROP_COOLDOWN), or null: while any
- * replay request of the event is unfinished, and for 24 h after its last undrop.
- */
-export function getRedropBlock(input: {
-  replayActive: boolean;
-  lastUndropAt: Date | null;
-  now: Date;
-  timeZone: string;
-}): RedropBlock | null {
-  if (input.replayActive) {
-    return {
-      reason: 'replay',
-      message: REPLAY_IN_PROGRESS_MESSAGE,
-      until: null,
-      remainingMs: null,
-    };
-  }
-  if (!input.lastUndropAt) {
-    return null;
-  }
-  const until = new Date(input.lastUndropAt.getTime() + REDROP_COOLDOWN_MS);
-  if (until <= input.now) {
-    return null;
-  }
-  return {
-    reason: 'cooldown',
-    message: `This event was undropped at ${formatInZone(input.lastUndropAt, input.timeZone)}; it can be dropped again after ${formatInZone(until, input.timeZone)}`,
-    until: until.toISOString(),
-    remainingMs: until.getTime() - input.now.getTime(),
-  };
 }
