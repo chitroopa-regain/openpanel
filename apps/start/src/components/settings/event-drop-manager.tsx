@@ -16,6 +16,7 @@ import {
 import {
   ACTION_LABEL,
   dateTime,
+  dateTimeInZone,
   formatPct,
   istTime,
   type ManagedEvent,
@@ -29,24 +30,22 @@ import {
 const PAGE_SIZE = 100;
 const HIGH_VOLUME_PCT = 0.5;
 
-type Filter = 'all' | 'unused' | 'used' | 'dropped' | 'protected';
+type Filter = 'all' | 'unused' | 'used' | 'protected';
+export type EventManagerTab = 'dropped' | 'events' | 'audit';
 type SortKey = 'name' | 'volume1d' | 'volume7d' | 'volume30d' | 'pct' | 'used';
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'unused', label: 'Not used' },
   { key: 'used', label: 'Used' },
-  { key: 'dropped', label: 'Dropped' },
   { key: 'protected', label: 'Protected' },
 ];
 
 const PROTECTED_TITLE =
   'Protected: purchase, revenue, attribution, crash, A/B, paywall, onboarding and session events cannot be dropped';
 
-function category(e: ManagedEvent): Filter {
-  if (e.status === 'dropped') {
-    return 'dropped';
-  }
+/** Category of an event that is not dropped (dropped ones have their own tab). */
+function category(e: ManagedEvent): Exclude<Filter, 'all'> {
   if (e.status === 'protected') {
     return 'protected';
   }
@@ -234,14 +233,121 @@ function ActionCell({
   );
 }
 
+function DroppedEventsTable({
+  events,
+  timezone,
+  isLoading,
+  onUndrop,
+  onUsedIn,
+}: {
+  events: ManagedEvent[];
+  timezone: string;
+  isLoading: boolean;
+  onUndrop: (e: ManagedEvent) => void;
+  onUsedIn: (e: ManagedEvent) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full leading-normal min-w-[900px] text-sm">
+        <thead>
+          <tr className="border-b bg-def-100 text-left text-sm text-muted-foreground">
+            <th className="px-3 py-2 font-medium">Event</th>
+            <th className="px-3 py-2 font-medium">Dropped on</th>
+            <th className="px-3 py-2 font-medium">Source</th>
+            <th className="px-3 py-2 font-medium">Reason</th>
+            <th className="px-3 py-2 font-medium">Used in</th>
+            <th className="px-3 py-2 text-right font-medium">
+              Last 1d volume before drop
+            </th>
+            <th className="px-3 py-2 text-right font-medium">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.length === 0 && (
+            <tr>
+              <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
+                {isLoading ? 'Loading events…' : 'No events are dropped.'}
+              </td>
+            </tr>
+          )}
+          {events.map((event) => (
+            <tr key={event.name} className="border-b align-top last:border-0">
+              <td className="max-w-[300px] px-3 py-2.5">
+                <div className="break-words font-mono text-[13px]" title={event.name}>
+                  {event.name}
+                </div>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">
+                {dateTimeInZone(event.droppedAt, timezone)}
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5">
+                {event.dropInfo ? (
+                  <>
+                    {event.dropInfo.source}
+                    {event.dropInfo.source === 'Agent' &&
+                      event.dropInfo.requestedBy && (
+                        <span className="text-muted-foreground">
+                          {' '}
+                          (asked by {event.dropInfo.requestedBy})
+                        </span>
+                      )}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </td>
+              <td className="max-w-[320px] px-3 py-2.5">
+                {event.dropInfo?.reason || (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2.5">
+                {event.usageCount > 0 ? (
+                  <button
+                    type="button"
+                    className="whitespace-nowrap text-blue-500 hover:underline"
+                    onClick={() => onUsedIn(event)}
+                  >
+                    {places(event.usageCount)}
+                  </button>
+                ) : (
+                  <span className="text-muted-foreground">0</span>
+                )}
+              </td>
+              <td className="px-3 py-2.5 text-right tabular-nums">
+                {shortCount(event.volumeBeforeDrop)}
+              </td>
+              <td className="px-3 py-2.5 text-right">
+                <Button variant="outline" size="sm" onClick={() => onUndrop(event)}>
+                  Undrop
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function EventDropManager({
   projectId,
+  tab: tabProp,
+  onTabChange,
 }: {
   projectId: string;
+  /** The selected tab, when the route keeps it in the URL (?tab=). */
+  tab?: EventManagerTab;
+  onTabChange?: (tab: EventManagerTab) => void;
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'events' | 'audit'>('events');
+  const [tabState, setTabState] = useState<EventManagerTab>('events');
+  const tab = tabProp ?? tabState;
+  const setTab = (next: EventManagerTab) => {
+    setTabState(next);
+    onTabChange?.(next);
+  };
   const [filter, setFilter] = useState<Filter>('all');
   const [highVolume, setHighVolume] = useState(false);
   const [search, setSearch] = useState('');
@@ -261,6 +367,19 @@ export default function EventDropManager({
     trpc.event.eventDropAudit.queryOptions({ projectId, limit: 100 })
   );
 
+  // Show the new status at once (the row moves between the Dropped events and
+  // Events tabs); the refetch below then brings the server's full row.
+  const patchEvent = (name: string, patch: Partial<ManagedEvent>) => {
+    queryClient.setQueryData(
+      trpc.event.managedEvents.queryKey({ projectId }),
+      (old) =>
+        old && {
+          ...old,
+          events: old.events.map((e) => (e.name === name ? { ...e, ...patch } : e)),
+        }
+    );
+  };
+
   const invalidate = () => {
     queryClient.invalidateQueries({
       queryKey: trpc.event.managedEvents.queryKey({ projectId }),
@@ -275,8 +394,13 @@ export default function EventDropManager({
 
   const dropMutation = useMutation(
     trpc.event.dropEvent.mutationOptions({
-      onSuccess: (result) => {
+      onSuccess: (result, variables) => {
         setDropFor(null);
+        patchEvent(result.name, {
+          status: 'dropped',
+          droppedAt: result.droppedAt,
+          dropInfo: { source: 'UI', requestedBy: null, reason: variables.reason ?? null },
+        });
         invalidate();
         toast(`Dropped "${result.name}". Events sent while dropped are not kept.`);
       },
@@ -287,6 +411,12 @@ export default function EventDropManager({
     trpc.event.undropEvent.mutationOptions({
       onSuccess: (result) => {
         setUndropFor(null);
+        patchEvent(result.name, {
+          status: 'active',
+          droppedAt: null,
+          dropInfo: null,
+          volumeBeforeDrop: null,
+        });
         invalidate();
         toast(`Undropped "${result.name}". New events will be stored again.`);
       },
@@ -294,13 +424,24 @@ export default function EventDropManager({
     })
   );
 
-  const all = eventsQuery.data?.events ?? [];
+  const everything = eventsQuery.data?.events ?? [];
+  // The Events tab lists everything that is not dropped.
+  const all = useMemo(
+    () => everything.filter((e) => e.status !== 'dropped'),
+    [everything]
+  );
+  const dropped = useMemo(
+    () =>
+      everything
+        .filter((e) => e.status === 'dropped')
+        .sort((a, b) => (b.droppedAt ?? '').localeCompare(a.droppedAt ?? '')),
+    [everything]
+  );
   const counts = useMemo(() => {
     const c: Record<Filter, number> = {
       all: all.length,
       unused: 0,
       used: 0,
-      dropped: 0,
       protected: 0,
     };
     for (const e of all) {
@@ -358,11 +499,24 @@ export default function EventDropManager({
 
       <Stats data={eventsQuery.data} />
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'events' | 'audit')}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as EventManagerTab)}>
         <TabsList>
+          <TabsTrigger value="dropped">
+            Dropped events{eventsQuery.data ? ` (${dropped.length})` : ''}
+          </TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="audit">Audit log</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="dropped" className="mt-4">
+          <DroppedEventsTable
+            events={dropped}
+            timezone={eventsQuery.data?.timezone ?? 'UTC'}
+            isLoading={eventsQuery.isLoading}
+            onUndrop={setUndropFor}
+            onUsedIn={setUsedFor}
+          />
+        </TabsContent>
 
         <TabsContent value="events" className="mt-4 space-y-3">
           {lastAction && (
@@ -617,6 +771,7 @@ export default function EventDropManager({
           <EventAuditLog
             rows={auditQuery.data ?? []}
             isLoading={auditQuery.isLoading}
+            slackConfigured={eventsQuery.data?.slackConfigured}
           />
         </TabsContent>
       </Tabs>
@@ -627,6 +782,7 @@ export default function EventDropManager({
           key={dropFor.name}
           event={dropFor}
           isPending={dropMutation.isPending}
+          slackConfigured={eventsQuery.data?.slackConfigured ?? false}
           onCancel={() => setDropFor(null)}
           onConfirm={({ confirmName, reason }) =>
             dropMutation.mutate({
@@ -643,6 +799,7 @@ export default function EventDropManager({
           key={undropFor.name}
           event={undropFor}
           isPending={undropMutation.isPending}
+          slackConfigured={eventsQuery.data?.slackConfigured ?? false}
           onCancel={() => setUndropFor(null)}
           onConfirm={() =>
             undropMutation.mutate({

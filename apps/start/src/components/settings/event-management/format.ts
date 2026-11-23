@@ -124,3 +124,24 @@ export const ACTION_LABEL: Record<AuditRow['action'], string> = {
   drop_anyway: 'Drop anyway',
   undrop: 'Undrop',
 };
+
+/** "23 Nov, 14:37" in the given timezone (the project's). */
+export function dateTimeInZone(
+  iso: string | null | undefined,
+  timeZone: string
+): string {
+  if (!iso) {
+    return '—';
+  }
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('day')} ${get('month')}, ${get('hour')}:${get('minute')}`;
+}

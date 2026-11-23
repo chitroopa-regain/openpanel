@@ -29,6 +29,9 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('../prisma-client', () => ({ db: mocks.db }));
+vi.mock('./organization.service', () => ({
+  getSettingsForProject: async () => ({ timezone: 'Asia/Kolkata' }),
+}));
 vi.mock('../clickhouse/client', () => ({
   ch: { query: mocks.chQuery },
   TABLE_NAMES: { event_names_mv: 'distinct_event_names_mv' },
@@ -93,6 +96,7 @@ beforeEach(() => {
   db.resourceView.findMany.mockResolvedValue([]);
   db.eventDropAudit.create.mockResolvedValue({ id: 'audit-1' });
   db.eventDropAudit.update.mockResolvedValue({});
+  db.eventDropAudit.findMany.mockResolvedValue([]);
   db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
   mocks.addDroppedEvent.mockResolvedValue(undefined);
   mocks.removeDroppedEvent.mockResolvedValue(undefined);
@@ -417,6 +421,61 @@ describe('listManagedEvents', () => {
     expect(result.counts.unused_high).toBe(1);
     expect(result.volumeDay).toBe('2026-11-22');
     expect(result.volumeIsPartial).toBe(false);
+  });
+
+  it('dropped events carry who dropped them, why, and the 1d volume of the IST day before the drop', async () => {
+    db.eventMeta.findMany.mockResolvedValue([
+      // 23 Nov 03:00 IST: the day before is 22 Nov.
+      { name: 'Stamp Book: Card Shown', droppedAt: new Date('2026-11-22T21:30:00Z') },
+      { name: 'Legacy Drop', droppedAt: new Date('2026-04-08T12:00:00Z') },
+    ]);
+    db.eventDropAudit.findMany.mockResolvedValue([
+      { eventName: 'Stamp Book: Card Shown', source: 'Agent', requestedBy: 'Chitroopa', reason: 'Card replaced' },
+    ]);
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes('event_name_rollup_days')) {
+        return chResult([{ day: '2026-11-22' }]);
+      }
+      if (query.includes('(name, day) IN')) {
+        return chResult([{ name: 'Stamp Book: Card Shown', day: '2026-11-22', e: 227000 }]);
+      }
+      return chResult([]);
+    });
+    const prev = process.env.OPENPANEL_SLACK_WEBHOOK_URL;
+    delete process.env.OPENPANEL_SLACK_WEBHOOK_URL;
+    try {
+      const result = await listManagedEvents({ projectId: 'regain-app' });
+      const stamp = result.events.find((e) => e.name === 'Stamp Book: Card Shown')!;
+      expect(stamp).toMatchObject({
+        status: 'dropped',
+        dropInfo: { source: 'Agent', requestedBy: 'Chitroopa', reason: 'Card replaced' },
+        volumeBeforeDrop: 227000,
+      });
+      // A drop with no audit row (before the audit log existed) and no rollup row.
+      expect(result.events.find((e) => e.name === 'Legacy Drop')).toMatchObject({
+        dropInfo: null,
+        volumeBeforeDrop: null,
+      });
+      expect(result).toMatchObject({ timezone: 'Asia/Kolkata', slackConfigured: false });
+      const beforeQuery = mocks.chQuery.mock.calls
+        .map((c) => c[0].query as string)
+        .find((q) => q.includes('(name, day) IN'))!;
+      expect(beforeQuery).toContain("('Stamp Book: Card Shown', toDate('2026-11-22'))");
+      expect(beforeQuery).toContain("('Legacy Drop', toDate('2026-04-07'))");
+      expect(db.eventDropAudit.findMany.mock.calls[0]![0]).toMatchObject({
+        where: { projectId: 'regain-app', action: { in: ['drop', 'drop_anyway'] } },
+        orderBy: { createdAt: 'desc' },
+        distinct: ['eventName'],
+      });
+      process.env.OPENPANEL_SLACK_WEBHOOK_URL = 'https://hooks.slack.test/x';
+      expect((await listManagedEvents({ projectId: 'regain-app' })).slackConfigured).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.OPENPANEL_SLACK_WEBHOOK_URL;
+      } else {
+        process.env.OPENPANEL_SLACK_WEBHOOK_URL = prev;
+      }
+    }
   });
 
   it('before any finished day: 1d is today so far, 7d/30d are "—", same 1d drives % and filters', async () => {

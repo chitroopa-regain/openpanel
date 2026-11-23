@@ -56,9 +56,12 @@ function SlackCell({ posted }: { posted: boolean | null }) {
 export function EventAuditLog({
   rows,
   isLoading,
+  slackConfigured,
 }: {
   rows: AuditRow[];
   isLoading: boolean;
+  /** undefined while the events list is loading: say nothing about Slack yet. */
+  slackConfigured: boolean | undefined;
 }) {
   return (
     <div className="space-y-2">
@@ -119,8 +122,10 @@ export function EventAuditLog({
       <p className="text-sm text-muted-foreground">
         The team shares one OpenPanel admin login, so "Who" is always OpenPanel
         admin. Source is UI (someone clicked here) or Agent (Claude dropped it
-        on request; shows who asked and links the chat). The Slack #analytics
-        post carries the same fields.
+        on request; shows who asked and links the chat).
+        {slackConfigured === true &&
+          ' The Slack #analytics post carries the same fields.'}
+        {slackConfigured === false && ' Slack posting is off.'}
       </p>
     </div>
   );

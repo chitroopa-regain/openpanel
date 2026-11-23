@@ -26,6 +26,7 @@ import {
   isProtectedEventName,
 } from './event-drop-rules';
 import { getEventMetasCached } from './event.service';
+import { getSettingsForProject } from './organization.service';
 import {
   affectedBoards,
   buildEventUsage,
@@ -71,6 +72,14 @@ export type ManagedEvent = {
   usageCount: number;
   status: ManagedEventStatus;
   droppedAt: string | null;
+  /** Dropped events: who dropped it and why (latest drop in the audit log). */
+  dropInfo: {
+    source: EventDropSource;
+    requestedBy: string | null;
+    reason: string | null;
+  } | null;
+  /** Dropped events: 1d volume of the IST day before the drop, if the rollup has it. */
+  volumeBeforeDrop: number | null;
 };
 
 export type ManagedEventsResult = {
@@ -85,6 +94,10 @@ export type ManagedEventsResult = {
   volumeIsPartial: boolean;
   /** Partial only: when the oldest of today's counts was computed (ISO). */
   volumeAsOf: string | null;
+  /** Project timezone, for "Dropped on". */
+  timezone: string;
+  /** OPENPANEL_SLACK_WEBHOOK_URL is set: drops and undrops are posted to Slack. */
+  slackConfigured: boolean;
   totals: {
     events: number;
     volume1d: number | null;
@@ -365,6 +378,75 @@ function matchesFilter(event: ManagedEvent, filter: ManagedEventFilter) {
   }
 }
 
+export function isSlackConfigured(): boolean {
+  return Boolean(process.env.OPENPANEL_SLACK_WEBHOOK_URL);
+}
+
+/**
+ * 1d volume of the IST day before each drop (the last full day the event was
+ * stored), in one query. Missing table or row: no entry.
+ */
+async function getVolumesBeforeDrop(
+  projectId: string,
+  dropped: Map<string, Date>
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (dropped.size === 0) {
+    return result;
+  }
+  const dayBefore = new Map<string, string>();
+  for (const [name, at] of dropped) {
+    dayBefore.set(name, addDays(volumeToday(at), -1));
+  }
+  const pairs = [...dayBefore]
+    .map(([name, day]) => `(${sqlstring.escape(name)}, toDate(${sqlstring.escape(day)}))`)
+    .join(', ');
+  try {
+    const res = await ch.query({
+      query: `
+        SELECT name, toString(day) AS day, toFloat64(sum(events)) AS e
+        FROM ${EVENT_NAME_DAILY_TABLE} FINAL
+        WHERE project_id = ${sqlstring.escape(projectId)} AND (name, day) IN (${pairs})
+        GROUP BY name, day`,
+      format: 'JSONEachRow',
+    });
+    for (const row of await res.json<{ name: string; day: string; e: number }>()) {
+      if (dayBefore.get(row.name) === row.day) {
+        result.set(row.name, Number(row.e));
+      }
+    }
+  } catch (error) {
+    logger.warn('Could not read volume before drop', {
+      projectId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return result;
+}
+
+/** Latest drop audit row per event name. */
+async function getLatestDrops(projectId: string, names: string[]) {
+  if (names.length === 0) {
+    return new Map<string, NonNullable<ManagedEvent['dropInfo']>>();
+  }
+  const rows = await db.eventDropAudit.findMany({
+    where: { projectId, eventName: { in: names }, action: { in: ['drop', 'drop_anyway'] } },
+    orderBy: { createdAt: 'desc' },
+    distinct: ['eventName'],
+    select: { eventName: true, source: true, requestedBy: true, reason: true },
+  });
+  return new Map(
+    rows.map((row) => [
+      row.eventName,
+      {
+        source: row.source as EventDropSource,
+        requestedBy: row.requestedBy,
+        reason: row.reason,
+      },
+    ])
+  );
+}
+
 export async function listManagedEvents({
   projectId,
   filter = 'all',
@@ -388,6 +470,13 @@ export async function listManagedEvents({
   const droppedAt = new Map(
     metas.filter((m) => m.droppedAt).map((m) => [m.name, m.droppedAt!])
   );
+  const [latestDrops, beforeDrop, settings] = await Promise.all([
+    getLatestDrops(projectId, [...droppedAt.keys()]),
+    volumes.available
+      ? getVolumesBeforeDrop(projectId, droppedAt)
+      : Promise.resolve(new Map<string, number>()),
+    getSettingsForProject(projectId),
+  ]);
   const names = new Set<string>([
     ...knownNames,
     ...volumes.rows.keys(),
@@ -431,6 +520,8 @@ export async function listManagedEvents({
       usageCount: usageCount(eventUsage),
       status,
       droppedAt: dropped?.toISOString() ?? null,
+      dropInfo: dropped ? (latestDrops.get(name) ?? null) : null,
+      volumeBeforeDrop: dropped ? (beforeDrop.get(name) ?? null) : null,
     });
   }
 
@@ -457,6 +548,8 @@ export async function listManagedEvents({
     volumeDay: volumes.volumeDay,
     volumeIsPartial: volumes.partial,
     volumeAsOf: volumes.asOf,
+    timezone: settings.timezone,
+    slackConfigured: isSlackConfigured(),
     totals: {
       events: all.length,
       volume1d: volumes.available ? projectVolume1d : null,

@@ -184,11 +184,14 @@ function BoardRows({
 export function DropDialog({
   event,
   isPending,
+  slackConfigured,
   onCancel,
   onConfirm,
 }: {
   event: ManagedEvent;
   isPending: boolean;
+  /** OPENPANEL_SLACK_WEBHOOK_URL is set on the api. */
+  slackConfigured: boolean;
   onCancel: () => void;
   onConfirm: (input: { confirmName: string; reason?: string }) => void;
 }) {
@@ -260,9 +263,9 @@ export function DropDialog({
           <li>Events sent while dropped are not kept.</li>
           <li>Past data stays. Nothing is deleted from ClickHouse.</li>
           <li>
-            {anyway
-              ? 'Logged in the audit log and posted to Slack #analytics with the board names.'
-              : 'Logged in the audit log.'}
+            {slackConfigured
+              ? `Logged in the audit log and posted to Slack #analytics${anyway ? ' with the board names' : ''}.`
+              : 'Logged in the audit log. Slack posting is off.'}
           </li>
         </ul>
 
@@ -323,11 +326,13 @@ export function DropDialog({
 export function UndropDialog({
   event,
   isPending,
+  slackConfigured,
   onCancel,
   onConfirm,
 }: {
   event: ManagedEvent;
   isPending: boolean;
+  slackConfigured: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -347,7 +352,9 @@ export function UndropDialog({
           Dropped {dateTime(event.droppedAt)}.
         </div>
         <div className="text-sm text-muted-foreground">
-          Logged in the audit log and posted to Slack #analytics.
+          {slackConfigured
+            ? 'Logged in the audit log and posted to Slack #analytics.'
+            : 'Logged in the audit log. Slack posting is off.'}
         </div>
         <DialogFooter>
           <Button variant="outline" size="default" onClick={onCancel}>
