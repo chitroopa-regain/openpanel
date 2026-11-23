@@ -430,7 +430,8 @@ describe('listManagedEvents', () => {
         if (query.includes('event_name_daily')) {
           return chResult([
             { name: 'Big Unused', v1: 300, v7: 300, v30: 300, last_seen_ts: 0, computed_ms: Date.parse('2026-11-23T05:31:00Z'), daily: [['2026-11-23', 300]] },
-            { name: 'Home Page: Shown', v1: 100, v7: 100, v30: 100, last_seen_ts: 0, computed_ms: 0, daily: [['2026-11-23', 100]] },
+            { name: 'Home Page: Shown', v1: 100, v7: 100, v30: 100, last_seen_ts: 0, computed_ms: Date.parse('2026-11-23T04:31:00Z'), daily: [['2026-11-23', 100]] },
+            { name: 'No Time', v1: 0, v7: 0, v30: 0, last_seen_ts: 0, computed_ms: 0, daily: [] },
           ]);
         }
         return chResult([]);
@@ -438,7 +439,8 @@ describe('listManagedEvents', () => {
       const result = await listManagedEvents({ projectId: 'regain-app' });
       expect(result.volumeIsPartial).toBe(true);
       expect(result.volumeDay).toBe('2026-11-23');
-      expect(result.volumeAsOf).toBe('2026-11-23T05:31:00.000Z');
+      // The oldest count's time (rows without one are ignored): never overstates freshness.
+      expect(result.volumeAsOf).toBe('2026-11-23T04:31:00.000Z');
       const big = result.events.find((e) => e.name === 'Big Unused')!;
       expect(big).toMatchObject({ volume1d: 300, volume7d: null, volume30d: null, pctOfProject: 75 });
       expect(big.trend30d!.at(-1)).toBe(300);

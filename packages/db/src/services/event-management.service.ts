@@ -83,7 +83,7 @@ export type ManagedEventsResult = {
   volumeDay: string | null;
   /** No finished day yet: 1d is today so far, 7d/30d are null. */
   volumeIsPartial: boolean;
-  /** Partial only: when today's count was last computed (ISO). */
+  /** Partial only: when the oldest of today's counts was computed (ISO). */
   volumeAsOf: string | null;
   totals: {
     events: number;
@@ -223,7 +223,9 @@ export async function getEventVolumes(
       daily: [string, number][];
     }>();
     const rows = new Map<string, VolumeRow>();
-    let asOfMs = 0;
+    // Oldest computation among today's counts: the tooltip never claims a
+    // count is fresher than it is.
+    let asOfMs = Number.POSITIVE_INFINITY;
     for (const row of data) {
       const byDay = new Map(row.daily.map(([day, e]) => [day, Number(e)]));
       const trend30d: number[] = [];
@@ -231,7 +233,10 @@ export async function getEventVolumes(
         trend30d.push(byDay.get(addDays(anchor, -i)) ?? 0);
       }
       const lastSeenTs = Number(row.last_seen_ts);
-      asOfMs = Math.max(asOfMs, Number(row.computed_ms) || 0);
+      const computedMs = Number(row.computed_ms) || 0;
+      if (computedMs > 0) {
+        asOfMs = Math.min(asOfMs, computedMs);
+      }
       rows.set(row.name, {
         volume1d: Number(row.v1),
         // 7d/30d count finished days only: none yet while partial.
@@ -245,7 +250,8 @@ export async function getEventVolumes(
       available: true,
       volumeDay: anchor,
       partial,
-      asOf: partial && asOfMs > 0 ? new Date(asOfMs).toISOString() : null,
+      asOf:
+        partial && Number.isFinite(asOfMs) ? new Date(asOfMs).toISOString() : null,
       rows,
     };
   } catch (error) {
