@@ -589,8 +589,16 @@ export async function undropManagedEvent(
     await removeDroppedEvent(project.id, input.name);
     // Ingest may keep holding for up to its refresh interval after the SREM.
     const held = getReplayWindow(meta!.droppedAt!, new Date());
+    // A quick drop → undrop → drop again could overlap the previous replay's
+    // grace period; start after it so no message is copied twice.
+    const previous = await tx.eventReplayRequest.findFirst({
+      where: { projectId: project.id, eventName: input.name },
+      orderBy: { toTs: 'desc' },
+      select: { toTs: true },
+    });
     const window = {
-      fromTs: held.fromTs,
+      fromTs:
+        previous && previous.toTs > held.fromTs ? previous.toTs : held.fromTs,
       toTs: new Date(held.toTs.getTime() + INGEST_REFRESH_GRACE_MS),
     };
     const replay = input.replay

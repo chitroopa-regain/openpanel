@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => {
     customCohort: { findMany: vi.fn() },
     resourceView: { findMany: vi.fn() },
     eventDropAudit: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
-    eventReplayRequest: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
+    eventReplayRequest: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   };
@@ -94,6 +94,7 @@ beforeEach(() => {
   db.eventDropAudit.create.mockResolvedValue({ id: 'audit-1' });
   db.eventDropAudit.update.mockResolvedValue({});
   db.eventReplayRequest.create.mockResolvedValue({ id: 'replay-1' });
+  db.eventReplayRequest.findFirst.mockResolvedValue(null);
   db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
   mocks.addDroppedEvent.mockResolvedValue(undefined);
   mocks.removeDroppedEvent.mockResolvedValue(undefined);
@@ -327,6 +328,17 @@ describe('undropManagedEvent', () => {
     expect(fromTs.getTime()).toBeGreaterThanOrEqual(before - 24 * 60 * 60 * 1000);
     expect(fromTs.getTime()).toBeLessThanOrEqual(Date.now() - 24 * 60 * 60 * 1000);
     expect(toTs.getTime() - fromTs.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 + INGEST_REFRESH_GRACE_MS - 50);
+  });
+
+  it('starts after the previous replay so a quick drop/undrop/drop/undrop never copies twice', async () => {
+    const droppedAt = new Date(Date.now() - 10 * 1000);
+    const previousEnd = new Date(Date.now() + 20 * 1000); // earlier replay's grace still running
+    db.eventMeta.findUnique.mockResolvedValue({ droppedAt });
+    db.eventReplayRequest.findFirst.mockResolvedValue({ toTs: previousEnd });
+    await undropManagedEvent({ projectId: 'regain-app', name: 'A', confirmName: 'A', replay: true, source: 'UI' });
+    const { fromTs, toTs } = db.eventReplayRequest.create.mock.calls[0]![0].data;
+    expect(fromTs).toEqual(previousEnd);
+    expect(toTs.getTime()).toBeGreaterThan(previousEnd.getTime());
   });
 
   it('undrops without replay', async () => {
