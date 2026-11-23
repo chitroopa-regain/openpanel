@@ -15,9 +15,12 @@ const DropNotesContext = createContext<Record<string, DropNote[]>>({});
 /** Notes for every report of a board (or the one report page), from one query. */
 export const DropNotesProvider = DropNotesContext.Provider;
 
+/** Key the server uses for an unsaved report in the editor. */
+const DRAFT_REPORT_ID = 'draft';
+
 export function useDropNotes(reportId: string | undefined): DropNote[] {
   const notes = useContext(DropNotesContext);
-  return (reportId && notes[reportId]) || EMPTY;
+  return notes[reportId ?? DRAFT_REPORT_ID] ?? EMPTY;
 }
 
 const MONTHS = [
@@ -97,9 +100,17 @@ export function ReportDropNotes({
   startDate,
   endDate,
   dateConfig,
+  draft,
   children,
 }: {
   reportId: string | undefined;
+  /** What the editor shows now (series and options), saved or not. */
+  draft: {
+    events: unknown[];
+    options?: unknown;
+    cohortFilters?: unknown;
+    cohortBreakdown?: unknown;
+  };
   projectId: string;
   organizationId: string;
   range?: IChartRange | null;
@@ -111,16 +122,17 @@ export function ReportDropNotes({
   const trpc = useTRPC();
   const query = useQuery(
     trpc.event.dropNotes.queryOptions(
-      { projectId, reportId, range, startDate, endDate, dateConfig },
-      { enabled: Boolean(reportId), staleTime: 60 * 1000 }
+      { projectId, reportId, draft, range, startDate, endDate, dateConfig },
+      { enabled: draft.events.length > 0, staleTime: 60 * 1000 }
     )
   );
   const notes = query.data ?? {};
+  const own = notes[reportId ?? DRAFT_REPORT_ID];
   return (
     <DropNotesProvider value={notes}>
-      {reportId && notes[reportId] && (
+      {own && (
         <DropNoteBanner
-          notes={notes[reportId]}
+          notes={own}
           organizationId={organizationId}
           projectId={projectId}
         />

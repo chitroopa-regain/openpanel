@@ -70,12 +70,39 @@ describe('getDropNotes', () => {
     expect(mocks.getChartStartEndDate.mock.calls[0]![0]).toMatchObject({ range: '30d' });
   });
 
-  it('leaves out a drop that starts after the chart range', async () => {
-    mocks.getChartStartEndDate.mockReturnValue({
-      startDate: '2026-11-01 00:00:00',
-      endDate: '2026-11-07 23:59:59',
-    });
+  it('leaves out a past drop gap outside the chart range, keeps one inside', async () => {
+    db.eventMeta.findMany.mockResolvedValue([]);
+    db.eventDropAudit.findMany.mockResolvedValue([
+      { eventName: 'Stamp Book: Card Shown', action: 'drop', createdAt: new Date('2026-10-01T00:00:00Z') },
+      { eventName: 'Stamp Book: Card Shown', action: 'undrop', createdAt: new Date('2026-10-02T00:00:00Z') },
+    ]);
     expect(await getDropNotes({ projectId: 'regain-app', dashboardId: 'd1' })).toEqual({});
+    mocks.getChartStartEndDate.mockReturnValue({
+      startDate: '2026-09-25 00:00:00',
+      endDate: '2026-10-05 23:59:59',
+    });
+    const notes = await getDropNotes({ projectId: 'regain-app', dashboardId: 'd1' });
+    expect(notes.r1?.[0]).toMatchObject({ to: '2026-10-02T00:00:00.000Z' });
+    // No date cutoff on the audit history.
+    expect(db.eventDropAudit.findMany.mock.calls[0]![0].where).toEqual({ projectId: 'regain-app' });
+  });
+
+  it("uses the editor's unsaved series instead of the saved report", async () => {
+    const notes = await getDropNotes({
+      projectId: 'regain-app',
+      draft: {
+        events: [{ id: 'A', type: 'event', name: 'Stamp Book: Card Shown', segment: 'event', filters: [] }],
+      },
+      range: '7d' as never,
+    });
+    expect(Object.keys(notes)).toEqual(['draft']);
+    expect(db.report.findMany).not.toHaveBeenCalled();
+    const saved = await getDropNotes({
+      projectId: 'regain-app',
+      reportId: '3f2b6a1e-0000-4000-8000-000000000001',
+      draft: { events: [{ id: 'A', type: 'event', name: 'Home Page: Shown', segment: 'event', filters: [] }] },
+    });
+    expect(saved).toEqual({});
   });
 
   it('skips the report queries when nothing was ever dropped', async () => {

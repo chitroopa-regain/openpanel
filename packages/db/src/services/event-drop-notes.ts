@@ -73,7 +73,7 @@ export function buildDropPeriods(
   return periods;
 }
 
-/** Periods of the report's events that overlap [start, end], newest first. */
+/** Current drops of the report's events, plus past drop gaps inside [start, end]; newest first. */
 export function dropNotesForReport(
   eventNames: string[],
   periods: Map<string, DropPeriod[]>,
@@ -82,10 +82,12 @@ export function dropNotesForReport(
   const notes: DropNote[] = [];
   for (const name of new Set(eventNames)) {
     for (const period of periods.get(name) ?? []) {
-      const overlaps =
-        period.from <= window.end &&
-        (period.to === null || period.to >= window.start);
-      if (overlaps) {
+      // A current drop is always worth knowing about; a past one only when
+      // its gap falls inside the chart's range.
+      const show =
+        period.to === null ||
+        (period.from <= window.end && period.to >= window.start);
+      if (show) {
         notes.push({
           eventName: period.eventName,
           from: period.from.toISOString(),

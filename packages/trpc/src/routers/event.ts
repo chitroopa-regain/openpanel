@@ -459,6 +459,15 @@ export const eventRouter = createTRPCRouter({
         projectId: z.string(),
         dashboardId: z.string().optional(),
         reportId: z.string().uuid().optional(),
+        /** The report editor's current, maybe unsaved, series and options. */
+        draft: z
+          .object({
+            events: z.array(z.unknown()).max(50),
+            options: z.unknown().optional(),
+            cohortFilters: z.unknown().optional(),
+            cohortBreakdown: z.unknown().optional(),
+          })
+          .optional(),
         range: zRange.nullish(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),

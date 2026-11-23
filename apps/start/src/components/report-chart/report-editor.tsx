@@ -687,6 +687,12 @@ export default function ReportEditor({
                   startDate={report.startDate}
                   endDate={report.endDate}
                   dateConfig={report.dateConfig}
+                  draft={{
+                    events: report.series,
+                    options: report.options,
+                    cohortFilters: report.cohortFilters,
+                    cohortBreakdown: report.cohortBreakdown,
+                  }}
                 >
                   <ReportChart
                     isEditMode

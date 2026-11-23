@@ -69,9 +69,9 @@ describe('dropNotesForReport', () => {
     expect(dropNotesForReport(['Stamp Book: Card Shown'], periods, later)).toHaveLength(1);
   });
 
-  it('skips a current drop that starts after the range ends', () => {
+  it('notes a current drop even when the chart range ends before it (the event is dropped now)', () => {
     const before = { start: d('2026-11-01T00:00:00Z'), end: d('2026-11-07T00:00:00Z') };
-    expect(dropNotesForReport(['Stamp Book: Card Shown'], periods, before)).toEqual([]);
+    expect(dropNotesForReport(['Stamp Book: Card Shown'], periods, before)).toHaveLength(1);
   });
 
   it('includes a past drop window only when it overlaps the range', () => {

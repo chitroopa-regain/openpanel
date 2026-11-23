@@ -14,8 +14,8 @@ import {
 } from './event-usage';
 import { getSettingsForProject } from './organization.service';
 
-/** Older drop periods than this never reach a chart's date range in practice. */
-const NOTES_LOOKBACK_DAYS = 400;
+/** Key of the notes for an unsaved report in the editor. */
+export const DRAFT_REPORT_ID = 'draft';
 
 export type DropNotesInput = {
   projectId: string;
@@ -23,6 +23,16 @@ export type DropNotesInput = {
   dashboardId?: string;
   /** ... one report (the report page). */
   reportId?: string;
+  /**
+   * The report editor's current (maybe unsaved) series and options; used
+   * instead of the saved report so the note follows what is on screen.
+   */
+  draft?: {
+    events: unknown;
+    options?: unknown;
+    cohortFilters?: unknown;
+    cohortBreakdown?: unknown;
+  };
   /** Board/editor date override, applied like ReportItem does. */
   range?: IChartRange | null;
   startDate?: string | null;
@@ -37,19 +47,18 @@ export type DropNotesInput = {
 export async function getDropNotes(
   input: DropNotesInput
 ): Promise<Record<string, DropNote[]>> {
-  if (!input.dashboardId && !input.reportId) {
+  if (!(input.dashboardId || input.reportId || input.draft)) {
     return {};
   }
-  const since = new Date(
-    Date.now() - NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
-  );
   const [droppedMetas, audit] = await Promise.all([
     db.eventMeta.findMany({
       where: { projectId: input.projectId, droppedAt: { not: null } },
       select: { name: true, droppedAt: true },
     }),
+    // The whole history: drops are rare, and a cutoff could split a
+    // drop/undrop pair and lose an old gap.
     db.eventDropAudit.findMany({
-      where: { projectId: input.projectId, createdAt: { gte: since } },
+      where: { projectId: input.projectId },
       select: { eventName: true, action: true, createdAt: true },
     }),
   ]);
@@ -58,8 +67,19 @@ export async function getDropNotes(
   }
   const periods = buildDropPeriods(droppedMetas, audit);
 
-  const [reports, customEvents, cohorts, settings] = await Promise.all([
-    db.report.findMany({
+  const reportsQuery = input.draft
+    ? Promise.resolve([
+        {
+          id: input.reportId ?? DRAFT_REPORT_ID,
+          events: input.draft.events,
+          options: input.draft.options ?? null,
+          cohortFilters: input.draft.cohortFilters ?? null,
+          cohortBreakdown: input.draft.cohortBreakdown ?? null,
+          range: input.range ?? '30d',
+          dateConfig: input.dateConfig ?? null,
+        },
+      ])
+    : db.report.findMany({
       where: {
         projectId: input.projectId,
         ...(input.dashboardId
@@ -75,7 +95,9 @@ export async function getDropNotes(
         range: true,
         dateConfig: true,
       },
-    }),
+    });
+  const [reports, customEvents, cohorts, settings] = await Promise.all([
+    reportsQuery,
     db.customEvent.findMany({
       where: { projectId: input.projectId },
       select: { id: true, components: true },
@@ -132,7 +154,7 @@ export async function getDropNotes(
       settings.timezone
     );
     const notes = dropNotesForReport(names, periods, {
-      start: parse(dates.startDate, since),
+      start: parse(dates.startDate, new Date(0)),
       end: parse(dates.endDate, new Date(8.64e15)),
     });
     if (notes.length > 0) {
