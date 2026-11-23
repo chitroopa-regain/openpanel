@@ -4,6 +4,7 @@ import {
   assertCanDrop,
   assertCanUndrop,
   EventDropError,
+  getRedropBlock,
   getReplayWindow,
   isProtectedEventName,
 } from './event-drop-rules';
@@ -177,9 +178,41 @@ describe('getReplayWindow', () => {
   });
 });
 
-describe('REPLAY_IN_PROGRESS', () => {
+describe('getRedropBlock (409 REDROP_COOLDOWN)', () => {
+  const now = new Date('2026-11-23T12:00:00Z');
+  const base = { replayActive: false, lastUndropAt: null, now, timeZone: 'Asia/Kolkata' };
+
   it('is a 409 and covers pending and running requests', () => {
-    expect(new EventDropError('REPLAY_IN_PROGRESS', 'x').httpStatus).toBe(409);
+    expect(new EventDropError('REDROP_COOLDOWN', 'x').httpStatus).toBe(409);
     expect([...ACTIVE_REPLAY_STATUSES]).toEqual(['pending', 'running']);
+  });
+
+  it('allows a drop with no replay and no undrop', () => {
+    expect(getRedropBlock(base)).toBeNull();
+  });
+
+  it('blocks while a replay is unfinished, even after 24 h', () => {
+    expect(
+      getRedropBlock({ ...base, replayActive: true, lastUndropAt: new Date('2026-11-20T00:00:00Z') })
+    ).toEqual({
+      reason: 'replay',
+      message: 'Replay of this event is still running; try again when it finishes',
+      until: null,
+    });
+  });
+
+  it('blocks for 24 h after the last undrop, with both times in the project timezone', () => {
+    const block = getRedropBlock({ ...base, lastUndropAt: new Date('2026-11-23T03:30:00Z') });
+    expect(block).toEqual({
+      reason: 'cooldown',
+      message:
+        'This event was undropped at 23 Nov 2026, 09:00 GMT+5:30; it can be dropped again after 24 Nov 2026, 09:00 GMT+5:30',
+      until: '2026-11-24T03:30:00.000Z',
+    });
+  });
+
+  it('allows a drop once 24 h have passed', () => {
+    expect(getRedropBlock({ ...base, lastUndropAt: new Date('2026-11-22T12:00:00Z') })).toBeNull();
+    expect(getRedropBlock({ ...base, lastUndropAt: new Date('2026-11-22T12:00:01Z') })?.reason).toBe('cooldown');
   });
 });

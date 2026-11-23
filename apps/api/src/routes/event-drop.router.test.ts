@@ -195,7 +195,7 @@ describe('/api/manage (the path production nginx forwards to the api)', () => {
 
   it('returns 409 with a clear message while a replay is running', async () => {
     service.dropManagedEvent.mockRejectedValueOnce(
-      new EventDropError('REPLAY_IN_PROGRESS', 'Replay of this event is still running; try again when it finishes')
+      new EventDropError('REDROP_COOLDOWN', 'Replay of this event is still running; try again when it finishes')
     );
     const res = await app.inject({
       method: 'POST',
@@ -205,8 +205,22 @@ describe('/api/manage (the path production nginx forwards to the api)', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({
-      error: 'REPLAY_IN_PROGRESS',
+      error: 'REDROP_COOLDOWN',
       message: 'Replay of this event is still running; try again when it finishes',
     });
+  });
+
+  it('returns 409 REDROP_COOLDOWN with the cooldown times for 24 h after an undrop', async () => {
+    const message =
+      'This event was undropped at 23 Nov 2026, 09:00 GMT+5:30; it can be dropped again after 24 Nov 2026, 09:00 GMT+5:30';
+    service.dropManagedEvent.mockRejectedValueOnce(new EventDropError('REDROP_COOLDOWN', message));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/manage/projects/p1/events/drop',
+      headers: auth,
+      payload: { name: 'A', confirmName: 'A', source: 'Agent', requestedBy: 'Chitroopa' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: 'REDROP_COOLDOWN', message });
   });
 });

@@ -20,10 +20,14 @@ import {
   getReplayWindow,
   HIGH_VOLUME_PCT,
   HOLD_WINDOW_MS,
+  getRedropBlock,
   isProtectedEventName,
-  REPLAY_IN_PROGRESS_MESSAGE,
+  REDROP_COOLDOWN_MS,
+  type RedropBlock,
+  UNDROP_ACTIONS,
 } from './event-drop-rules';
 import { getEventMetasCached } from './event.service';
+import { getSettingsForProject } from './organization.service';
 import {
   affectedBoards,
   buildEventUsage,
@@ -66,8 +70,8 @@ export type ManagedEvent = {
   status: ManagedEventStatus;
   droppedAt: string | null;
   recoverableUntil: string | null;
-  /** A replay request is pending or running: Drop is refused until it ends. */
-  replayInProgress: boolean;
+  /** Drop is refused (409 REDROP_COOLDOWN): a replay is unfinished, or undropped < 24 h ago. */
+  dropBlocked: RedropBlock | null;
 };
 
 export type ManagedEventsResult = {
@@ -283,7 +287,8 @@ export async function listManagedEvents({
   q?: string;
 }): Promise<ManagedEventsResult> {
   const project = await getProjectOrThrow(projectId);
-  const [volumes, knownNames, metas, usage, activeReplays] = await Promise.all([
+  const now = new Date();
+  const [volumes, knownNames, metas, usage, activeReplays, recentUndrops, settings] = await Promise.all([
     getEventVolumes(projectId),
     getKnownEventNames(projectId),
     db.eventMeta.findMany({
@@ -295,8 +300,21 @@ export async function listManagedEvents({
       where: { projectId, status: { in: [...ACTIVE_REPLAY_STATUSES] } },
       select: { eventName: true },
     }),
+    db.eventDropAudit.groupBy({
+      by: ['eventName'],
+      where: {
+        projectId,
+        action: { in: [...UNDROP_ACTIONS] },
+        createdAt: { gt: new Date(now.getTime() - REDROP_COOLDOWN_MS) },
+      },
+      _max: { createdAt: true },
+    }),
+    getSettingsForProject(projectId),
   ]);
   const replaying = new Set(activeReplays.map((r) => r.eventName));
+  const lastUndrop = new Map(
+    recentUndrops.map((r) => [r.eventName, r._max.createdAt ?? null])
+  );
 
   const droppedAt = new Map(
     metas.filter((m) => m.droppedAt).map((m) => [m.name, m.droppedAt!])
@@ -345,7 +363,12 @@ export async function listManagedEvents({
       recoverableUntil: dropped
         ? new Date(dropped.getTime() + HOLD_WINDOW_MS).toISOString()
         : null,
-      replayInProgress: replaying.has(name),
+      dropBlocked: getRedropBlock({
+        replayActive: replaying.has(name),
+        lastUndropAt: lastUndrop.get(name) ?? null,
+        now,
+        timeZone: settings.timezone,
+      }),
     });
   }
 
@@ -523,8 +546,8 @@ export async function dropManagedEvent(
       isDropped: Boolean(meta?.droppedAt),
       usageCount: usageCount(usage),
     });
-    // A re-drop while a replay still copies messages back would lose copies
-    // (the worker fails such a request as REDROPPED).
+    // A re-drop while a replay still copies messages back would lose copies,
+    // so Drop waits for every replay to finish and for 24 h after an undrop.
     const activeReplay = await tx.eventReplayRequest.findFirst({
       where: {
         projectId: project.id,
@@ -533,8 +556,26 @@ export async function dropManagedEvent(
       },
       select: { id: true },
     });
-    if (activeReplay) {
-      throw new EventDropError('REPLAY_IN_PROGRESS', REPLAY_IN_PROGRESS_MESSAGE);
+    const lastUndrop = await tx.eventDropAudit.findFirst({
+      where: {
+        projectId: project.id,
+        eventName: input.name,
+        action: { in: [...UNDROP_ACTIONS] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    if (activeReplay || lastUndrop) {
+      const { timezone } = await getSettingsForProject(project.id);
+      const block = getRedropBlock({
+        replayActive: Boolean(activeReplay),
+        lastUndropAt: lastUndrop?.createdAt ?? null,
+        now: new Date(),
+        timeZone: timezone,
+      });
+      if (block) {
+        throw new EventDropError('REDROP_COOLDOWN', block.message);
+      }
     }
     // Taken before the Redis write so the replay window covers every held event.
     const droppedAt = new Date();

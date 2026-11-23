@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     customEvent: { findMany: vi.fn() },
     customCohort: { findMany: vi.fn() },
     resourceView: { findMany: vi.fn() },
-    eventDropAudit: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
+    eventDropAudit: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), groupBy: vi.fn() },
     eventReplayRequest: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('../prisma-client', () => ({ db: mocks.db }));
+vi.mock('./organization.service', () => ({
+  getSettingsForProject: async () => ({ timezone: 'Asia/Kolkata' }),
+}));
 vi.mock('../clickhouse/client', () => ({
   ch: { query: mocks.chQuery },
   TABLE_NAMES: { event_names_mv: 'distinct_event_names_mv' },
@@ -96,6 +99,8 @@ beforeEach(() => {
   db.eventReplayRequest.create.mockResolvedValue({ id: 'replay-1' });
   db.eventReplayRequest.findFirst.mockResolvedValue(null);
   db.eventReplayRequest.findMany.mockResolvedValue([]);
+  db.eventDropAudit.findFirst.mockResolvedValue(null);
+  db.eventDropAudit.groupBy.mockResolvedValue([]);
   db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
   mocks.addDroppedEvent.mockResolvedValue(undefined);
   mocks.removeDroppedEvent.mockResolvedValue(undefined);
@@ -276,7 +281,7 @@ describe('dropManagedEvent', () => {
         requestedBy: 'Chitroopa',
       })
     ).rejects.toMatchObject({
-      code: 'REPLAY_IN_PROGRESS',
+      code: 'REDROP_COOLDOWN',
       httpStatus: 409,
       message: 'Replay of this event is still running; try again when it finishes',
     });
@@ -286,6 +291,45 @@ describe('dropManagedEvent', () => {
     });
     expect(mocks.addDroppedEvent).not.toHaveBeenCalled();
     expect(db.eventMeta.upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a re-drop (409) for 24 h after the last undrop', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-23T12:00:00Z'));
+    try {
+      db.eventDropAudit.findFirst.mockResolvedValue({ createdAt: new Date('2026-11-23T03:30:00Z') });
+      await expect(
+        dropManagedEvent({
+          projectId: 'regain-app',
+          name: 'App Init: Theme Set',
+          confirmName: 'App Init: Theme Set',
+          source: 'UI',
+        })
+      ).rejects.toMatchObject({
+        code: 'REDROP_COOLDOWN',
+        httpStatus: 409,
+        message:
+          'This event was undropped at 23 Nov 2026, 09:00 GMT+5:30; it can be dropped again after 24 Nov 2026, 09:00 GMT+5:30',
+      });
+      expect(db.eventDropAudit.findFirst.mock.calls[0]![0]).toMatchObject({
+        where: { eventName: 'App Init: Theme Set', action: { in: ['undrop', 'undrop_replay'] } },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(mocks.addDroppedEvent).not.toHaveBeenCalled();
+      expect(db.eventMeta.upsert).not.toHaveBeenCalled();
+
+      // 24 h later the same drop goes ahead.
+      vi.setSystemTime(new Date('2026-11-24T03:30:01Z'));
+      await dropManagedEvent({
+        projectId: 'regain-app',
+        name: 'App Init: Theme Set',
+        confirmName: 'App Init: Theme Set',
+        source: 'UI',
+      });
+      expect(mocks.addDroppedEvent).toHaveBeenCalledWith('regain-app', 'App Init: Theme Set');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('needs requestedBy for Agent drops and an http(s) chat URL', async () => {
@@ -422,20 +466,38 @@ describe('recordResourceView', () => {
 
 describe('listManagedEvents', () => {
   it('still lists events with "—" volume when event_name_daily is missing', async () => {
-    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
-      if (query.includes('event_name_daily')) {
-        throw new Error('Code: 60. DB::Exception: Table openpanel.event_name_daily does not exist. (UNKNOWN_TABLE)');
-      }
-      return chResult([{ name: 'Home Page: Shown' }, { name: 'session_start' }, { name: '*' }]);
-    });
     db.eventMeta.findMany.mockResolvedValue([
       { name: 'Old Thing', droppedAt: new Date('2026-11-23T10:00:00Z') },
     ]);
     db.eventReplayRequest.findMany.mockResolvedValue([{ eventName: 'Home Page: Shown' }]);
+    const undropAt = new Date(Date.now() - 60 * 60 * 1000);
+    db.eventDropAudit.groupBy.mockResolvedValue([
+      { eventName: 'App Init: Theme Set', _max: { createdAt: undropAt } },
+    ]);
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes('event_name_daily')) {
+        throw new Error('Code: 60. DB::Exception: Table openpanel.event_name_daily does not exist. (UNKNOWN_TABLE)');
+      }
+      return chResult([
+        { name: 'Home Page: Shown' },
+        { name: 'session_start' },
+        { name: 'App Init: Theme Set' },
+        { name: '*' },
+      ]);
+    });
     const result = await listManagedEvents({ projectId: 'regain-app' });
     expect(result.volumeAvailable).toBe(false);
-    expect(result.events.find((e) => e.name === 'Home Page: Shown')?.replayInProgress).toBe(true);
-    expect(result.events.find((e) => e.name === 'session_start')?.replayInProgress).toBe(false);
+    const byName = (name: string) => result.events.find((e) => e.name === name);
+    expect(byName('Home Page: Shown')?.dropBlocked).toMatchObject({ reason: 'replay', until: null });
+    expect(byName('App Init: Theme Set')?.dropBlocked).toMatchObject({
+      reason: 'cooldown',
+      until: new Date(undropAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+    expect(byName('session_start')?.dropBlocked).toBeNull();
+    expect(db.eventDropAudit.groupBy.mock.calls[0]![0].where).toMatchObject({
+      projectId: 'regain-app',
+      action: { in: ['undrop', 'undrop_replay'] },
+    });
     expect(result.events.map((e) => [e.name, e.status, e.volume1d])).toEqual(
       expect.arrayContaining([
         ['Home Page: Shown', 'active', null],

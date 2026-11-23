@@ -44,13 +44,17 @@ All need `Authorization: Bearer $OPENPANEL_ADMIN_API_TOKEN`. The routes answer u
 only forwards `/trpc/`, `/live/`, `/oauth/` and `/api/` to the api, keeping the path, so from outside use
 **`https://openpanel.regainapp.ai/api/manage/...`** (prod HA: `https://openpanel-prod.regainapp.ai/api/manage/...`).
 
-A Drop is refused with 409 `REPLAY_IN_PROGRESS` while a replay request for the same event is
-`pending` or `running`. All timestamps in `event_replay_requests` are `timestamptz` written from
+A Drop is refused with 409 `REDROP_COOLDOWN` while any replay request for the same event is
+unfinished (`pending` or `running`; the worker's AWAITING_ROTOR wait keeps `running`), and for
+24 h after the event's last undrop (`This event was undropped at <time>; it can be dropped again
+after <time + 24 h>`, times in the project timezone). So the replay worker never sees a re-drop
+racing its copy. The Events page shows a disabled button with the same text. All timestamps in `event_replay_requests` are `timestamptz` written from
 JS Dates (UTC instants).
 
 - `GET  /manage/projects/:projectId/events?filter=all|unused|used|dropped|protected|unused_high&q=`
 - `POST /manage/projects/:projectId/events/drop` `{name, confirmName, reason?, source:"UI"|"Agent", requestedBy?, chatUrl?}`
-  → 400 confirm mismatch / already dropped / bad input, 403 protected, 409 used and no reason, 404 project.
+  → 400 confirm mismatch / already dropped / bad input, 403 protected, 409 used and no reason
+  (`REASON_REQUIRED`) or replay/cooldown (`REDROP_COOLDOWN`), 404 project.
   `requestedBy` is required when `source` is `Agent`.
 - `POST /manage/projects/:projectId/events/undrop` `{name, confirmName, replay, source, requestedBy?, chatUrl?, reason?}` → `{replayRequestId|null, ...}`
 - `GET  /manage/replays/:id` → `{status, copied, error, ...}`

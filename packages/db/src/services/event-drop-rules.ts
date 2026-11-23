@@ -1,3 +1,5 @@
+import { DateTime } from '@openpanel/common';
+
 /**
  * Pure rules for dropping an event name. No IO here so the guard is unit
  * tested on its own and shared by the REST API and tRPC (one code path).
@@ -27,6 +29,15 @@ export const ACTIVE_REPLAY_STATUSES = ['pending', 'running'] as const;
 export const REPLAY_IN_PROGRESS_MESSAGE =
   'Replay of this event is still running; try again when it finishes';
 
+/** Undrop actions in event_drop_audit. */
+export const UNDROP_ACTIONS = ['undrop', 'undrop_replay'] as const;
+
+/**
+ * After an undrop the event cannot be dropped again for this long, so the
+ * replay worker never has to handle a re-drop racing its copy.
+ */
+export const REDROP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
 /** Dropped messages sit in destination-messages-short for this long. */
 export const HOLD_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -51,7 +62,7 @@ export type EventDropErrorCode =
   | 'INVALID_INPUT'
   | 'NOT_FOUND'
   | 'UNAVAILABLE'
-  | 'REPLAY_IN_PROGRESS';
+  | 'REDROP_COOLDOWN';
 
 const HTTP_STATUS: Record<EventDropErrorCode, number> = {
   CONFIRM_MISMATCH: 400,
@@ -61,7 +72,7 @@ const HTTP_STATUS: Record<EventDropErrorCode, number> = {
   PROTECTED: 403,
   NOT_FOUND: 404,
   REASON_REQUIRED: 409,
-  REPLAY_IN_PROGRESS: 409,
+  REDROP_COOLDOWN: 409,
   UNAVAILABLE: 503,
 };
 
@@ -157,5 +168,46 @@ export function getReplayWindow(
   return {
     fromTs: droppedAt > oldestHeld ? droppedAt : oldestHeld,
     toTs: now,
+  };
+}
+
+export type RedropBlock = {
+  reason: 'replay' | 'cooldown';
+  message: string;
+  /** End of the cooldown; null while a replay is unfinished. */
+  until: string | null;
+};
+
+function formatInZone(date: Date, timeZone: string) {
+  return DateTime.fromJSDate(date)
+    .setZone(timeZone)
+    .setLocale('en-US')
+    .toFormat('d LLL yyyy, HH:mm ZZZZ');
+}
+
+/**
+ * Why a Drop is refused right now (409 REDROP_COOLDOWN), or null: while any
+ * replay request of the event is unfinished, and for 24 h after its last undrop.
+ */
+export function getRedropBlock(input: {
+  replayActive: boolean;
+  lastUndropAt: Date | null;
+  now: Date;
+  timeZone: string;
+}): RedropBlock | null {
+  if (input.replayActive) {
+    return { reason: 'replay', message: REPLAY_IN_PROGRESS_MESSAGE, until: null };
+  }
+  if (!input.lastUndropAt) {
+    return null;
+  }
+  const until = new Date(input.lastUndropAt.getTime() + REDROP_COOLDOWN_MS);
+  if (until <= input.now) {
+    return null;
+  }
+  return {
+    reason: 'cooldown',
+    message: `This event was undropped at ${formatInZone(input.lastUndropAt, input.timeZone)}; it can be dropped again after ${formatInZone(until, input.timeZone)}`,
+    until: until.toISOString(),
   };
 }

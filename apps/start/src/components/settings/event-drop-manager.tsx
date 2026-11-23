@@ -221,17 +221,31 @@ function ActionCell({
       </span>
     );
   }
-  if (event.replayInProgress) {
+  const blocked = event.dropBlocked;
+  const blockedNow =
+    blocked !== null &&
+    (blocked.until === null || new Date(blocked.until).getTime() > Date.now());
+  if (blocked && blockedNow) {
     return (
-      <Button
-        variant="outline"
-        size="sm"
-        disabled
-        title="Replay of this event is still running; try again when it finishes"
-        className="whitespace-nowrap"
-      >
-        Replaying…
-      </Button>
+      <div className="flex flex-col items-end">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled
+          title={blocked.message}
+          className="whitespace-nowrap"
+        >
+          {blocked.reason === 'replay' ? 'Replaying…' : 'Drop'}
+        </Button>
+        {blocked.until && (
+          <div
+            className="mt-1 whitespace-nowrap text-sm text-muted-foreground"
+            title={blocked.message}
+          >
+            again after {dateTime(blocked.until)}
+          </div>
+        )}
+      </div>
     );
   }
   if (event.usageCount > 0) {
@@ -280,7 +294,9 @@ export default function EventDropManager({
       { projectId },
       {
         refetchInterval: (query) =>
-          query.state.data?.events.some((e) => e.replayInProgress)
+          query.state.data?.events.some(
+            (e) => e.dropBlocked?.reason === 'replay'
+          )
             ? REPLAY_POLL_MS
             : false,
       }
