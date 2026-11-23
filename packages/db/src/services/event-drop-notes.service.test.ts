@@ -17,7 +17,7 @@ vi.mock('./organization.service', () => ({
   getSettingsForProject: async () => ({ timezone: 'Asia/Kolkata' }),
 }));
 
-import { getDropNotes } from './event-drop-notes.service';
+import { getDropNotes, labelNote } from './event-drop-notes.service';
 
 const { db } = mocks;
 const report = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
@@ -50,11 +50,32 @@ beforeEach(() => {
   });
 });
 
+describe('labelNote', () => {
+  it('writes times in the project timezone, with the year only when it is not this year', () => {
+    const thisYear = new Date().getUTCFullYear();
+    const note = labelNote(
+      { eventName: 'A', from: `${thisYear}-03-01T20:00:00.000Z`, to: `${thisYear}-03-02T04:30:00.000Z`, replayRequested: false },
+      'Asia/Kolkata'
+    );
+    expect(note).toMatchObject({
+      fromDay: '2 Mar',
+      fromDayTime: '2 Mar, 01:30',
+      fromTime: '01:30',
+      toDayTime: '2 Mar, 10:00',
+      toTime: '10:00',
+    });
+    expect(labelNote({ eventName: 'A', from: '2020-01-05T00:00:00.000Z', to: null, replayRequested: false }, 'UTC').fromDay).toBe('5 Jan 2020');
+  });
+});
+
 describe('getDropNotes', () => {
   it('returns notes for the board in one batch, keyed by report', async () => {
     const notes = await getDropNotes({ projectId: 'regain-app', dashboardId: 'd1', range: '3d' as never });
     expect(Object.keys(notes)).toEqual(['r1']);
     expect(notes.r1?.[0]).toMatchObject({ eventName: 'Stamp Book: Card Shown', to: null });
+    // 03:40 UTC is 09:10 in the project's timezone (Asia/Kolkata).
+    expect(notes.r1?.[0]?.fromTime).toBe('09:10');
+    expect(notes.r1?.[0]?.fromDay).toMatch(/^23 Nov/);
     // One query per table for the whole board, not one per chart.
     expect(db.report.findMany).toHaveBeenCalledOnce();
     expect(db.report.findMany.mock.calls[0]![0].where).toEqual({ projectId: 'regain-app', dashboardId: 'd1' });

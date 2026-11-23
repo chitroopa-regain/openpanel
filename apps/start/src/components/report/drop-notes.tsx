@@ -23,31 +23,6 @@ export function useDropNotes(reportId: string | undefined): DropNote[] {
   return notes[reportId ?? DRAFT_REPORT_ID] ?? EMPTY;
 }
 
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-function day(iso: string) {
-  const d = new Date(iso);
-  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
-}
-
-function dayTime(iso: string) {
-  const d = new Date(iso);
-  return `${day(iso)}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
 export function DropNoteBanner({
   notes,
   organizationId,
@@ -69,8 +44,8 @@ export function DropNoteBanner({
           <div key={`${note.eventName}:${note.from}`}>
             Event "<span className="font-mono">{note.eventName}</span>"{' '}
             {note.to === null
-              ? `dropped on ${day(note.from)} by OpenPanel admin: no new data after this date.`
-              : `dropped ${dayTime(note.from)}–${dayTime(note.to)}; ${
+              ? `dropped on ${note.fromDay} by OpenPanel admin: no new data after this date.`
+              : `dropped ${note.fromDayTime}–${note.toDayTime}; ${
                   note.replayRequested
                     ? 'replay of that window was requested.'
                     : 'data missing in that window unless replayed.'
@@ -144,11 +119,6 @@ export function ReportDropNotes({
 
 const DROP_RED = 'rgb(242 103 125)';
 
-function hhmm(iso: string) {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
 /**
  * Dashed red markers at each drop (and undrop) inside a time chart. Returns
  * elements, not a component, because Recharts only reads direct children.
@@ -164,7 +134,7 @@ export function dropMarkerLines(notes: DropNote[]) {
         stroke={DROP_RED}
         strokeDasharray="4 3"
         label={{
-          value: `dropped ${hhmm(note.from)}`,
+          value: `dropped ${note.fromTime}`,
           position: 'insideTopRight',
           fill: DROP_RED,
           fontSize: 11,
@@ -179,7 +149,7 @@ export function dropMarkerLines(notes: DropNote[]) {
           stroke={DROP_RED}
           strokeDasharray="4 3"
           label={{
-            value: `undropped ${hhmm(note.to)}`,
+            value: `undropped ${note.toTime}`,
             position: 'insideTopLeft',
             fill: DROP_RED,
             fontSize: 11,

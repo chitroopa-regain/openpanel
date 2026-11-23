@@ -6,6 +6,7 @@ import {
   buildDropPeriods,
   type DropNote,
   dropNotesForReport,
+  type LabeledDropNote,
 } from './event-drop-notes';
 import {
   extractEventNamesFromCohortDefinition,
@@ -46,7 +47,7 @@ export type DropNotesInput = {
  */
 export async function getDropNotes(
   input: DropNotesInput
-): Promise<Record<string, DropNote[]>> {
+): Promise<Record<string, LabeledDropNote[]>> {
   if (!(input.dashboardId || input.reportId || input.draft)) {
     return {};
   }
@@ -133,7 +134,7 @@ export async function getDropNotes(
     return valid ? valid.toJSDate() : fallback;
   };
 
-  const result: Record<string, DropNote[]> = {};
+  const result: Record<string, LabeledDropNote[]> = {};
   for (const report of reports) {
     const names = extractEventNamesFromReport(report, {
       customEventNames,
@@ -158,8 +159,31 @@ export async function getDropNotes(
       end: parse(dates.endDate, new Date(8.64e15)),
     });
     if (notes.length > 0) {
-      result[report.id] = notes;
+      result[report.id] = notes.map((note) =>
+        labelNote(note, settings.timezone)
+      );
     }
   }
   return result;
+}
+
+/** Times in the project timezone, the same one the charts use. */
+export function labelNote(note: DropNote, timezone: string): LabeledDropNote {
+  const now = DateTime.now().setZone(timezone);
+  const fmt = (iso: string) => {
+    const dt = DateTime.fromISO(iso).setZone(timezone);
+    const day = dt.toFormat(dt.year === now.year ? 'd LLL' : 'd LLL yyyy');
+    const time = dt.toFormat('HH:mm');
+    return { day, time, dayTime: `${day}, ${time}` };
+  };
+  const from = fmt(note.from);
+  const to = note.to ? fmt(note.to) : null;
+  return {
+    ...note,
+    fromDay: from.day,
+    fromDayTime: from.dayTime,
+    fromTime: from.time,
+    toDayTime: to?.dayTime ?? null,
+    toTime: to?.time ?? null,
+  };
 }

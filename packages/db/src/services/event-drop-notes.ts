@@ -20,6 +20,18 @@ export type DropNote = {
   replayRequested: boolean;
 };
 
+/** A note with its times written out in the project timezone, for the UI. */
+export type LabeledDropNote = DropNote & {
+  /** "23 Nov" (with the year when it is not the current one) */
+  fromDay: string;
+  /** "23 Nov, 09:10" */
+  fromDayTime: string;
+  /** "09:10" */
+  fromTime: string;
+  toDayTime: string | null;
+  toTime: string | null;
+};
+
 const DROP_ACTIONS = new Set(['drop', 'drop_anyway']);
 const UNDROP_ACTIONS = new Set(['undrop', 'undrop_replay']);
 
