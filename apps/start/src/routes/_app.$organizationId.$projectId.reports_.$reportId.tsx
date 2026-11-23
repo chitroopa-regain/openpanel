@@ -1,5 +1,6 @@
 import FullPageLoadingState from '@/components/full-page-loading-state';
 import ReportEditor from '@/components/report-chart/report-editor';
+import { useRecordView } from '@/hooks/use-record-view';
 import { useTRPC } from '@/integrations/trpc/react';
 import { createProjectTitle } from '@/utils/title';
 import { useSuspenseQuery } from '@tanstack/react-query';
@@ -34,8 +35,9 @@ export const Route = createFileRoute(
 });
 
 function Component() {
-  const { reportId } = Route.useParams();
+  const { projectId, reportId } = Route.useParams();
   const trpc = useTRPC();
+  useRecordView(projectId, 'report', reportId);
   const query = useSuspenseQuery(trpc.report.get.queryOptions({ reportId }));
   return <ReportEditor report={query.data} />;
 }

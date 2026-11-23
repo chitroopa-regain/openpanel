@@ -35,6 +35,7 @@ import {
   ReportItemSkeleton,
   type DropTarget,
 } from '@/components/report/report-item';
+import { useRecordView } from '@/hooks/use-record-view';
 import { handleErrorToastOptions, useTRPC } from '@/integrations/trpc/react';
 import { pushModal, showConfirm } from '@/modals';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -88,6 +89,7 @@ function Component() {
   const router = useRouter();
   const { organizationId, dashboardId, projectId } = Route.useParams();
   const trpc = useTRPC();
+  useRecordView(projectId, 'dashboard', dashboardId);
   const queryClient = useQueryClient();
   const dashboardQuery = useQuery(
     trpc.dashboard.byId.queryOptions({

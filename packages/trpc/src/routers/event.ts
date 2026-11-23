@@ -6,11 +6,9 @@ import {
   type IServiceProfile,
   type IServiceSession,
   TABLE_NAMES,
-  addDroppedEvent,
   chQuery,
   convertClickhouseDateToJs,
   db,
-  deleteEventByName,
   eventService,
   getChartStartEndDate,
   getConversionEventNames,
@@ -18,7 +16,13 @@ import {
   getEventMetasCached,
   getSettingsForProject,
   pagesService,
-  removeDroppedEvent,
+  EventDropError,
+  MANAGED_EVENT_FILTERS,
+  dropManagedEvent,
+  listEventDropAudit,
+  listManagedEvents,
+  recordResourceView,
+  undropManagedEvent,
   sessionService,
 } from '@openpanel/db';
 import {
@@ -33,7 +37,32 @@ import { TRPCAccessError } from '../errors';
 import { createTRPCRouter, protectedProcedure, publicProcedure } from '../trpc';
 import { encodeEventCursor, zEventCursor } from '../utils/event-cursor';
 
-const PROTECTED_EVENTS = ['session_start', 'session_end', 'screen_view'];
+const DROP_ERROR_TO_TRPC = {
+  400: 'BAD_REQUEST',
+  403: 'FORBIDDEN',
+  404: 'NOT_FOUND',
+  409: 'CONFLICT',
+  503: 'INTERNAL_SERVER_ERROR',
+} as const;
+
+/** Same service functions as the REST /manage API; map their errors to tRPC. */
+async function withDropErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof EventDropError) {
+      throw new TRPCError({
+        code:
+          DROP_ERROR_TO_TRPC[
+            error.httpStatus as keyof typeof DROP_ERROR_TO_TRPC
+          ] ?? 'INTERNAL_SERVER_ERROR',
+        message: error.message,
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
 
 export const eventRouter = createTRPCRouter({
   updateEventMeta: protectedProcedure
@@ -364,105 +393,71 @@ export const eventRouter = createTRPCRouter({
       return res.filter((item) => item.origin && !item.origin.includes('localhost:'));
     }),
 
+  managedEvents: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        filter: z.enum(MANAGED_EVENT_FILTERS).default('all'),
+        q: z.string().optional(),
+      })
+    )
+    .query(async ({ input }) => {
+      return withDropErrors(() => listManagedEvents(input));
+    }),
+
+  eventDropAudit: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        limit: z.number().int().min(1).max(500).default(100),
+      })
+    )
+    .query(async ({ input }) => {
+      return listEventDropAudit(input.projectId, input.limit);
+    }),
+
   dropEvent: protectedProcedure
-    .input(z.object({ projectId: z.string(), name: z.string() }))
-    .mutation(async ({ input: { projectId, name } }) => {
-      if (PROTECTED_EVENTS.includes(name)) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: `Cannot drop protected system event: ${name}`,
-        });
-      }
-      // Redis first — enforcement takes effect immediately
-      try {
-        await addDroppedEvent(projectId, name);
-      } catch (err) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: `Failed to drop event: Redis is unavailable. Please try again.`,
-        });
-      }
-      let meta;
-      try {
-        meta = await db.eventMeta.upsert({
-          where: { name_projectId: { name, projectId } },
-          create: { projectId, name, droppedAt: new Date() },
-          update: { droppedAt: new Date() },
-        });
-      } catch (err) {
-        // Rollback Redis on DB failure
-        await removeDroppedEvent(projectId, name).catch(() => {});
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: `Failed to drop event: database error. Please try again.`,
-        });
-      }
-      await getEventMetasCached.clear(projectId);
-      // Best-effort cleanup — fire and forget
-      deleteEventByName(projectId, name).catch((err) =>
-        console.error('ClickHouse cleanup failed for dropped event:', name, err)
+    .input(
+      z.object({
+        projectId: z.string(),
+        name: z.string().min(1),
+        confirmName: z.string(),
+        reason: z.string().max(1000).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      return withDropErrors(() =>
+        dropManagedEvent({ ...input, source: 'UI' })
       );
-      return meta;
     }),
 
   undropEvent: protectedProcedure
-    .input(z.object({ projectId: z.string(), name: z.string() }))
-    .mutation(async ({ input: { projectId, name } }) => {
-      const existing = await db.eventMeta.findUnique({
-        where: { name_projectId: { name, projectId } },
-      });
-      if (!existing || !existing.droppedAt) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: `Event '${name}' is not currently dropped`,
-        });
-      }
-      // Redis first — enforcement lifts immediately
-      try {
-        await removeDroppedEvent(projectId, name);
-      } catch (err) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: `Failed to undrop event: Redis is unavailable. Please try again.`,
-        });
-      }
-      let meta;
-      try {
-        meta = await db.eventMeta.update({
-          where: { name_projectId: { name, projectId } },
-          data: { droppedAt: null, clearedAt: null },
-        });
-      } catch (err) {
-        // Rollback Redis on DB failure
-        await addDroppedEvent(projectId, name).catch(() => {});
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: `Failed to undrop event: database error. Please try again.`,
-        });
-      }
-      await getEventMetasCached.clear(projectId);
-      return meta;
+    .input(
+      z.object({
+        projectId: z.string(),
+        name: z.string().min(1),
+        confirmName: z.string(),
+        replay: z.boolean().default(false),
+        reason: z.string().max(1000).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      return withDropErrors(() =>
+        undropManagedEvent({ ...input, source: 'UI' })
+      );
     }),
 
-  clearDroppedEvent: protectedProcedure
-    .input(z.object({ projectId: z.string(), name: z.string() }))
-    .mutation(async ({ input: { projectId, name } }) => {
-      const existing = await db.eventMeta.findUnique({
-        where: { name_projectId: { name, projectId } },
-      });
-      if (!existing || !existing.droppedAt) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: `Event '${name}' is not currently dropped`,
-        });
-      }
-      // Only stamp clearedAt after successful cleanup submission
-      await deleteEventByName(projectId, name);
-      await db.eventMeta.update({
-        where: { name_projectId: { name, projectId } },
-        data: { clearedAt: new Date() },
-      });
-      await getEventMetasCached.clear(projectId);
+  /** Board/report opened: feeds "last viewed" and active/idle on the Events page. */
+  recordView: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        resourceType: z.enum(['dashboard', 'report']),
+        resourceId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ input }) => {
+      await recordResourceView(input).catch(() => {});
       return { ok: true };
     }),
 });

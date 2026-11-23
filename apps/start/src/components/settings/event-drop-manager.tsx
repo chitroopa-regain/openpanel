@@ -1,146 +1,241 @@
-import { useMemo, useState } from 'react';
-
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { handleError, useTRPC } from '@/integrations/trpc/react';
-import { showConfirm } from '@/modals';
+import { cn } from '@/utils/cn';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LockIcon, SearchIcon } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { EventAuditLog, SourceCell } from './event-management/event-audit-log';
+import {
+  DropDialog,
+  StatusBadge,
+  UndropDialog,
+  UsedInSheet,
+} from './event-management/event-dialogs';
+import {
+  ACTION_LABEL,
+  dateTime,
+  formatPct,
+  type ManagedEvent,
+  type ManagedEventsData,
+  places,
+  shortCount,
+  shortDate,
+  timeAgo,
+} from './event-management/format';
 
-const PROTECTED_EVENTS = ['session_start', 'session_end', 'screen_view'];
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 100;
+const HIGH_VOLUME_PCT = 0.5;
 
-type EventRow = {
-  name: string;
-  count: number;
-  status: 'protected' | 'active' | 'dropped';
-  droppedAt: Date | null;
-};
+type Filter = 'all' | 'unused' | 'used' | 'dropped' | 'protected';
+type SortKey = 'name' | 'volume1d' | 'volume7d' | 'volume30d' | 'pct' | 'used';
 
-function EventTable({
-  rows,
-  page,
-  setPage,
-  isPending,
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'unused', label: 'Not used' },
+  { key: 'used', label: 'Used' },
+  { key: 'dropped', label: 'Dropped' },
+  { key: 'protected', label: 'Protected' },
+];
+
+const PROTECTED_TITLE =
+  'Protected: purchase, revenue, attribution, crash, A/B, paywall, onboarding and session events cannot be dropped';
+
+function category(e: ManagedEvent): Filter {
+  if (e.status === 'dropped') {
+    return 'dropped';
+  }
+  if (e.status === 'protected') {
+    return 'protected';
+  }
+  return e.usageCount > 0 ? 'used' : 'unused';
+}
+
+function sortValue(e: ManagedEvent, key: SortKey): number | string {
+  switch (key) {
+    case 'name':
+      return e.name;
+    case 'volume1d':
+      return e.volume1d ?? -1;
+    case 'volume7d':
+      return e.volume7d ?? -1;
+    case 'volume30d':
+      return e.volume30d ?? -1;
+    case 'pct':
+      return e.pctOfProject ?? -1;
+    case 'used':
+      return e.usageCount;
+  }
+}
+
+function Sparkline({
+  values,
+  dropped,
+}: {
+  values: number[] | null;
+  dropped: boolean;
+}) {
+  if (!values || values.length < 2) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const width = 72;
+  const height = 20;
+  const max = Math.max(...values) || 1;
+  const points = values
+    .map(
+      (v, i) =>
+        `${((i * (width - 2)) / (values.length - 1) + 1).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`
+    )
+    .join(' ');
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      aria-hidden="true"
+      className="block"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke={dropped ? 'rgb(242 103 125)' : 'rgb(156 163 175)'}
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = 'right',
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: { key: SortKey; dir: 1 | -1 };
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const arrow = sort.key === sortKey ? (sort.dir < 0 ? ' ▾' : ' ▴') : '';
+  return (
+    <th
+      className={cn(
+        'px-3 py-2 font-medium',
+        align === 'right' ? 'text-right' : 'text-left'
+      )}
+      aria-sort={
+        sort.key === sortKey
+          ? sort.dir < 0
+            ? 'descending'
+            : 'ascending'
+          : 'none'
+      }
+    >
+      <button
+        type="button"
+        className="whitespace-nowrap hover:text-foreground"
+        onClick={() => onSort(sortKey)}
+      >
+        {label}
+        {arrow}
+      </button>
+    </th>
+  );
+}
+
+function Stats({ data }: { data: ManagedEventsData | undefined }) {
+  const totals = data?.totals;
+  const unusedShare =
+    totals?.volume1d && totals.unusedVolume1d !== null
+      ? Math.round((100 * totals.unusedVolume1d) / totals.volume1d)
+      : null;
+  return (
+    <div className="flex flex-wrap gap-x-7 gap-y-3">
+      <div>
+        <div className="text-lg font-semibold tabular-nums">
+          {totals ? totals.events.toLocaleString('en-IN') : '—'}
+        </div>
+        <div className="text-xs text-muted-foreground">events</div>
+      </div>
+      <div>
+        <div className="text-lg font-semibold tabular-nums">
+          {totals?.volume1d != null ? `${shortCount(totals.volume1d)}/day` : '—'}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          volume{data?.volumeDay ? `, ${shortDate(data.volumeDay)}` : ''}
+        </div>
+      </div>
+      <div>
+        <div className="text-lg font-semibold tabular-nums">
+          {totals ? totals.unusedEvents.toLocaleString('en-IN') : '—'}
+          {totals?.unusedVolume1d != null &&
+            ` · ${shortCount(totals.unusedVolume1d)}/day`}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          not used anywhere
+          {unusedShare !== null && ` (${unusedShare}% of volume)`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionCell({
+  event,
   onDrop,
   onUndrop,
-  onClear,
 }: {
-  rows: EventRow[];
-  page: number;
-  setPage: (fn: (p: number) => number) => void;
-  isPending: boolean;
-  onDrop: (name: string) => void;
-  onUndrop: (name: string) => void;
-  onClear: (name: string) => void;
+  event: ManagedEvent;
+  onDrop: (e: ManagedEvent) => void;
+  onUndrop: (e: ManagedEvent) => void;
 }) {
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages - 1);
-  const visible = rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
-
-  if (rows.length === 0) {
-    return <p className="py-4 text-sm text-muted-foreground">No events.</p>;
-  }
-
-  return (
-    <>
-      <div className="rounded-md border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-muted/50">
-              <th className="px-4 py-2 text-left font-medium">Event Name</th>
-              <th className="px-4 py-2 text-right font-medium">Count</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((row) => (
-              <tr key={row.name} className="border-b last:border-0">
-                <td className="px-4 py-2 font-mono text-sm">{row.name}</td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {row.count.toLocaleString()}
-                </td>
-                <td className="px-4 py-2">
-                  {row.status === 'protected' && (
-                    <Badge variant="secondary">Protected</Badge>
-                  )}
-                  {row.status === 'active' && (
-                    <Badge variant="success">Active</Badge>
-                  )}
-                  {row.status === 'dropped' && (
-                    <Badge variant="destructive">Dropped</Badge>
-                  )}
-                </td>
-                <td className="px-4 py-2 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    {row.status === 'active' && (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={isPending}
-                        onClick={() => onDrop(row.name)}
-                      >
-                        Drop
-                      </Button>
-                    )}
-                    {row.status === 'dropped' && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={isPending}
-                          onClick={() => onUndrop(row.name)}
-                        >
-                          Undrop
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={isPending}
-                          onClick={() => onClear(row.name)}
-                        >
-                          Clear again
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Showing {safePage * PAGE_SIZE + 1}–
-            {Math.min((safePage + 1) * PAGE_SIZE, rows.length)} of{' '}
-            {rows.length}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={safePage === 0}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={safePage >= totalPages - 1}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
+  if (event.status === 'dropped') {
+    const recoverable =
+      event.recoverableUntil &&
+      new Date(event.recoverableUntil).getTime() > Date.now();
+    return (
+      <div className="flex flex-col items-end">
+        <Button variant="outline" size="sm" onClick={() => onUndrop(event)}>
+          Undrop
+        </Button>
+        {recoverable && (
+          <div className="mt-1 whitespace-nowrap text-xs text-muted-foreground">
+            until {dateTime(event.recoverableUntil)}
           </div>
-        </div>
-      )}
-    </>
+        )}
+      </div>
+    );
+  }
+  if (event.status === 'protected') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
+        title={PROTECTED_TITLE}
+      >
+        <LockIcon className="size-3" /> Locked
+      </span>
+    );
+  }
+  if (event.usageCount > 0) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="whitespace-nowrap border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        onClick={() => onDrop(event)}
+      >
+        Drop anyway
+      </Button>
+    );
+  }
+  return (
+    <Button variant="destructive" size="sm" onClick={() => onDrop(event)}>
+      Drop
+    </Button>
   );
 }
 
@@ -151,20 +246,32 @@ export default function EventDropManager({
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<'events' | 'audit'>('events');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [highVolume, setHighVolume] = useState(false);
   const [search, setSearch] = useState('');
-  const [activePage, setActivePage] = useState(0);
-  const [droppedPage, setDroppedPage] = useState(0);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({
+    key: 'volume1d',
+    dir: -1,
+  });
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [usedFor, setUsedFor] = useState<ManagedEvent | null>(null);
+  const [dropFor, setDropFor] = useState<ManagedEvent | null>(null);
+  const [undropFor, setUndropFor] = useState<ManagedEvent | null>(null);
 
   const eventsQuery = useQuery(
-    trpc.chart.events.queryOptions({ projectId, includeDropped: true }),
+    trpc.event.managedEvents.queryOptions({ projectId })
+  );
+  const auditQuery = useQuery(
+    trpc.event.eventDropAudit.queryOptions({ projectId, limit: 100 })
   );
 
   const invalidate = () => {
     queryClient.invalidateQueries({
-      queryKey: trpc.chart.events.queryKey({
-        projectId,
-        includeDropped: true,
-      }),
+      queryKey: trpc.event.managedEvents.queryKey({ projectId }),
+    });
+    queryClient.invalidateQueries({
+      queryKey: trpc.event.eventDropAudit.queryKey({ projectId }),
     });
     queryClient.invalidateQueries({
       queryKey: trpc.chart.events.queryKey({ projectId }),
@@ -173,196 +280,363 @@ export default function EventDropManager({
 
   const dropMutation = useMutation(
     trpc.event.dropEvent.mutationOptions({
-      onSuccess: invalidate,
+      onSuccess: (result) => {
+        setDropFor(null);
+        invalidate();
+        toast(`Dropped "${result.name}". Recoverable for 24 h.`);
+      },
       onError: handleError,
-    }),
+    })
   );
-
   const undropMutation = useMutation(
     trpc.event.undropEvent.mutationOptions({
-      onSuccess: invalidate,
+      onSuccess: (result) => {
+        setUndropFor(null);
+        invalidate();
+        toast(
+          `Undropped "${result.name}"${result.replayRequestId ? ', replay started' : ''}.`
+        );
+      },
       onError: handleError,
-    }),
+    })
   );
 
-  const clearMutation = useMutation(
-    trpc.event.clearDroppedEvent.mutationOptions({
-      onSuccess: invalidate,
-      onError: handleError,
-    }),
-  );
+  const all = eventsQuery.data?.events ?? [];
+  const counts = useMemo(() => {
+    const c: Record<Filter, number> = {
+      all: all.length,
+      unused: 0,
+      used: 0,
+      dropped: 0,
+      protected: 0,
+    };
+    for (const e of all) {
+      c[category(e)]++;
+    }
+    return c;
+  }, [all]);
 
-  const allRows: EventRow[] = useMemo(
-    () =>
-      (eventsQuery.data ?? [])
-        .filter((e) => e.name !== '*' && !e.isCustomEvent)
-        .map((e) => {
-          const isProtected =
-            (e as any).isProtected ?? PROTECTED_EVENTS.includes(e.name);
-          const isDropped = !!(e as any).droppedAt;
-          return {
-            name: e.name,
-            count: e.count,
-            status: isProtected
-              ? 'protected'
-              : isDropped
-                ? 'dropped'
-                : 'active',
-            droppedAt: isDropped ? new Date((e as any).droppedAt) : null,
-          } satisfies EventRow;
-        }),
-    [eventsQuery.data],
-  );
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return allRows;
-    const q = search.toLowerCase();
-    return allRows.filter((r) => r.name.toLowerCase().includes(q));
-  }, [allRows, search]);
-
-  const activeRows = useMemo(
-    () =>
-      filtered.filter(
-        (r) => r.status === 'active' || r.status === 'protected',
-      ),
-    [filtered],
-  );
-  const droppedRows = useMemo(
-    () =>
-      filtered
-        .filter((r) => r.status === 'dropped')
-        .sort(
-          (a, b) =>
-            (b.droppedAt?.getTime() ?? 0) - (a.droppedAt?.getTime() ?? 0),
-        ),
-    [filtered],
-  );
-
-  const isPending =
-    dropMutation.isPending ||
-    undropMutation.isPending ||
-    clearMutation.isPending;
-
-  const handleDrop = (name: string) => {
-    showConfirm({
-      title: `Drop "${name}"?`,
-      text: 'Future events will be blocked. Historical data will be deleted from ClickHouse (async, best-effort). Session and profile data are not affected. Deleted history is not restored on undrop.',
-      confirmVariant: 'destructive',
-      onConfirm: () => dropMutation.mutate({ projectId, name }),
+  const rows = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const filtered = all.filter((e) => {
+      if (highVolume) {
+        if (
+          category(e) !== 'unused' ||
+          (e.pctOfProject ?? 0) < HIGH_VOLUME_PCT
+        ) {
+          return false;
+        }
+      } else if (filter !== 'all' && category(e) !== filter) {
+        return false;
+      }
+      return !needle || e.name.toLowerCase().includes(needle);
     });
-  };
-
-  const handleUndrop = (name: string) => {
-    showConfirm({
-      title: `Undrop "${name}"?`,
-      text: 'Future events with this name will be ingested again. Previously deleted historical data will not be restored.',
-      confirmVariant: 'destructive',
-      onConfirm: () => undropMutation.mutate({ projectId, name }),
+    return filtered.sort((a, b) => {
+      const av = sortValue(a, sort.key);
+      const bv = sortValue(b, sort.key);
+      const diff =
+        typeof av === 'string'
+          ? av.localeCompare(bv as string)
+          : av - (bv as number);
+      return diff * sort.dir;
     });
+  }, [all, filter, highVolume, search, sort]);
+
+  const onSort = (key: SortKey) => {
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === 1 ? -1 : 1 }
+        : { key, dir: key === 'name' ? 1 : -1 }
+    );
   };
 
-  const handleClear = (name: string) => {
-    clearMutation.mutate({ projectId, name });
-  };
+  const lastAction = auditQuery.data?.[0];
+  const visible = rows.slice(0, limit);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h3 className="text-lg font-medium">Event Management</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Drop events to block future ingestion and delete historical data.
+          Drop sends new events to a 24 h holding topic instead of ClickHouse.
+          Past data is never deleted.
         </p>
       </div>
 
-      <div className="relative max-w-sm">
-        <Input
-          placeholder="Search events..."
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setActivePage(0);
-            setDroppedPage(0);
-          }}
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => {
-              setSearch('');
-              setActivePage(0);
-              setDroppedPage(0);
-            }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm p-1 text-muted-foreground hover:text-foreground"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        )}
-      </div>
+      <Stats data={eventsQuery.data} />
 
-      {eventsQuery.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading events...</p>
-      ) : search.trim() ? (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            {filtered.length} result{filtered.length !== 1 ? 's' : ''} for
-            &quot;{search}&quot;
-          </p>
-          <EventTable
-            rows={filtered}
-            page={activePage}
-            setPage={setActivePage}
-            isPending={isPending}
-            onDrop={handleDrop}
-            onUndrop={handleUndrop}
-            onClear={handleClear}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'events' | 'audit')}>
+        <TabsList>
+          <TabsTrigger value="events">Events</TabsTrigger>
+          <TabsTrigger value="audit">Audit log</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="events" className="mt-4 space-y-3">
+          {lastAction && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Last action</span>
+              <span>
+                {dateTime(lastAction.createdAt)} · {lastAction.actor} ·{' '}
+                <b className="font-medium">
+                  {ACTION_LABEL[lastAction.action]}
+                </b>{' '}
+                <span className="font-mono">{lastAction.eventName}</span>
+              </span>
+              <span className="text-muted-foreground">
+                via <SourceCell row={lastAction} />
+              </span>
+              <button
+                type="button"
+                className="ml-auto text-blue-500 hover:underline"
+                onClick={() => setTab('audit')}
+              >
+                Audit log →
+              </button>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="relative flex h-9 w-full max-w-xs items-center">
+              <SearchIcon className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
+              <input
+                className="h-9 w-full rounded-md border bg-card pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Search events"
+                aria-label="Search events"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setLimit(PAGE_SIZE);
+                }}
+              />
+            </label>
+            <div className="flex overflow-hidden rounded-md border">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  className={cn(
+                    'border-r px-3 py-1.5 text-sm last:border-r-0',
+                    !highVolume && filter === f.key
+                      ? 'bg-def-200 font-medium text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                  onClick={() => {
+                    setFilter(f.key);
+                    setHighVolume(false);
+                    setLimit(PAGE_SIZE);
+                  }}
+                >
+                  {f.label}{' '}
+                  <span className="text-xs tabular-nums opacity-70">
+                    {counts[f.key]}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              title="Not used and at least 0.5% of this project's volume"
+              className={cn(
+                'rounded-full border border-dashed px-3 py-1.5 text-sm',
+                highVolume
+                  ? 'border-solid bg-def-200 text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+              onClick={() => {
+                setHighVolume((v) => !v);
+                setFilter('all');
+                setLimit(PAGE_SIZE);
+              }}
+            >
+              Not used + high volume
+            </button>
+          </div>
+
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full min-w-[1080px] text-sm">
+              <thead>
+                <tr className="border-b bg-def-100 text-xs text-muted-foreground">
+                  <SortHeader
+                    label="Event"
+                    sortKey="name"
+                    sort={sort}
+                    onSort={onSort}
+                    align="left"
+                  />
+                  <SortHeader
+                    label="Volume 1d"
+                    sortKey="volume1d"
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                  <SortHeader
+                    label="7d"
+                    sortKey="volume7d"
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                  <SortHeader
+                    label="30d"
+                    sortKey="volume30d"
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                  <th className="px-3 py-2 text-left font-medium">Trend 30d</th>
+                  <SortHeader
+                    label="% of project"
+                    sortKey="pct"
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                  <th className="px-3 py-2 text-left font-medium">Last seen</th>
+                  <SortHeader
+                    label="Used in"
+                    sortKey="used"
+                    sort={sort}
+                    onSort={onSort}
+                    align="left"
+                  />
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-right font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {eventsQuery.isLoading && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                      Loading events…
+                    </td>
+                  </tr>
+                )}
+                {!eventsQuery.isLoading && visible.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                      No events match.
+                    </td>
+                  </tr>
+                )}
+                {visible.map((event) => (
+                  <tr key={event.name} className="border-b last:border-0">
+                    <td className="max-w-[300px] px-3 py-2.5">
+                      <div className="break-words font-mono text-[13px]" title={event.name}>
+                        {event.name}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {shortCount(event.volume1d)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                      {shortCount(event.volume7d)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                      {shortCount(event.volume30d)}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <Sparkline
+                        values={event.trend30d}
+                        dropped={event.status === 'dropped'}
+                      />
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {formatPct(event.pctOfProject)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs">
+                      {event.status === 'dropped' ? (
+                        dateTime(event.droppedAt)
+                      ) : (
+                        <span className="text-muted-foreground">
+                          {timeAgo(event.lastSeen)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {event.usageCount > 0 ? (
+                        <button
+                          type="button"
+                          className="whitespace-nowrap text-blue-500 hover:underline"
+                          onClick={() => setUsedFor(event)}
+                        >
+                          {places(event.usageCount)}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <StatusBadge status={event.status} />
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <ActionCell
+                        event={event}
+                        onDrop={setDropFor}
+                        onUndrop={setUndropFor}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+            <span>
+              Showing {visible.length.toLocaleString('en-IN')} of{' '}
+              {rows.length.toLocaleString('en-IN')} events.
+              {eventsQuery.data && !eventsQuery.data.volumeAvailable &&
+                ' Volume is not available yet (event_name_daily is missing).'}
+            </span>
+            {rows.length > visible.length && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLimit((l) => l + PAGE_SIZE)}
+              >
+                Show {Math.min(PAGE_SIZE, rows.length - visible.length)} more
+              </Button>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="audit" className="mt-4">
+          <EventAuditLog
+            rows={auditQuery.data ?? []}
+            isLoading={auditQuery.isLoading}
           />
-        </div>
-      ) : (
-        <Tabs defaultValue="active">
-          <TabsList>
-            <TabsTrigger value="active">
-              Active ({activeRows.length})
-            </TabsTrigger>
-            <TabsTrigger value="dropped">
-              Dropped ({droppedRows.length})
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="active" className="mt-4 space-y-4">
-            <EventTable
-              rows={activeRows}
-              page={activePage}
-              setPage={setActivePage}
-              isPending={isPending}
-              onDrop={handleDrop}
-              onUndrop={handleUndrop}
-              onClear={handleClear}
-            />
-          </TabsContent>
-          <TabsContent value="dropped" className="mt-4 space-y-4">
-            <EventTable
-              rows={droppedRows}
-              page={droppedPage}
-              setPage={setDroppedPage}
-              isPending={isPending}
-              onDrop={handleDrop}
-              onUndrop={handleUndrop}
-              onClear={handleClear}
-            />
-          </TabsContent>
-        </Tabs>
+        </TabsContent>
+      </Tabs>
+
+      <UsedInSheet event={usedFor} onClose={() => setUsedFor(null)} />
+      {dropFor && (
+        <DropDialog
+          key={dropFor.name}
+          event={dropFor}
+          isPending={dropMutation.isPending}
+          onCancel={() => setDropFor(null)}
+          onConfirm={({ confirmName, reason }) =>
+            dropMutation.mutate({
+              projectId,
+              name: dropFor.name,
+              confirmName,
+              reason,
+            })
+          }
+        />
+      )}
+      {undropFor && (
+        <UndropDialog
+          key={undropFor.name}
+          event={undropFor}
+          isPending={undropMutation.isPending}
+          onCancel={() => setUndropFor(null)}
+          onConfirm={({ replay }) =>
+            undropMutation.mutate({
+              projectId,
+              name: undropFor.name,
+              confirmName: undropFor.name,
+              replay,
+            })
+          }
+        />
       )}
     </div>
   );

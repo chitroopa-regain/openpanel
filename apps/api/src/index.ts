@@ -41,6 +41,7 @@ import exportRouter from './routes/export.router';
 import importRouter from './routes/import.router';
 import insightsRouter from './routes/insights.router';
 import liveRouter from './routes/live.router';
+import eventDropRouter from './routes/event-drop.router';
 import manageRouter from './routes/manage.router';
 import miscRouter from './routes/misc.router';
 import oauthRouter from './routes/oauth-callback.router';
@@ -210,6 +211,7 @@ const startServer = async () => {
       instance.register(insightsRouter, { prefix: '/insights' });
       instance.register(trackRouter, { prefix: '/track' });
       instance.register(manageRouter, { prefix: '/manage' });
+      instance.register(eventDropRouter, { prefix: '/manage' });
       // Keep existing endpoints for backward compatibility
       instance.get('/healthcheck', healthcheck);
       // New Kubernetes-style health endpoints
