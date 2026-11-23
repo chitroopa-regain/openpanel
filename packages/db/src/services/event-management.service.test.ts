@@ -425,7 +425,7 @@ describe('listManagedEvents', () => {
     try {
       mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
         if (query.includes('event_name_rollup_days')) {
-          return chResult([{ day: null }]);
+          return chResult([]);
         }
         if (query.includes('event_name_daily')) {
           return chResult([
@@ -455,7 +455,7 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
 
   it('23:59 IST is still the 23rd; 00:01 IST is the 24th', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) =>
-      chResult(query.includes('event_name_rollup_days') ? [{ day: null }] : [])
+      chResult([])
     );
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
@@ -476,7 +476,7 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
   it('anchors 1d/7d/30d and the trend on the newest finished day', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_rollup_days')) {
-        return chResult([{ day: '2026-11-21' }]);
+        return chResult([{ day: '2026-11-21' }, { day: '2026-11-15' }]);
       }
       return chResult([
         { name: 'A', v1: 10, v7: 70, v30: 300, last_seen_ts: 0, computed_ms: 0, daily: [['2026-11-21', 10], ['2026-11-15', 9]] },
@@ -493,6 +493,29 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
     expect(rollup()).toContain('pass >= 1 AND running = 0');
   });
 
+  it('7d/30d leave out days that are not finished (e.g. a recount still running)', async () => {
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) =>
+      // 22 Nov is being recounted (running = 1), so the query does not return it.
+      chResult(query.includes('event_name_rollup_days') ? [{ day: '2026-11-21' }, { day: '2026-11-19' }] : [])
+    );
+    await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
+    expect(daily()).toContain("AND day IN (toDate('2026-11-21'), toDate('2026-11-19'))) AS v7");
+    expect(daily()).toContain("AND day IN (toDate('2026-11-21'), toDate('2026-11-19'))) AS v30");
+    expect(daily()).toContain("sumIf(e, day = toDate('2026-11-21')) AS v1");
+  });
+
+  it('any other rollup_days error shows "—" instead of unfinished numbers', async () => {
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes('event_name_rollup_days')) {
+        throw new Error('Timeout exceeded: elapsed 30000 ms');
+      }
+      return chResult([{ name: 'A', v1: 5, v7: 5, v30: 5, last_seen_ts: 0, computed_ms: 0, daily: [] }]);
+    });
+    const result = await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
+    expect(result).toMatchObject({ available: false, volumeDay: null });
+    expect(daily()).toBeUndefined();
+  });
+
   it('falls back to yesterday (IST) when the rollup_days table is missing', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_rollup_days')) {
@@ -502,6 +525,8 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
     });
     const result = await getEventVolumes('regain-app', new Date('2026-11-23T18:31:00Z'));
     expect(result).toMatchObject({ available: true, volumeDay: '2026-11-23', partial: false });
+    // Every day up to yesterday counts: no finished-day filter.
+    expect(daily()).not.toContain('day IN');
   });
 });
 

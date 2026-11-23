@@ -123,26 +123,35 @@ export function volumeToday(now: Date = new Date()): string {
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+const UNKNOWN_TABLE = /UNKNOWN_TABLE|Code: 60\b/;
+
 /**
- * The newest day the rollup finished before today, or null when none is.
- * A missing rollup_days table (older rollup) falls back to yesterday.
+ * Finished rollup days before today within the 30-day window, newest first;
+ * [] when none is finished yet. Only a missing rollup_days table (an older
+ * rollup) gives null: then every day up to yesterday counts. Any other
+ * error is thrown, so the page shows "—" rather than unfinished numbers.
  */
-async function getFinishedVolumeDay(today: string): Promise<string | null> {
+async function getFinishedVolumeDays(today: string): Promise<string[] | null> {
+  const t = sqlstring.escape(today);
   try {
     const res = await ch.query({
       query: `
-        SELECT toString(maxOrNull(day)) AS day
+        SELECT toString(day) AS day
         FROM ${EVENT_NAME_ROLLUP_DAYS_TABLE} FINAL
-        WHERE pass >= 1 AND running = 0 AND day < toDate(${sqlstring.escape(today)})`,
+        WHERE pass >= 1 AND running = 0
+          AND day < toDate(${t}) AND day >= toDate(${t}) - ${TREND_DAYS}
+        ORDER BY day DESC`,
       format: 'JSONEachRow',
     });
-    const [row] = await res.json<{ day: string | null }>();
-    return row?.day && ISO_DAY.test(row.day) ? row.day : null;
+    const rows = await res.json<{ day: string }>();
+    return rows.map((row) => row.day).filter((day) => ISO_DAY.test(day));
   } catch (error) {
-    logger.warn('event_name_rollup_days unavailable; volume 1d = yesterday', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return addDays(today, -1);
+    const message = error instanceof Error ? error.message : String(error);
+    if (UNKNOWN_TABLE.test(message)) {
+      logger.warn('event_name_rollup_days missing; volume 1d = yesterday', { error: message });
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -164,16 +173,23 @@ export async function getEventVolumes(
   rows: Map<string, VolumeRow>;
 }> {
   const today = volumeToday(now);
-  const finished = await getFinishedVolumeDay(today);
-  const partial = finished === null;
-  const anchor = finished ?? today;
-  const a = sqlstring.escape(anchor);
-  const query = `
+  try {
+    const finishedDays = await getFinishedVolumeDays(today);
+    // null: no rollup_days table, count every day up to yesterday.
+    const anchor = finishedDays === null ? addDays(today, -1) : (finishedDays[0] ?? today);
+    const partial = finishedDays !== null && finishedDays.length === 0;
+    const a = sqlstring.escape(anchor);
+    // 7d/30d sum finished days only (a day being recounted is left out).
+    const finishedOnly =
+      finishedDays === null || partial
+        ? ''
+        : ` AND day IN (${finishedDays.map((day) => `toDate(${sqlstring.escape(day)})`).join(', ')})`;
+    const query = `
     SELECT
       name,
       sumIf(e, day = toDate(${a})) AS v1,
-      sumIf(e, day > toDate(${a}) - 7 AND day <= toDate(${a})) AS v7,
-      sumIf(e, day > toDate(${a}) - 30 AND day <= toDate(${a})) AS v30,
+      sumIf(e, day > toDate(${a}) - 7 AND day <= toDate(${a})${finishedOnly}) AS v7,
+      sumIf(e, day > toDate(${a}) - 30 AND day <= toDate(${a})${finishedOnly}) AS v30,
       max(ls) AS last_seen_ts,
       maxIf(ca, day = toDate(${a})) AS computed_ms,
       groupArray((toString(day), e)) AS daily
@@ -187,7 +203,6 @@ export async function getEventVolumes(
       GROUP BY name, day
     )
     GROUP BY name`;
-  try {
     const res = await ch.query({ query, format: 'JSONEachRow' });
     const data = await res.json<{
       name: string;
