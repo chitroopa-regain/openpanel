@@ -19,6 +19,7 @@ import {
   EventDropError,
   MANAGED_EVENT_FILTERS,
   dropManagedEvent,
+  getDropNotes,
   listEventDropAudit,
   listManagedEvents,
   recordResourceView,
@@ -27,6 +28,7 @@ import {
 } from '@openpanel/db';
 import {
   zChartEventFilter,
+  zDateConfig,
   zRange,
   zTimeInterval,
 } from '@openpanel/validation';
@@ -446,6 +448,24 @@ export const eventRouter = createTRPCRouter({
         undropManagedEvent({ ...input, source: 'UI' })
       );
     }),
+
+  /**
+   * "Event dropped" notes for every report of a board (or one report), in one
+   * batched call. Input dates are the board/editor override.
+   */
+  dropNotes: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        dashboardId: z.string().optional(),
+        reportId: z.string().uuid().optional(),
+        range: zRange.nullish(),
+        startDate: z.string().nullish(),
+        endDate: z.string().nullish(),
+        dateConfig: zDateConfig.nullish(),
+      })
+    )
+    .query(async ({ input }) => getDropNotes(input)),
 
   /** Board/report opened: feeds "last viewed" and active/idle on the Events page. */
   recordView: protectedProcedure

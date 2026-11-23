@@ -1,4 +1,5 @@
 import { timeWindows } from '@openpanel/constants';
+import { DropNoteBanner, useDropNotes } from '@/components/report/drop-notes';
 import { useRouter } from '@tanstack/react-router';
 import { CopyIcon, MoreHorizontal, PlusIcon, Trash } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -475,6 +476,7 @@ export function ReportItem({
 }) {
   const router = useRouter();
   const chartRange = report.range;
+  const dropNotes = useDropNotes(report.id);
 
   const navigateToReport = (newTab: boolean) => {
     if (newTab) {
@@ -608,6 +610,15 @@ export function ReportItem({
           </DropdownMenu>
         </div>
       </div>
+      {dropNotes.length > 0 && (
+        <div className="px-4 pt-3">
+          <DropNoteBanner
+            notes={dropNotes}
+            organizationId={organizationId}
+            projectId={projectId}
+          />
+        </div>
+      )}
       <div
         className={cn(
           // No overflow-auto — let the chart's ResponsiveContainer size itself

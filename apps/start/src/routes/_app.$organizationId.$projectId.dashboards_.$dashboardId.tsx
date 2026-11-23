@@ -35,6 +35,7 @@ import {
   ReportItemSkeleton,
   type DropTarget,
 } from '@/components/report/report-item';
+import { DropNotesProvider } from '@/components/report/drop-notes';
 import { useRecordView } from '@/hooks/use-record-view';
 import { handleErrorToastOptions, useTRPC } from '@/integrations/trpc/react';
 import { pushModal, showConfirm } from '@/modals';
@@ -142,6 +143,20 @@ function Component() {
   const [dashboardDateConfig, setDashboardDateConfig] = useState<
     IDateConfig | undefined
   >(undefined);
+  // One batched query for the "event dropped" notes of every report on the board.
+  const dropNotesQuery = useQuery(
+    trpc.event.dropNotes.queryOptions(
+      {
+        projectId,
+        dashboardId,
+        range: dashboardRange,
+        startDate: dashboardStartDate,
+        endDate: dashboardEndDate,
+        dateConfig: dashboardDateConfig,
+      },
+      { staleTime: 60 * 1000 }
+    )
+  );
 
   const savedDashboardFilter = useMemo(
     () => ({
@@ -756,6 +771,7 @@ function Component() {
           <ReportItemSkeleton />
         </div>
       ) : (
+        <DropNotesProvider value={dropNotesQuery.data ?? {}}>
         <GrafanaGrid
           transitions={enableTransitions}
           layouts={layouts}
@@ -801,6 +817,7 @@ function Component() {
             );
           })}
         </GrafanaGrid>
+        </DropNotesProvider>
       )}
     </PageContainer>
   );

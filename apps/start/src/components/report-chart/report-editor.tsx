@@ -35,6 +35,7 @@ import {
 } from '@/components/report/reportSlice';
 import { ReportSidebar } from '@/components/report/sidebar/ReportSidebar';
 import { ReportChart } from '@/components/report-chart';
+import { ReportDropNotes } from '@/components/report/drop-notes';
 import {
   clearReportDraft,
   createReportDraftToken,
@@ -678,18 +679,28 @@ export default function ReportEditor({
                     <ReportDisplayMode />
                   </div>
                 )}
-                <ReportChart
-                  isEditMode
-                  options={{
-                    displayLayout: 'default',
-                    metricLayout:
-                      report.chartType === 'metric' &&
-                      report.breakdowns.length === 0
-                        ? 'hero'
-                        : 'compact',
-                  }}
-                  report={{ ...report, projectId }}
-                />
+                <ReportDropNotes
+                  reportId={'id' in report ? (report.id as string) : undefined}
+                  projectId={projectId}
+                  organizationId={organizationId}
+                  range={report.range}
+                  startDate={report.startDate}
+                  endDate={report.endDate}
+                  dateConfig={report.dateConfig}
+                >
+                  <ReportChart
+                    isEditMode
+                    options={{
+                      displayLayout: 'default',
+                      metricLayout:
+                        report.chartType === 'metric' &&
+                        report.breakdowns.length === 0
+                          ? 'hero'
+                          : 'compact',
+                    }}
+                    report={{ ...report, projectId }}
+                  />
+                </ReportDropNotes>
               </div>
             )}
           </div>

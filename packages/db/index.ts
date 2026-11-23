@@ -29,6 +29,8 @@ export * from './src/services/drop-events.service';
 export * from './src/services/event-drop-rules';
 export * from './src/services/event-usage';
 export * from './src/services/event-management.service';
+export * from './src/services/event-drop-notes';
+export * from './src/services/event-drop-notes.service';
 export * from './src/buffers';
 export * from './src/types';
 export * from './src/clickhouse/query-builder';

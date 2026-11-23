@@ -29,6 +29,7 @@ import {
 } from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
+import { dropMarkerLines, useDropNotes } from '@/components/report/drop-notes';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
 import { useDashedStroke } from '@/hooks/use-dashed-stroke';
@@ -70,6 +71,9 @@ export function Chart({ data }: Props) {
     isEditMode,
     options: { hideXAxis, hideYAxis },
   } = useReportChartContext();
+  const { report: chartReport, reportId: contextReportId } =
+    useReportChartContext();
+  const dropNotes = useDropNotes(chartReport.id ?? contextReportId);
   const trpc = useTRPC();
   const references = useQuery(
     trpc.reference.getChartReferences.queryOptions(
@@ -303,6 +307,7 @@ export function Chart({ data }: Props) {
                   x={ref.date.getTime()}
                 />
               ))}
+              {dropMarkerLines(dropNotes)}
               <YAxis {...yAxisProps} />
               <XAxis {...xAxisProps} />
               <Legend content={<CustomLegend />} />

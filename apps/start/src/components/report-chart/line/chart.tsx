@@ -28,6 +28,7 @@ import {
 } from '../common/report-series-screenshots';
 import { SerieIcon } from '../common/serie-icon';
 import { SerieName } from '../common/serie-name';
+import { dropMarkerLines, useDropNotes } from '@/components/report/drop-notes';
 import { useReportChartContext } from '../context';
 import { useReportDisplayVisibility } from '../display-mode';
 import { useDashedStroke } from '@/hooks/use-dashed-stroke';
@@ -69,6 +70,9 @@ export function Chart({ data }: Props) {
     isEditMode,
     options: { hideXAxis, hideYAxis, maxDomain },
   } = useReportChartContext();
+  const { report: chartReport, reportId: contextReportId } =
+    useReportChartContext();
+  const dropNotes = useDropNotes(chartReport.id ?? contextReportId);
   const dataLength = data.series[0]?.data?.length || 0;
   const trpc = useTRPC();
   const references = useQuery(
@@ -305,6 +309,7 @@ export function Chart({ data }: Props) {
                   x={ref.date.getTime()}
                 />
               ))}
+              {dropMarkerLines(dropNotes)}
               <YAxis
                 {...yAxisProps}
                 domain={maxDomain ? [0, maxDomain] : undefined}
