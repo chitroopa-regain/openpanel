@@ -13,9 +13,9 @@ import {
 import { generateId } from '@openpanel/common';
 import {
   type IServiceClientWithProject,
-  db,
   runWithAlsSession,
-  syncDroppedEventsToRedis,
+  DROPPED_SET_RESYNC_MS,
+  syncAllDroppedEventsToRedis,
 } from '@openpanel/db';
 import { getRedisCache, getRedisPub } from '@openpanel/redis';
 import type { AppRouter } from '@openpanel/trpc';
@@ -286,16 +286,14 @@ const startServer = async () => {
 
     await fastify.listen({ host, port });
 
-    // Rehydrate dropped-events Redis sets from Postgres.
-    // Runs on startup AND on every Redis reconnect (survives Redis restart/flush).
+    // Rehydrate dropped-events Redis sets from Postgres (the source of truth).
+    // Runs on startup, on every Redis reconnect (survives Redis restart/flush)
+    // and every minute, so a Redis write that timed out but landed late is
+    // corrected within DROPPED_SET_RESYNC_MS.
     const rehydrateDroppedEvents = () => {
-      db.project
-        .findMany({ select: { id: true } })
-        .then((projects) =>
-          Promise.all(projects.map((p) => syncDroppedEventsToRedis(p.id)))
-        )
-        .then((results) =>
-          logger.info(`Rehydrated dropped-events Redis sets for ${results.length} projects`)
+      syncAllDroppedEventsToRedis()
+        .then((count) =>
+          logger.debug(`Rehydrated dropped-events Redis sets for ${count} projects`)
         )
         .catch((err) =>
           logger.warn('Failed to rehydrate dropped-events Redis sets', err)
@@ -303,6 +301,7 @@ const startServer = async () => {
     };
     rehydrateDroppedEvents();
     getRedisCache().on('ready', rehydrateDroppedEvents);
+    setInterval(rehydrateDroppedEvents, DROPPED_SET_RESYNC_MS).unref();
 
     try {
       // Notify when keys expires

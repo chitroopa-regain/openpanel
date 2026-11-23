@@ -39,6 +39,7 @@ vi.mock('../logger', () => ({
 vi.mock('./drop-events.service', () => ({
   addDroppedEvent: mocks.addDroppedEvent,
   removeDroppedEvent: mocks.removeDroppedEvent,
+  projectDropLockKey: (projectId: string) => `event-drop-project:${projectId}`,
 }));
 vi.mock('./event.service', () => ({
   getEventMetasCached: { clear: mocks.clearMetas },

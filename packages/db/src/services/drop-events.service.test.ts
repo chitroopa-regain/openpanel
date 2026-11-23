@@ -5,14 +5,17 @@ const mocks = vi.hoisted(() => {
   multi.del.mockReturnValue(multi);
   multi.sadd.mockReturnValue(multi);
   const tx = { $executeRaw: vi.fn(), eventMeta: { findMany: vi.fn() } };
-  const db = { $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) };
+  const db = {
+    $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
+    project: { findMany: vi.fn() },
+  };
   return { multi, tx, db, redis: { multi: vi.fn(() => multi) } };
 });
 
 vi.mock('@openpanel/redis', () => ({ getRedisCache: () => mocks.redis }));
 vi.mock('../prisma-client', () => ({ db: mocks.db }));
 
-import { syncDroppedEventsToRedis } from './drop-events.service';
+import { syncAllDroppedEventsToRedis, syncDroppedEventsToRedis } from './drop-events.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,5 +51,14 @@ describe('syncDroppedEventsToRedis', () => {
     mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
     mocks.multi.exec.mockResolvedValue([[new Error('OOM'), null]]);
     await expect(syncDroppedEventsToRedis('p1')).rejects.toThrow('OOM');
+  });
+});
+
+describe('syncAllDroppedEventsToRedis (startup, reconnect and the 60 s safety resync)', () => {
+  it('resyncs every project from Postgres', async () => {
+    mocks.db.project.findMany.mockResolvedValue([{ id: 'p1' }, { id: 'p2' }]);
+    mocks.tx.eventMeta.findMany.mockResolvedValue([{ name: 'A' }]);
+    await expect(syncAllDroppedEventsToRedis()).resolves.toBe(2);
+    expect(mocks.multi.del.mock.calls).toEqual([['op:dropped:p1'], ['op:dropped:p2']]);
   });
 });

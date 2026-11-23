@@ -94,3 +94,18 @@ export async function syncDroppedEventsToRedis(projectId: string) {
     { timeout: SYNC_TX_TIMEOUT_MS, maxWait: SYNC_TX_TIMEOUT_MS },
   );
 }
+
+/**
+ * Redis writes cannot be cancelled: one that timed out (Redis slow or
+ * reconnecting) may still land after a newer action and leave the set out of
+ * step with Postgres. A periodic full resync bounds that to this interval.
+ */
+export const DROPPED_SET_RESYNC_MS = 60 * 1000;
+
+/** Resyncs every project's set; returns how many projects were synced. */
+export async function syncAllDroppedEventsToRedis(): Promise<number> {
+  const { db } = await import('../prisma-client');
+  const projects = await db.project.findMany({ select: { id: true } });
+  await Promise.all(projects.map((p) => syncDroppedEventsToRedis(p.id)));
+  return projects.length;
+}
