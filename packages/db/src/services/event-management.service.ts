@@ -7,6 +7,7 @@
  * stamp event_meta.droppedAt. ClickHouse history is never deleted. Undrop
  * only lets new events in again.
  */
+import { DateTime } from '@openpanel/common';
 import sqlstring from 'sqlstring';
 import { ch, TABLE_NAMES } from '../clickhouse/client';
 import { logger } from '../logger';
@@ -35,6 +36,10 @@ import {
 } from './event-usage';
 
 export const EVENT_NAME_DAILY_TABLE = 'event_name_daily';
+/** One row per day the regainapp rollup finished (pass >= 1, running = 0). */
+export const EVENT_NAME_ROLLUP_DAYS_TABLE = 'event_name_rollup_days';
+/** event_name_daily.day is a calendar day in this timezone (the rollup's). */
+export const VOLUME_TIMEZONE = 'Asia/Kolkata';
 const TREND_DAYS = 30;
 const VIEW_THROTTLE_MS = 10 * 60 * 1000;
 const SLACK_TIMEOUT_MS = 5000;
@@ -71,8 +76,15 @@ export type ManagedEvent = {
 export type ManagedEventsResult = {
   events: ManagedEvent[];
   volumeAvailable: boolean;
-  /** YYYY-MM-DD of the "1d" column (yesterday, the last full day) */
+  /**
+   * YYYY-MM-DD (IST) of the "1d" column: the newest day the rollup finished,
+   * or today when no day is finished yet (then volumeIsPartial).
+   */
   volumeDay: string | null;
+  /** No finished day yet: 1d is today so far, 7d/30d are null. */
+  volumeIsPartial: boolean;
+  /** Partial only: when today's count was last computed (ISO). */
+  volumeAsOf: string | null;
   totals: {
     events: number;
     volume1d: number | null;
@@ -84,8 +96,8 @@ export type ManagedEventsResult = {
 
 type VolumeRow = {
   volume1d: number;
-  volume7d: number;
-  volume30d: number;
+  volume7d: number | null;
+  volume30d: number | null;
   lastSeen: string | null;
   trend30d: number[];
 };
@@ -104,29 +116,74 @@ function addDays(day: string, delta: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** Today's date (YYYY-MM-DD) in the rollup's timezone. */
+export function volumeToday(now: Date = new Date()): string {
+  return DateTime.fromJSDate(now).setZone(VOLUME_TIMEZONE).toISODate()!;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
- * Reads the rollup built by the regainapp job. FINAL makes the sums right for
- * both SummingMergeTree and ReplacingMergeTree. A missing table (or any
- * ClickHouse error) gives `available: false` and the page shows "—".
+ * The newest day the rollup finished before today, or null when none is.
+ * A missing rollup_days table (older rollup) falls back to yesterday.
  */
-export async function getEventVolumes(projectId: string): Promise<{
+async function getFinishedVolumeDay(today: string): Promise<string | null> {
+  try {
+    const res = await ch.query({
+      query: `
+        SELECT toString(maxOrNull(day)) AS day
+        FROM ${EVENT_NAME_ROLLUP_DAYS_TABLE} FINAL
+        WHERE pass >= 1 AND running = 0 AND day < toDate(${sqlstring.escape(today)})`,
+      format: 'JSONEachRow',
+    });
+    const [row] = await res.json<{ day: string | null }>();
+    return row?.day && ISO_DAY.test(row.day) ? row.day : null;
+  } catch (error) {
+    logger.warn('event_name_rollup_days unavailable; volume 1d = yesterday', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return addDays(today, -1);
+  }
+}
+
+/**
+ * Reads the rollup built by the regainapp job, in IST days (its timezone; the
+ * ClickHouse server's today() is UTC, so it is never used). 1d/7d/30d end on
+ * the newest finished day; before any day is finished, 1d is today so far and
+ * 7d/30d are null. FINAL keeps only the newest rewrite of each row. A missing
+ * table (or any ClickHouse error) gives `available: false` and the page shows "—".
+ */
+export async function getEventVolumes(
+  projectId: string,
+  now: Date = new Date()
+): Promise<{
   available: boolean;
   volumeDay: string | null;
+  partial: boolean;
+  asOf: string | null;
   rows: Map<string, VolumeRow>;
 }> {
+  const today = volumeToday(now);
+  const finished = await getFinishedVolumeDay(today);
+  const partial = finished === null;
+  const anchor = finished ?? today;
+  const a = sqlstring.escape(anchor);
   const query = `
     SELECT
       name,
-      sumIf(e, day = today() - 1) AS v1,
-      sumIf(e, day >= today() - 7 AND day < today()) AS v7,
-      sumIf(e, day >= today() - 30 AND day < today()) AS v30,
+      sumIf(e, day = toDate(${a})) AS v1,
+      sumIf(e, day > toDate(${a}) - 7 AND day <= toDate(${a})) AS v7,
+      sumIf(e, day > toDate(${a}) - 30 AND day <= toDate(${a})) AS v30,
       max(ls) AS last_seen_ts,
-      groupArray((toString(day), e)) AS daily,
-      toString(today() - 1) AS volume_day
+      maxIf(ca, day = toDate(${a})) AS computed_ms,
+      groupArray((toString(day), e)) AS daily
     FROM (
-      SELECT name, day, toFloat64(sum(events)) AS e, toUnixTimestamp(max(last_seen)) AS ls
+      SELECT name, day, toFloat64(sum(events)) AS e,
+        toUnixTimestamp(max(last_seen)) AS ls,
+        toUnixTimestamp64Milli(max(computed_at)) AS ca
       FROM ${EVENT_NAME_DAILY_TABLE} FINAL
-      WHERE project_id = ${sqlstring.escape(projectId)} AND day >= today() - ${TREND_DAYS}
+      WHERE project_id = ${sqlstring.escape(projectId)}
+        AND day > toDate(${a}) - ${TREND_DAYS} AND day <= toDate(${a})
       GROUP BY name, day
     )
     GROUP BY name`;
@@ -138,34 +195,41 @@ export async function getEventVolumes(projectId: string): Promise<{
       v7: number;
       v30: number;
       last_seen_ts: number | string;
+      computed_ms: number | string;
       daily: [string, number][];
-      volume_day: string;
     }>();
     const rows = new Map<string, VolumeRow>();
-    let volumeDay: string | null = null;
+    let asOfMs = 0;
     for (const row of data) {
-      volumeDay = row.volume_day;
       const byDay = new Map(row.daily.map(([day, e]) => [day, Number(e)]));
       const trend30d: number[] = [];
       for (let i = TREND_DAYS - 1; i >= 0; i--) {
-        trend30d.push(byDay.get(addDays(row.volume_day, -i)) ?? 0);
+        trend30d.push(byDay.get(addDays(anchor, -i)) ?? 0);
       }
       const lastSeenTs = Number(row.last_seen_ts);
+      asOfMs = Math.max(asOfMs, Number(row.computed_ms) || 0);
       rows.set(row.name, {
         volume1d: Number(row.v1),
-        volume7d: Number(row.v7),
-        volume30d: Number(row.v30),
+        // 7d/30d count finished days only: none yet while partial.
+        volume7d: partial ? null : Number(row.v7),
+        volume30d: partial ? null : Number(row.v30),
         lastSeen: lastSeenTs > 0 ? new Date(lastSeenTs * 1000).toISOString() : null,
         trend30d,
       });
     }
-    return { available: true, volumeDay, rows };
+    return {
+      available: true,
+      volumeDay: anchor,
+      partial,
+      asOf: partial && asOfMs > 0 ? new Date(asOfMs).toISOString() : null,
+      rows,
+    };
   } catch (error) {
     logger.warn('event_name_daily unavailable; Events page shows no volume', {
       projectId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { available: false, volumeDay: null, rows: new Map() };
+    return { available: false, volumeDay: null, partial: false, asOf: null, rows: new Map() };
   }
 }
 
@@ -320,8 +384,10 @@ export async function listManagedEvents({
     all.push({
       name,
       volume1d,
-      volume7d: volumes.available ? (volume?.volume7d ?? 0) : null,
-      volume30d: volumes.available ? (volume?.volume30d ?? 0) : null,
+      volume7d:
+        volumes.available && !volumes.partial ? (volume?.volume7d ?? 0) : null,
+      volume30d:
+        volumes.available && !volumes.partial ? (volume?.volume30d ?? 0) : null,
       pctOfProject:
         volume1d === null || projectVolume1d === 0
           ? null
@@ -359,6 +425,8 @@ export async function listManagedEvents({
     events,
     volumeAvailable: volumes.available,
     volumeDay: volumes.volumeDay,
+    volumeIsPartial: volumes.partial,
+    volumeAsOf: volumes.asOf,
     totals: {
       events: all.length,
       volume1d: volumes.available ? projectVolume1d : null,

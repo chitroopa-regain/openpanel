@@ -25,17 +25,26 @@ dropped again at any time after an undrop.
 | `OPENPANEL_SLACK_WEBHOOK_URL` | optional | Slack incoming webhook for #analytics; unset = no post (audit `slackPosted` stays empty). |
 | `DASHBOARD_URL` | already set | Base of the board/report links in "Used in" and Slack. |
 
-Never print the token; keep it in the Maker vault / server env only.
+The admin token lives in Infisical, project `jitsu-ha`, environment `staging`. Never print it;
+keep it in Infisical / the server env only.
 
 ## Order
 
 1. Back up nothing extra: the migration only creates tables.
-2. Run Prisma migrations (`pnpm migrate:deploy` from the image / migrate job, as for any release).
+2. Apply the schema. **Production has no `_prisma_migrations` table (the api uses `prisma db push`),
+   so never run `migrate:deploy` / `prisma migrate deploy` there.** As done on 23 Nov 2026:
+   check what would change with `prisma migrate diff` (read-only, prod DB vs `schema.prisma`), then
+   apply `packages/db/prisma/migrations/20261123120000_event_drop_audit_views/migration.sql` with
+   `prisma db execute --file … --schema packages/db/prisma/schema.prisma`. It only creates tables.
 3. Deploy api (needs the new tables; the new routes 401 until the token is set).
 4. Deploy start (the page calls the new tRPC procedures).
 5. Set `OPENPANEL_ADMIN_API_TOKEN` and `OPENPANEL_SLACK_WEBHOOK_URL` on the api container, restart api.
 6. Volume columns read ClickHouse `event_name_daily` (built by the regainapp rollup job, read with
    `FINAL`). Until it exists the page shows "—" and works otherwise; no deploy order between the two.
+   Days are IST calendar days (the rollup's; ClickHouse `today()` is UTC and is not used). 1d/7d/30d
+   end on the newest day the rollup finished (`event_name_rollup_days`, `pass >= 1 AND running = 0`;
+   yesterday IST if that table is missing). Before any day is finished, 1d shows today so far and
+   7d/30d show "—".
 
 ## REST API
 

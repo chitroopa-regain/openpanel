@@ -4,7 +4,7 @@ import { handleError, useTRPC } from '@/integrations/trpc/react';
 import { cn } from '@/utils/cn';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LockIcon, SearchIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { EventAuditLog, SourceCell } from './event-management/event-audit-log';
 import {
@@ -17,6 +17,7 @@ import {
   ACTION_LABEL,
   dateTime,
   formatPct,
+  istTime,
   type ManagedEvent,
   type ManagedEventsData,
   places,
@@ -114,7 +115,7 @@ function SortHeader({
   onSort,
   align = 'right',
 }: {
-  label: string;
+  label: ReactNode;
   sortKey: SortKey;
   sort: { key: SortKey; dir: 1 | -1 };
   onSort: (key: SortKey) => void;
@@ -166,7 +167,11 @@ function Stats({ data }: { data: ManagedEventsData | undefined }) {
           {totals?.volume1d != null ? `${shortCount(totals.volume1d)}/day` : '—'}
         </div>
         <div className="text-sm text-muted-foreground">
-          volume{data?.volumeDay ? `, ${shortDate(data.volumeDay)}` : ''}
+          volume
+          {data?.volumeDay &&
+            (data.volumeIsPartial
+              ? ', today so far'
+              : `, ${shortDate(data.volumeDay)}`)}
         </div>
       </div>
       <div>
@@ -452,7 +457,17 @@ export default function EventDropManager({
                     align="left"
                   />
                   <SortHeader
-                    label="Volume 1d"
+                    label={
+                      <>
+                        Volume 1d
+                        {eventsQuery.data?.volumeDay &&
+                          !eventsQuery.data.volumeIsPartial && (
+                            <span className="ml-1 text-xs font-normal">
+                              · {shortDate(eventsQuery.data.volumeDay)}
+                            </span>
+                          )}
+                      </>
+                    }
                     sortKey="volume1d"
                     sort={sort}
                     onSort={onSort}
@@ -512,6 +527,19 @@ export default function EventDropManager({
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       {shortCount(event.volume1d)}
+                      {eventsQuery.data?.volumeIsPartial &&
+                        event.volume1d !== null && (
+                          <span
+                            className="ml-1 whitespace-nowrap text-xs text-muted-foreground"
+                            title={
+                              eventsQuery.data.volumeAsOf
+                                ? `as of ${istTime(eventsQuery.data.volumeAsOf)}`
+                                : undefined
+                            }
+                          >
+                            today so far
+                          </span>
+                        )}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
                       {shortCount(event.volume7d)}

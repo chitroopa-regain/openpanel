@@ -49,6 +49,7 @@ import { EventDropError } from './event-drop-rules';
 import {
   buildSlackText,
   dropManagedEvent,
+  getEventVolumes,
   listManagedEvents,
   recordResourceView,
   undropManagedEvent,
@@ -394,6 +395,9 @@ describe('listManagedEvents', () => {
 
   it('computes % of project and the "Not used + high volume" filter', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes('event_name_rollup_days')) {
+        return chResult([{ day: '2026-11-22' }]);
+      }
       if (query.includes('event_name_daily')) {
         return chResult([
           { name: 'Big Unused', v1: 900, v7: 6000, v30: 25000, last_seen_ts: 1763891000, daily: [['2026-11-22', 900]], volume_day: '2026-11-22' },
@@ -411,6 +415,93 @@ describe('listManagedEvents', () => {
     expect(result.events[0]!.trend30d!.at(-1)).toBe(900);
     expect(result.totals).toMatchObject({ events: 3, volume1d: 1000, unusedEvents: 2, unusedVolume1d: 904 });
     expect(result.counts.unused_high).toBe(1);
+    expect(result.volumeDay).toBe('2026-11-22');
+    expect(result.volumeIsPartial).toBe(false);
+  });
+
+  it('before any finished day: 1d is today so far, 7d/30d are "—", same 1d drives % and filters', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-23T06:00:00Z')); // 11:30 IST
+    try {
+      mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+        if (query.includes('event_name_rollup_days')) {
+          return chResult([{ day: null }]);
+        }
+        if (query.includes('event_name_daily')) {
+          return chResult([
+            { name: 'Big Unused', v1: 300, v7: 300, v30: 300, last_seen_ts: 0, computed_ms: Date.parse('2026-11-23T05:31:00Z'), daily: [['2026-11-23', 300]] },
+            { name: 'Home Page: Shown', v1: 100, v7: 100, v30: 100, last_seen_ts: 0, computed_ms: 0, daily: [['2026-11-23', 100]] },
+          ]);
+        }
+        return chResult([]);
+      });
+      const result = await listManagedEvents({ projectId: 'regain-app' });
+      expect(result.volumeIsPartial).toBe(true);
+      expect(result.volumeDay).toBe('2026-11-23');
+      expect(result.volumeAsOf).toBe('2026-11-23T05:31:00.000Z');
+      const big = result.events.find((e) => e.name === 'Big Unused')!;
+      expect(big).toMatchObject({ volume1d: 300, volume7d: null, volume30d: null, pctOfProject: 75 });
+      expect(big.trend30d!.at(-1)).toBe(300);
+      expect(result.totals.volume1d).toBe(400);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)', () => {
+  const daily = () => mocks.chQuery.mock.calls.map((c) => c[0].query as string).find((q) => q.includes('event_name_daily'))!;
+  const rollup = () => mocks.chQuery.mock.calls.map((c) => c[0].query as string).find((q) => q.includes('event_name_rollup_days'))!;
+
+  it('23:59 IST is still the 23rd; 00:01 IST is the 24th', async () => {
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) =>
+      chResult(query.includes('event_name_rollup_days') ? [{ day: null }] : [])
+    );
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-23T18:29:00Z')); // 23:59 IST
+      expect((await getEventVolumes('regain-app')).volumeDay).toBe('2026-11-23');
+      expect(rollup()).toContain("day < toDate('2026-11-23')");
+      mocks.chQuery.mockClear();
+      vi.setSystemTime(new Date('2026-11-23T18:31:00Z')); // 00:01 IST on the 24th, still the 23rd in UTC
+      expect((await getEventVolumes('regain-app')).volumeDay).toBe('2026-11-24');
+      expect(rollup()).toContain("day < toDate('2026-11-24')");
+      expect(daily()).not.toContain('today()');
+      expect(rollup()).not.toContain('today()');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('anchors 1d/7d/30d and the trend on the newest finished day', async () => {
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes('event_name_rollup_days')) {
+        return chResult([{ day: '2026-11-21' }]);
+      }
+      return chResult([
+        { name: 'A', v1: 10, v7: 70, v30: 300, last_seen_ts: 0, computed_ms: 0, daily: [['2026-11-21', 10], ['2026-11-15', 9]] },
+      ]);
+    });
+    const result = await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
+    expect(result).toMatchObject({ available: true, volumeDay: '2026-11-21', partial: false, asOf: null });
+    expect(result.rows.get('A')).toMatchObject({ volume1d: 10, volume7d: 70, volume30d: 300 });
+    expect(result.rows.get('A')!.trend30d.at(-1)).toBe(10);
+    expect(result.rows.get('A')!.trend30d.at(-7)).toBe(9);
+    expect(daily()).toContain("sumIf(e, day = toDate('2026-11-21'))");
+    expect(daily()).toContain("day > toDate('2026-11-21') - 7 AND day <= toDate('2026-11-21')");
+    expect(daily()).toContain('FINAL');
+    expect(rollup()).toContain('pass >= 1 AND running = 0');
+  });
+
+  it('falls back to yesterday (IST) when the rollup_days table is missing', async () => {
+    mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes('event_name_rollup_days')) {
+        throw new Error('Code: 60. DB::Exception: Table openpanel.event_name_rollup_days does not exist. (UNKNOWN_TABLE)');
+      }
+      return chResult([]);
+    });
+    const result = await getEventVolumes('regain-app', new Date('2026-11-23T18:31:00Z'));
+    expect(result).toMatchObject({ available: true, volumeDay: '2026-11-23', partial: false });
   });
 });
 

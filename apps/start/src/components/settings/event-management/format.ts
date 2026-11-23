@@ -48,12 +48,31 @@ export function formatPct(pct: number | null): string {
 }
 
 /** 23 Nov */
+const PLAIN_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 export function shortDate(iso: string | null | undefined): string {
   if (!iso) {
     return '—';
   }
+  // A plain day (the IST volume day) is a calendar date: never shift it
+  // through the browser's timezone.
+  const plain = PLAIN_DAY.exec(iso);
+  if (plain) {
+    return `${Number(plain[3])} ${MONTHS[Number(plain[2]) - 1]}`;
+  }
   const d = new Date(iso);
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/** "09:10 IST": the volume rollup's clock. */
+export function istTime(iso: string): string {
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
+  return `${time} IST`;
 }
 
 /** 23 Nov, 12:15 */
