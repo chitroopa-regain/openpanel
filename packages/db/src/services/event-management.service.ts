@@ -592,7 +592,12 @@ export async function undropManagedEvent(
     // A quick drop → undrop → drop again could overlap the previous replay's
     // grace period; start after it so no message is copied twice.
     const previous = await tx.eventReplayRequest.findFirst({
-      where: { projectId: project.id, eventName: input.name },
+      // A failed replay did not cover its window, so it does not count.
+      where: {
+        projectId: project.id,
+        eventName: input.name,
+        status: { not: 'failed' },
+      },
       orderBy: { toTs: 'desc' },
       select: { toTs: true },
     });

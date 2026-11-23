@@ -339,6 +339,10 @@ describe('undropManagedEvent', () => {
     const { fromTs, toTs } = db.eventReplayRequest.create.mock.calls[0]![0].data;
     expect(fromTs).toEqual(previousEnd);
     expect(toTs.getTime()).toBeGreaterThan(previousEnd.getTime());
+    // Failed earlier replays do not count as covered.
+    expect(db.eventReplayRequest.findFirst.mock.calls[0]![0].where).toMatchObject({
+      status: { not: 'failed' },
+    });
   });
 
   it('undrops without replay', async () => {
