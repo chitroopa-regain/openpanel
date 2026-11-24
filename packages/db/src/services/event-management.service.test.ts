@@ -400,7 +400,7 @@ describe('listManagedEvents', () => {
   it('computes % of project and the "Not used + high volume" filter', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_rollup_days')) {
-        return chResult([{ day: '2026-11-22' }]);
+        return chResult([{ day_iso: '2026-11-22' }]);
       }
       if (query.includes('event_name_daily')) {
         return chResult([
@@ -434,10 +434,10 @@ describe('listManagedEvents', () => {
     ]);
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_rollup_days')) {
-        return chResult([{ day: '2026-11-22' }]);
+        return chResult([{ day_iso: '2026-11-22' }]);
       }
       if (query.includes('(name, day) IN')) {
-        return chResult([{ name: 'Stamp Book: Card Shown', day: '2026-11-22', e: 227000 }]);
+        return chResult([{ name: 'Stamp Book: Card Shown', day_iso: '2026-11-22', e: 227000 }]);
       }
       return chResult([]);
     });
@@ -462,6 +462,11 @@ describe('listManagedEvents', () => {
         .find((q) => q.includes('(name, day) IN'))!;
       expect(beforeQuery).toContain("('Stamp Book: Card Shown', toDate('2026-11-22'))");
       expect(beforeQuery).toContain("('Legacy Drop', toDate('2026-04-07'))");
+      // ClickHouse resolves an alias before the column in WHERE: `toString(day) AS day`
+      // turned `day <= anchor` into String vs Date (NO_COMMON_TYPE, every volume "—").
+      for (const q of mocks.chQuery.mock.calls.map((c) => c[0].query as string)) {
+        expect(q).not.toMatch(/\bAS day\b/);
+      }
       expect(db.eventDropAudit.findMany.mock.calls[0]![0]).toMatchObject({
         where: { projectId: 'regain-app', action: { in: ['drop', 'drop_anyway'] } },
         orderBy: { createdAt: 'desc' },
@@ -537,7 +542,7 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
   it('anchors 1d/7d/30d and the trend on the newest finished day', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) => {
       if (query.includes('event_name_rollup_days')) {
-        return chResult([{ day: '2026-11-21' }, { day: '2026-11-15' }]);
+        return chResult([{ day_iso: '2026-11-21' }, { day_iso: '2026-11-15' }]);
       }
       return chResult([
         { name: 'A', v1: 10, v7: 70, v30: 300, last_seen_ts: 0, computed_ms: 0, daily: [['2026-11-21', 10], ['2026-11-15', 9]] },
@@ -559,7 +564,7 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
 
   it('an old newest finished day (rollup stalled) still anchors the windows, not "today so far"', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) =>
-      chResult(query.includes('event_name_rollup_days') ? [{ day: '2026-10-01' }, { day: '2026-09-20' }] : [])
+      chResult(query.includes('event_name_rollup_days') ? [{ day_iso: '2026-10-01' }, { day_iso: '2026-09-20' }] : [])
     );
     const result = await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
     expect(result).toMatchObject({ volumeDay: '2026-10-01', partial: false });
@@ -571,7 +576,7 @@ describe('getEventVolumes (IST days; ClickHouse today() is UTC and never used)',
   it('7d/30d leave out days that are not finished (e.g. a recount still running)', async () => {
     mocks.chQuery.mockImplementation(async ({ query }: { query: string }) =>
       // 22 Nov is being recounted (running = 1), so the query does not return it.
-      chResult(query.includes('event_name_rollup_days') ? [{ day: '2026-11-21' }, { day: '2026-11-19' }] : [])
+      chResult(query.includes('event_name_rollup_days') ? [{ day_iso: '2026-11-21' }, { day_iso: '2026-11-19' }] : [])
     );
     await getEventVolumes('regain-app', new Date('2026-11-23T06:00:00Z'));
     expect(daily()).toContain("AND day IN (toDate('2026-11-21'), toDate('2026-11-19'))) AS v7");

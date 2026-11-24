@@ -156,15 +156,15 @@ async function getFinishedVolumeDays(today: string): Promise<string[] | null> {
           FROM ${EVENT_NAME_ROLLUP_DAYS_TABLE} FINAL
           WHERE pass >= 1 AND running = 0 AND day < toDate(${t})
         ) AS anchor
-        SELECT toString(day) AS day
+        SELECT toString(day) AS day_iso
         FROM ${EVENT_NAME_ROLLUP_DAYS_TABLE} FINAL
         WHERE pass >= 1 AND running = 0
           AND day <= anchor AND day > anchor - ${TREND_DAYS}
         ORDER BY day DESC`,
       format: 'JSONEachRow',
     });
-    const rows = await res.json<{ day: string }>();
-    return rows.map((row) => row.day).filter((day) => ISO_DAY.test(day));
+    const rows = await res.json<{ day_iso: string }>();
+    return rows.map((row) => row.day_iso).filter((day) => ISO_DAY.test(day));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (UNKNOWN_TABLE.test(message)) {
@@ -404,14 +404,14 @@ async function getVolumesBeforeDrop(
   try {
     const res = await ch.query({
       query: `
-        SELECT name, toString(day) AS day, toFloat64(sum(events)) AS e
+        SELECT name, toString(day) AS day_iso, toFloat64(sum(events)) AS e
         FROM ${EVENT_NAME_DAILY_TABLE} FINAL
         WHERE project_id = ${sqlstring.escape(projectId)} AND (name, day) IN (${pairs})
         GROUP BY name, day`,
       format: 'JSONEachRow',
     });
-    for (const row of await res.json<{ name: string; day: string; e: number }>()) {
-      if (dayBefore.get(row.name) === row.day) {
+    for (const row of await res.json<{ name: string; day_iso: string; e: number }>()) {
+      if (dayBefore.get(row.name) === row.day_iso) {
         result.set(row.name, Number(row.e));
       }
     }
