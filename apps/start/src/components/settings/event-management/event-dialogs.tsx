@@ -123,9 +123,9 @@ export function UsedInSheet({
             )}
 
             <p className="text-sm text-muted-foreground">
-              Idle = board not viewed in 30 days. "Last viewed" is new
-              tracking, so it is empty (—) until recording starts; until then
-              active/idle uses last edited.
+              Idle = board not viewed in 30 days. "Last viewed" is new tracking,
+              so it is empty (—) until recording starts; until then active/idle
+              uses last edited.
             </p>
           </div>
         )}
@@ -197,6 +197,7 @@ export function DropDialog({
 }) {
   const [confirmName, setConfirmName] = useState('');
   const [reason, setReason] = useState('');
+  const locked = event.status === 'protected';
   const anyway = event.usageCount > 0;
   const groups = groupUsedIn(event.usedIn);
   const activeBoards = groups.filter((g) => g.board.active);
@@ -209,13 +210,29 @@ export function DropDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="leading-normal sm:max-w-[540px]" aria-describedby={undefined}>
+      <DialogContent
+        className="leading-normal sm:max-w-[540px]"
+        aria-describedby={undefined}
+      >
         <DialogHeader>
           <DialogTitle className="text-lg">
-            {anyway ? 'Drop anyway' : 'Drop'}{' '}
-            <span className="font-mono">"{event.name}"</span>?
+            Drop <span className="font-mono">"{event.name}"</span>?
           </DialogTitle>
         </DialogHeader>
+
+        {locked && (
+          <div className="flex gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">
+            <LockIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div>
+              <b className="text-destructive">
+                Locked: this event cannot be dropped.
+              </b>{' '}
+              Purchase, revenue, attribution, crash, A/B, paywall, onboarding
+              and session events are protected, because revenue, funnels and
+              experiments depend on them.
+            </div>
+          </div>
+        )}
 
         {anyway && activeBoards.length > 0 && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">
@@ -258,65 +275,78 @@ export function DropDialog({
           </div>
         )}
 
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>New events of this name stop being stored.</li>
-          <li>Events sent while dropped are not kept.</li>
-          <li>Past data stays. Nothing is deleted from ClickHouse.</li>
-          <li>
-            {slackConfigured
-              ? `Logged in the audit log and posted to Slack #analytics${anyway ? ' with the board names' : ''}.`
-              : 'Logged in the audit log. Slack posting is off.'}
-          </li>
-        </ul>
+        {!locked && (
+          <>
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              <li>New events of this name stop being stored.</li>
+              <li>Events sent while dropped are not kept.</li>
+              <li>Past data stays. Nothing is deleted from ClickHouse.</li>
+              <li>
+                {slackConfigured
+                  ? `Logged in the audit log and posted to Slack #analytics${anyway ? ' with the board names' : ''}.`
+                  : 'Logged in the audit log. Slack posting is off.'}
+              </li>
+            </ul>
 
-        <div className="space-y-2">
-          <label htmlFor="drop-confirm" className="text-sm text-muted-foreground">
-            Type <span className="font-mono text-foreground">{event.name}</span>{' '}
-            to confirm
-          </label>
-          <Input
-            id="drop-confirm"
-            className="font-mono"
-            autoComplete="off"
-            autoFocus
-            value={confirmName}
-            onChange={(e) => setConfirmName(e.target.value)}
-          />
-        </div>
+            <div className="space-y-2">
+              <label
+                htmlFor="drop-confirm"
+                className="text-sm text-muted-foreground"
+              >
+                Type{' '}
+                <span className="font-mono text-foreground">{event.name}</span>{' '}
+                to confirm
+              </label>
+              <Input
+                id="drop-confirm"
+                className="font-mono"
+                autoComplete="off"
+                autoFocus
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+              />
+            </div>
 
-        {anyway && (
-          <div className="space-y-2">
-            <label htmlFor="drop-reason" className="text-sm text-muted-foreground">
-              Reason
-            </label>
-            <Textarea
-              id="drop-reason"
-              rows={2}
-              placeholder="Why drop an event that boards use?"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </div>
+            {anyway && (
+              <div className="space-y-2">
+                <label
+                  htmlFor="drop-reason"
+                  className="text-sm text-muted-foreground"
+                >
+                  Reason
+                </label>
+                <Textarea
+                  id="drop-reason"
+                  rows={2}
+                  placeholder="Why drop an event that boards use?"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+              </div>
+            )}
+          </>
         )}
 
         <DialogFooter>
           <Button variant="outline" size="default" onClick={onCancel}>
-            Cancel
+            {locked ? 'Close' : 'Cancel'}
           </Button>
-          <Button
-            variant="destructive"
-            size="default"
-            disabled={!canSubmit}
-            loading={isPending}
-            onClick={() =>
-              onConfirm({
-                confirmName,
-                reason: reason.trim() || undefined,
-              })
-            }
-          >
-            {anyway ? 'Drop anyway' : 'Drop event'}
-          </Button>
+          {!locked && (
+            <Button
+              variant="destructive"
+              size="default"
+              disabled={!canSubmit}
+              loading={isPending}
+              onClick={() =>
+                onConfirm({
+                  confirmName,
+                  reason: reason.trim() || undefined,
+                })
+              }
+            >
+              {anyway ? 'Drop anyway' : 'Drop event'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -338,7 +368,10 @@ export function UndropDialog({
 }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="leading-normal sm:max-w-[540px]" aria-describedby={undefined}>
+      <DialogContent
+        className="leading-normal sm:max-w-[540px]"
+        aria-describedby={undefined}
+      >
         <DialogHeader>
           <DialogTitle className="text-lg">
             Undrop <span className="font-mono">"{event.name}"</span>?

@@ -3,8 +3,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { handleError, useTRPC } from '@/integrations/trpc/react';
 import { cn } from '@/utils/cn';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { LockIcon, SearchIcon } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { SearchIcon } from 'lucide-react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { EventAuditLog, SourceCell } from './event-management/event-audit-log';
 import {
@@ -40,9 +40,6 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'used', label: 'Used' },
   { key: 'protected', label: 'Protected' },
 ];
-
-const PROTECTED_TITLE =
-  'Protected: purchase, revenue, attribution, crash, A/B, paywall, onboarding and session events cannot be dropped';
 
 /** Category of an event that is not dropped (dropped ones have their own tab). */
 function category(e: ManagedEvent): Exclude<Filter, 'all'> {
@@ -163,7 +160,9 @@ function Stats({ data }: { data: ManagedEventsData | undefined }) {
       </div>
       <div>
         <div className="text-lg font-semibold tabular-nums">
-          {totals?.volume1d != null ? `${shortCount(totals.volume1d)}/day` : '—'}
+          {totals?.volume1d != null
+            ? `${shortCount(totals.volume1d)}/day`
+            : '—'}
         </div>
         <div className="text-sm text-muted-foreground">
           volume
@@ -204,28 +203,7 @@ function ActionCell({
       </Button>
     );
   }
-  if (event.status === 'protected') {
-    return (
-      <span
-        className="inline-flex items-center gap-1 whitespace-nowrap text-sm text-muted-foreground"
-        title={PROTECTED_TITLE}
-      >
-        <LockIcon className="size-3" /> Locked
-      </span>
-    );
-  }
-  if (event.usageCount > 0) {
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        className="whitespace-nowrap border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
-        onClick={() => onDrop(event)}
-      >
-        Drop anyway
-      </Button>
-    );
-  }
+  // One Drop button for every event; the dialog warns when it is locked or used.
   return (
     <Button variant="destructive" size="sm" onClick={() => onDrop(event)}>
       Drop
@@ -235,12 +213,14 @@ function ActionCell({
 
 function DroppedEventsTable({
   events,
+  searching,
   timezone,
   isLoading,
   onUndrop,
   onUsedIn,
 }: {
   events: ManagedEvent[];
+  searching: boolean;
   timezone: string;
   isLoading: boolean;
   onUndrop: (e: ManagedEvent) => void;
@@ -265,15 +245,25 @@ function DroppedEventsTable({
         <tbody>
           {events.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
-                {isLoading ? 'Loading events…' : 'No events are dropped.'}
+              <td
+                colSpan={7}
+                className="px-3 py-6 text-center text-muted-foreground"
+              >
+                {isLoading
+                  ? 'Loading events…'
+                  : searching
+                    ? 'No dropped events match.'
+                    : 'No events are dropped.'}
               </td>
             </tr>
           )}
           {events.map((event) => (
             <tr key={event.name} className="border-b align-top last:border-0">
               <td className="max-w-[300px] px-3 py-2.5">
-                <div className="break-words font-mono text-[13px]" title={event.name}>
+                <div
+                  className="break-words font-mono text-[13px]"
+                  title={event.name}
+                >
                   {event.name}
                 </div>
               </td>
@@ -318,7 +308,11 @@ function DroppedEventsTable({
                 {shortCount(event.volumeBeforeDrop)}
               </td>
               <td className="px-3 py-2.5 text-right">
-                <Button variant="outline" size="sm" onClick={() => onUndrop(event)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onUndrop(event)}
+                >
                   Undrop
                 </Button>
               </td>
@@ -375,7 +369,9 @@ export default function EventDropManager({
       (old) =>
         old && {
           ...old,
-          events: old.events.map((e) => (e.name === name ? { ...e, ...patch } : e)),
+          events: old.events.map((e) =>
+            e.name === name ? { ...e, ...patch } : e
+          ),
         }
     );
   };
@@ -399,10 +395,16 @@ export default function EventDropManager({
         patchEvent(result.name, {
           status: 'dropped',
           droppedAt: result.droppedAt,
-          dropInfo: { source: 'UI', requestedBy: null, reason: variables.reason ?? null },
+          dropInfo: {
+            source: 'UI',
+            requestedBy: null,
+            reason: variables.reason ?? null,
+          },
         });
         invalidate();
-        toast(`Dropped "${result.name}". Events sent while dropped are not kept.`);
+        toast(
+          `Dropped "${result.name}". Events sent while dropped are not kept.`
+        );
       },
       onError: handleError,
     })
@@ -450,8 +452,8 @@ export default function EventDropManager({
     return c;
   }, [all]);
 
+  const needle = search.trim().toLowerCase();
   const rows = useMemo(() => {
-    const needle = search.trim().toLowerCase();
     const filtered = all.filter((e) => {
       if (highVolume) {
         if (
@@ -474,7 +476,7 @@ export default function EventDropManager({
           : av - (bv as number);
       return diff * sort.dir;
     });
-  }, [all, filter, highVolume, search, sort]);
+  }, [all, filter, highVolume, needle, sort]);
 
   const onSort = (key: SortKey) => {
     setSort((s) =>
@@ -483,6 +485,64 @@ export default function EventDropManager({
         : { key, dir: key === 'name' ? 1 : -1 }
     );
   };
+
+  const droppedMatches = useMemo(
+    () =>
+      needle
+        ? dropped.filter((e) => e.name.toLowerCase().includes(needle))
+        : dropped,
+    [dropped, needle]
+  );
+  // A search that only matches dropped events opens the Dropped events tab
+  // (and back): the event is not hidden, it is on the other tab.
+  const eventsMatchCount = useMemo(
+    () =>
+      needle
+        ? all.filter((e) => e.name.toLowerCase().includes(needle)).length
+        : all.length,
+    [all, needle]
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new search switches tabs, so a click on the other tab sticks
+  useEffect(() => {
+    if (!needle) {
+      return;
+    }
+    if (
+      tab === 'events' &&
+      eventsMatchCount === 0 &&
+      droppedMatches.length > 0
+    ) {
+      setTab('dropped');
+    } else if (
+      tab === 'dropped' &&
+      droppedMatches.length === 0 &&
+      eventsMatchCount > 0
+    ) {
+      setTab('events');
+    }
+  }, [needle, eventsQuery.data]);
+
+  const searchBox = (
+    <label className="relative flex h-9 w-full max-w-xs items-center">
+      <SearchIcon className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
+      <input
+        className="h-9 w-full rounded-md border bg-card pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+        placeholder="Search events"
+        aria-label="Search events"
+        // The box is drawn on two tabs: keep typing after a search switches tab.
+        autoFocus={needle.length > 0}
+        onFocus={(e) => {
+          const end = e.currentTarget.value.length;
+          e.currentTarget.setSelectionRange(end, end);
+        }}
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setLimit(PAGE_SIZE);
+        }}
+      />
+    </label>
+  );
 
   const lastAction = auditQuery.data?.[0];
   const visible = rows.slice(0, limit);
@@ -501,16 +561,18 @@ export default function EventDropManager({
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as EventManagerTab)}>
         <TabsList>
+          <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="dropped">
             Dropped events{eventsQuery.data ? ` (${dropped.length})` : ''}
           </TabsTrigger>
-          <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="audit">Audit log</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="dropped" className="mt-4">
+        <TabsContent value="dropped" className="mt-4 space-y-3">
+          {searchBox}
           <DroppedEventsTable
-            events={dropped}
+            events={droppedMatches}
+            searching={needle.length > 0}
             timezone={eventsQuery.data?.timezone ?? 'UTC'}
             isLoading={eventsQuery.isLoading}
             onUndrop={setUndropFor}
@@ -524,9 +586,7 @@ export default function EventDropManager({
               <span className="text-muted-foreground">Last action</span>
               <span>
                 {dateTime(lastAction.createdAt)} · {lastAction.actor} ·{' '}
-                <b className="font-medium">
-                  {ACTION_LABEL[lastAction.action]}
-                </b>{' '}
+                <b className="font-medium">{ACTION_LABEL[lastAction.action]}</b>{' '}
                 <span className="font-mono">{lastAction.eventName}</span>
               </span>
               <span className="text-muted-foreground">
@@ -543,19 +603,7 @@ export default function EventDropManager({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-            <label className="relative flex h-9 w-full max-w-xs items-center">
-              <SearchIcon className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
-              <input
-                className="h-9 w-full rounded-md border bg-card pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Search events"
-                aria-label="Search events"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setLimit(PAGE_SIZE);
-                }}
-              />
-            </label>
+            {searchBox}
             <div className="flex overflow-hidden rounded-md border">
               {FILTERS.map((f) => (
                 <button
@@ -660,14 +708,20 @@ export default function EventDropManager({
               <tbody>
                 {eventsQuery.isLoading && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                    <td
+                      colSpan={10}
+                      className="px-3 py-6 text-center text-muted-foreground"
+                    >
                       Loading events…
                     </td>
                   </tr>
                 )}
                 {!eventsQuery.isLoading && visible.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                    <td
+                      colSpan={10}
+                      className="px-3 py-6 text-center text-muted-foreground"
+                    >
                       No events match.
                     </td>
                   </tr>
@@ -675,7 +729,10 @@ export default function EventDropManager({
                 {visible.map((event) => (
                   <tr key={event.name} className="border-b last:border-0">
                     <td className="max-w-[300px] px-3 py-2.5">
-                      <div className="break-words font-mono text-[13px]" title={event.name}>
+                      <div
+                        className="break-words font-mono text-[13px]"
+                        title={event.name}
+                      >
                         {event.name}
                       </div>
                     </td>
@@ -752,7 +809,8 @@ export default function EventDropManager({
             <span>
               Showing {visible.length.toLocaleString('en-IN')} of{' '}
               {rows.length.toLocaleString('en-IN')} events.
-              {eventsQuery.data && !eventsQuery.data.volumeAvailable &&
+              {eventsQuery.data &&
+                !eventsQuery.data.volumeAvailable &&
                 ' Volume is not available yet (event_name_daily is missing).'}
             </span>
             {rows.length > visible.length && (
