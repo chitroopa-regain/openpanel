@@ -54,6 +54,7 @@ export const MANAGED_EVENT_FILTERS = [
   'dropped',
   'protected',
   'unused_high',
+  'kept',
 ] as const;
 export type ManagedEventFilter = (typeof MANAGED_EVENT_FILTERS)[number];
 
@@ -80,7 +81,20 @@ export type ManagedEvent = {
   } | null;
   /** Dropped events: 1d volume of the IST day before the drop, if the rollup has it. */
   volumeBeforeDrop: number | null;
+  /**
+   * Marked Keep: used outside OpenPanel (a skill, raw SQL, a script), which
+   * "Used in" cannot see. Kept events are not counted as "not used".
+   */
+  keepInfo: {
+    note: string;
+    source: EventDropSource;
+    requestedBy: string | null;
+    keptAt: string;
+  } | null;
 };
+
+/** Keep notes are short labels, e.g. "read by the review-lookup skill". */
+export const KEEP_NOTE_MAX_LENGTH = 200;
 
 export type ManagedEventsResult = {
   events: ManagedEvent[];
@@ -368,13 +382,18 @@ function matchesFilter(event: ManagedEvent, filter: ManagedEventFilter) {
     case 'used':
       return event.status === 'active' && event.usageCount > 0;
     case 'unused':
-      return event.status === 'active' && event.usageCount === 0;
+      return (
+        event.status === 'active' && event.usageCount === 0 && !event.keepInfo
+      );
     case 'unused_high':
       return (
         event.status === 'active' &&
         event.usageCount === 0 &&
+        !event.keepInfo &&
         (event.pctOfProject ?? 0) >= HIGH_VOLUME_PCT
       );
+    case 'kept':
+      return event.status !== 'dropped' && Boolean(event.keepInfo);
   }
 }
 
@@ -447,6 +466,35 @@ async function getLatestDrops(projectId: string, names: string[]) {
   );
 }
 
+/** Latest keep/unkeep per event; an event is kept when that row is a keep. */
+async function getKeeps(projectId: string) {
+  const rows = await db.eventDropAudit.findMany({
+    where: { projectId, action: { in: ['keep', 'unkeep'] } },
+    orderBy: { createdAt: 'desc' },
+    distinct: ['eventName'],
+    select: {
+      eventName: true,
+      action: true,
+      reason: true,
+      source: true,
+      requestedBy: true,
+      createdAt: true,
+    },
+  });
+  const keeps = new Map<string, NonNullable<ManagedEvent['keepInfo']>>();
+  for (const row of rows) {
+    if (row.action === 'keep') {
+      keeps.set(row.eventName, {
+        note: row.reason ?? '',
+        source: row.source as EventDropSource,
+        requestedBy: row.requestedBy,
+        keptAt: row.createdAt.toISOString(),
+      });
+    }
+  }
+  return keeps;
+}
+
 export async function listManagedEvents({
   projectId,
   filter = 'all',
@@ -470,12 +518,13 @@ export async function listManagedEvents({
   const droppedAt = new Map(
     metas.filter((m) => m.droppedAt).map((m) => [m.name, m.droppedAt!])
   );
-  const [latestDrops, beforeDrop, settings] = await Promise.all([
+  const [latestDrops, beforeDrop, settings, keeps] = await Promise.all([
     getLatestDrops(projectId, [...droppedAt.keys()]),
     volumes.available
       ? getVolumesBeforeDrop(projectId, droppedAt)
       : Promise.resolve(new Map<string, number>()),
     getSettingsForProject(projectId),
+    getKeeps(projectId),
   ]);
   const names = new Set<string>([
     ...knownNames,
@@ -522,6 +571,7 @@ export async function listManagedEvents({
       droppedAt: dropped?.toISOString() ?? null,
       dropInfo: dropped ? (latestDrops.get(name) ?? null) : null,
       volumeBeforeDrop: dropped ? (beforeDrop.get(name) ?? null) : null,
+      keepInfo: keeps.get(name) ?? null,
     });
   }
 
@@ -814,6 +864,52 @@ export async function undropManagedEvent(
   };
 }
 
+/**
+ * Keep mark: an audit row with action 'keep' (the note is its reason) or
+ * 'unkeep'. Nothing else changes: ingest, Redis and drops are untouched.
+ */
+export async function setEventKeep(
+  input: Omit<EventActionInput, 'confirmName'> & {
+    keep: boolean;
+    note?: string | null;
+  }
+) {
+  assertActor({ ...input, confirmName: input.name });
+  const project = await getProjectOrThrow(input.projectId);
+  const note = input.note?.trim() ?? '';
+  if (input.keep && note.length === 0) {
+    throw new EventDropError(
+      'INVALID_INPUT',
+      'A note is required: say what uses this event (e.g. a skill or a query)'
+    );
+  }
+  if (note.length > KEEP_NOTE_MAX_LENGTH) {
+    throw new EventDropError(
+      'INVALID_INPUT',
+      `The note can be at most ${KEEP_NOTE_MAX_LENGTH} characters`
+    );
+  }
+  const audit = await db.eventDropAudit.create({
+    data: {
+      projectId: project.id,
+      eventName: input.name,
+      action: input.keep ? 'keep' : 'unkeep',
+      reason: input.keep ? note : note || null,
+      source: input.source,
+      requestedBy: input.requestedBy?.trim() || null,
+      chatUrl: input.chatUrl || null,
+    },
+    select: { id: true, createdAt: true },
+  });
+  return {
+    name: input.name,
+    kept: input.keep,
+    note: input.keep ? note : null,
+    keptAt: input.keep ? audit.createdAt.toISOString() : null,
+    auditId: audit.id,
+  };
+}
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -829,7 +925,7 @@ export async function listEventDropAudit(projectId: string, limit = 50) {
     createdAt: row.createdAt.toISOString(),
     projectId: row.projectId,
     eventName: row.eventName,
-    action: row.action as 'drop' | 'drop_anyway' | 'undrop',
+    action: row.action as 'drop' | 'drop_anyway' | 'undrop' | 'keep' | 'unkeep',
     reason: row.reason,
     source: row.source as EventDropSource,
     actor: row.actor,

@@ -123,6 +123,8 @@ export const ACTION_LABEL: Record<AuditRow['action'], string> = {
   drop: 'Drop',
   drop_anyway: 'Drop anyway',
   undrop: 'Undrop',
+  keep: 'Keep',
+  unkeep: 'Remove Keep',
 };
 
 /** "23 Nov, 14:37" in the given timezone (the project's). */

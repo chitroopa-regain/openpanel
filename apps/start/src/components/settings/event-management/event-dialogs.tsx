@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/utils/cn';
-import { LockIcon } from 'lucide-react';
+import { BookmarkIcon, LockIcon } from 'lucide-react';
 import { useState } from 'react';
 import {
   dateTime,
@@ -186,6 +186,7 @@ export function DropDialog({
   isPending,
   slackConfigured,
   onCancel,
+  onKeepInstead,
   onConfirm,
 }: {
   event: ManagedEvent;
@@ -193,6 +194,8 @@ export function DropDialog({
   /** OPENPANEL_SLACK_WEBHOOK_URL is set on the api. */
   slackConfigured: boolean;
   onCancel: () => void;
+  /** Opens the Keep dialog instead (events used outside OpenPanel). */
+  onKeepInstead: () => void;
   onConfirm: (input: { confirmName: string; reason?: string }) => void;
 }) {
   const [confirmName, setConfirmName] = useState('');
@@ -230,6 +233,17 @@ export function DropDialog({
               Purchase, revenue, attribution, crash, A/B, paywall, onboarding
               and session events are protected, because revenue, funnels and
               experiments depend on them.
+            </div>
+          </div>
+        )}
+
+        {event.keepInfo && (
+          <div className="flex gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">
+            <BookmarkIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div>
+              <b className="text-destructive">Marked Keep:</b>{' '}
+              {event.keepInfo.note}. Something outside OpenPanel reads this
+              event; dropping it breaks that.
             </div>
           </div>
         )}
@@ -328,6 +342,16 @@ export function DropDialog({
         )}
 
         <DialogFooter>
+          {!(locked || event.keepInfo) && (
+            <Button
+              variant="ghost"
+              size="default"
+              className="sm:mr-auto"
+              onClick={onKeepInstead}
+            >
+              <BookmarkIcon /> Keep instead
+            </Button>
+          )}
           <Button variant="outline" size="default" onClick={onCancel}>
             {locked ? 'Close' : 'Cancel'}
           </Button>
@@ -400,6 +424,105 @@ export function UndropDialog({
             onClick={() => onConfirm()}
           >
             Undrop
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** "Used in" for an event marked Keep: the mark and its note. */
+export function KeptChip({
+  note,
+  onClick,
+}: {
+  note: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={note}
+      className="inline-flex max-w-[180px] items-center gap-1 text-left text-sm text-amber-500 hover:underline"
+      onClick={onClick}
+    >
+      <BookmarkIcon className="size-3.5 shrink-0" />
+      <span className="truncate">Kept · {note}</span>
+    </button>
+  );
+}
+
+const KEEP_NOTE_MAX = 200;
+
+export function KeepDialog({
+  event,
+  isPending,
+  onCancel,
+  onSave,
+}: {
+  event: ManagedEvent;
+  isPending: boolean;
+  onCancel: () => void;
+  onSave: (keep: boolean, note: string) => void;
+}) {
+  const kept = Boolean(event.keepInfo);
+  const [note, setNote] = useState(event.keepInfo?.note ?? '');
+  const trimmed = note.trim();
+  const canSave =
+    trimmed.length > 0 && trimmed.length <= KEEP_NOTE_MAX && !isPending;
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent
+        className="leading-normal sm:max-w-[480px]"
+        aria-describedby={undefined}
+      >
+        <DialogHeader>
+          <DialogTitle className="text-lg">
+            Keep <span className="font-mono">"{event.name}"</span>
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          For events read outside OpenPanel (a skill, a query, a script), which
+          "Used in" cannot see. A kept event is not counted as not used.
+          Nothing else changes.
+        </p>
+        <div className="space-y-2">
+          <label htmlFor="keep-note" className="text-sm text-muted-foreground">
+            What uses it?
+          </label>
+          <Input
+            id="keep-note"
+            autoComplete="off"
+            autoFocus
+            maxLength={KEEP_NOTE_MAX}
+            placeholder="e.g. read by the review-lookup skill"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          {kept && (
+            <Button
+              variant="ghost"
+              size="default"
+              className="text-destructive sm:mr-auto"
+              disabled={isPending}
+              onClick={() => onSave(false, '')}
+            >
+              Remove Keep
+            </Button>
+          )}
+          <Button variant="outline" size="default" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            size="default"
+            disabled={!canSave}
+            loading={isPending}
+            onClick={() => onSave(true, trimmed)}
+          >
+            {kept ? 'Save note' : 'Keep'}
           </Button>
         </DialogFooter>
       </DialogContent>

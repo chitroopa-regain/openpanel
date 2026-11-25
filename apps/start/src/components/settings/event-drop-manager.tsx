@@ -9,6 +9,8 @@ import { toast } from 'sonner';
 import { EventAuditLog, SourceCell } from './event-management/event-audit-log';
 import {
   DropDialog,
+  KeepDialog,
+  KeptChip,
   StatusBadge,
   UndropDialog,
   UsedInSheet,
@@ -30,7 +32,7 @@ import {
 const PAGE_SIZE = 100;
 const HIGH_VOLUME_PCT = 0.5;
 
-type Filter = 'all' | 'unused' | 'used' | 'protected';
+type Filter = 'all' | 'unused' | 'used' | 'protected' | 'kept';
 export type EventManagerTab = 'dropped' | 'events' | 'audit';
 type SortKey = 'name' | 'volume1d' | 'volume7d' | 'volume30d' | 'pct' | 'used';
 
@@ -39,6 +41,7 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'unused', label: 'Not used' },
   { key: 'used', label: 'Used' },
   { key: 'protected', label: 'Protected' },
+  { key: 'kept', label: 'Kept' },
 ];
 
 /** Category of an event that is not dropped (dropped ones have their own tab). */
@@ -46,7 +49,11 @@ function category(e: ManagedEvent): Exclude<Filter, 'all'> {
   if (e.status === 'protected') {
     return 'protected';
   }
-  return e.usageCount > 0 ? 'used' : 'unused';
+  if (e.usageCount > 0) {
+    return 'used';
+  }
+  // Kept = used outside OpenPanel (a skill, raw SQL), so not "not used".
+  return e.keepInfo ? 'kept' : 'unused';
 }
 
 function sortValue(e: ManagedEvent, key: SortKey): number | string {
@@ -353,6 +360,7 @@ export default function EventDropManager({
   const [usedFor, setUsedFor] = useState<ManagedEvent | null>(null);
   const [dropFor, setDropFor] = useState<ManagedEvent | null>(null);
   const [undropFor, setUndropFor] = useState<ManagedEvent | null>(null);
+  const [keepFor, setKeepFor] = useState<ManagedEvent | null>(null);
 
   const eventsQuery = useQuery(
     trpc.event.managedEvents.queryOptions({ projectId })
@@ -426,6 +434,31 @@ export default function EventDropManager({
     })
   );
 
+  const keepMutation = useMutation(
+    trpc.event.keepEvent.mutationOptions({
+      onSuccess: (result) => {
+        setKeepFor(null);
+        patchEvent(result.name, {
+          keepInfo: result.kept
+            ? {
+                note: result.note ?? '',
+                source: 'UI',
+                requestedBy: null,
+                keptAt: result.keptAt ?? new Date().toISOString(),
+              }
+            : null,
+        });
+        invalidate();
+        toast(
+          result.kept
+            ? `Kept "${result.name}". It no longer counts as not used.`
+            : `Removed Keep from "${result.name}".`
+        );
+      },
+      onError: handleError,
+    })
+  );
+
   const everything = eventsQuery.data?.events ?? [];
   // The Events tab lists everything that is not dropped.
   const all = useMemo(
@@ -445,6 +478,7 @@ export default function EventDropManager({
       unused: 0,
       used: 0,
       protected: 0,
+      kept: 0,
     };
     for (const e of all) {
       c[category(e)]++;
@@ -777,7 +811,7 @@ export default function EventDropManager({
                       )}
                     </td>
                     <td className="px-3 py-2.5">
-                      {event.usageCount > 0 ? (
+                      {event.usageCount > 0 && (
                         <button
                           type="button"
                           className="whitespace-nowrap text-blue-500 hover:underline"
@@ -785,8 +819,15 @@ export default function EventDropManager({
                         >
                           {places(event.usageCount)}
                         </button>
-                      ) : (
+                      )}
+                      {event.usageCount === 0 && !event.keepInfo && (
                         <span className="text-muted-foreground">0</span>
+                      )}
+                      {event.keepInfo && (
+                        <KeptChip
+                          note={event.keepInfo.note}
+                          onClick={() => setKeepFor(event)}
+                        />
                       )}
                     </td>
                     <td className="px-3 py-2.5">
@@ -842,12 +883,32 @@ export default function EventDropManager({
           isPending={dropMutation.isPending}
           slackConfigured={eventsQuery.data?.slackConfigured ?? false}
           onCancel={() => setDropFor(null)}
+          onKeepInstead={() => {
+            setKeepFor(dropFor);
+            setDropFor(null);
+          }}
           onConfirm={({ confirmName, reason }) =>
             dropMutation.mutate({
               projectId,
               name: dropFor.name,
               confirmName,
               reason,
+            })
+          }
+        />
+      )}
+      {keepFor && (
+        <KeepDialog
+          key={keepFor.name}
+          event={keepFor}
+          isPending={keepMutation.isPending}
+          onCancel={() => setKeepFor(null)}
+          onSave={(keep, note) =>
+            keepMutation.mutate({
+              projectId,
+              name: keepFor.name,
+              keep,
+              note,
             })
           }
         />

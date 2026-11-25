@@ -55,6 +55,7 @@ import {
   getEventVolumes,
   listManagedEvents,
   recordResourceView,
+  setEventKeep,
   undropManagedEvent,
 } from './event-management.service';
 
@@ -512,6 +513,77 @@ describe('listManagedEvents', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Keep mark', () => {
+  const volumes = async ({ query }: { query: string }) => {
+    if (query.includes('event_name_rollup_days')) {
+      return chResult([{ day_iso: '2026-11-22' }]);
+    }
+    if (query.includes('event_name_daily')) {
+      return chResult([
+        { name: 'Auth Interceptor: Request Failed', v1: 900, v7: 6000, v30: 25000, last_seen_ts: 1763891000, daily: [], volume_day: '2026-11-22' },
+        { name: 'Tiny Unused', v1: 100, v7: 600, v30: 2500, last_seen_ts: 0, daily: [], volume_day: '2026-11-22' },
+      ]);
+    }
+    return chResult([]);
+  };
+
+  it('a kept event is not "not used": it leaves Not used and Not used + high volume and shows its note', async () => {
+    mocks.chQuery.mockImplementation(volumes);
+    db.eventDropAudit.findMany.mockImplementation(async ({ where }: { where: { action: { in: string[] } } }) =>
+      where.action.in.includes('keep')
+        ? [{ eventName: 'Auth Interceptor: Request Failed', action: 'keep', reason: 'read by the review-lookup skill', source: 'Agent', requestedBy: 'chitroopa@regainapp.ai', createdAt: new Date('2026-11-25T08:00:00Z') }]
+        : []
+    );
+    const result = await listManagedEvents({ projectId: 'regain-app', filter: 'kept' });
+    expect(result.events.map((e) => e.name)).toEqual(['Auth Interceptor: Request Failed']);
+    expect(result.events[0]!.keepInfo).toMatchObject({ note: 'read by the review-lookup skill', source: 'Agent' });
+    expect(result.counts).toMatchObject({ unused: 1, unused_high: 1, kept: 1 });
+    expect(result.totals).toMatchObject({ unusedEvents: 1, unusedVolume1d: 100 });
+  });
+
+  it('the latest keep/unkeep row wins: an unkept event is "not used" again', async () => {
+    mocks.chQuery.mockImplementation(volumes);
+    // Rows come newest first per event (distinct on eventName).
+    db.eventDropAudit.findMany.mockImplementation(async ({ where }: { where: { action: { in: string[] } } }) =>
+      where.action.in.includes('keep')
+        ? [{ eventName: 'Auth Interceptor: Request Failed', action: 'unkeep', reason: null, source: 'UI', requestedBy: null, createdAt: new Date() }]
+        : []
+    );
+    const result = await listManagedEvents({ projectId: 'regain-app' });
+    expect(result.events.every((e) => e.keepInfo === null)).toBe(true);
+    expect(result.counts).toMatchObject({ unused: 2, kept: 0 });
+  });
+
+  it('keep writes one audit row with the note as reason and touches nothing else', async () => {
+    db.eventDropAudit.create.mockResolvedValue({ id: 'audit-k', createdAt: new Date('2026-11-25T08:00:00Z') });
+    const result = await setEventKeep({
+      projectId: 'regain-app',
+      name: 'FT: Bubble Enabled',
+      keep: true,
+      note: '  youtube study analysis  ',
+      source: 'Agent',
+      requestedBy: 'chitroopa@regainapp.ai',
+    });
+    expect(result).toMatchObject({ kept: true, note: 'youtube study analysis', auditId: 'audit-k' });
+    expect(db.eventDropAudit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'keep', reason: 'youtube study analysis', eventName: 'FT: Bubble Enabled' }),
+      })
+    );
+    expect(db.eventMeta.upsert).not.toHaveBeenCalled();
+    expect(mocks.addDroppedEvent).not.toHaveBeenCalled();
+  });
+
+  it('keep needs a short note; Agent keeps need requestedBy', async () => {
+    const base = { projectId: 'regain-app', name: 'X', keep: true, source: 'UI' as const };
+    await expect(setEventKeep({ ...base, note: '   ' })).rejects.toBeInstanceOf(EventDropError);
+    await expect(setEventKeep({ ...base, note: 'x'.repeat(201) })).rejects.toBeInstanceOf(EventDropError);
+    await expect(setEventKeep({ ...base, note: 'ok', source: 'Agent' })).rejects.toBeInstanceOf(EventDropError);
+    db.eventDropAudit.create.mockResolvedValue({ id: 'audit-u', createdAt: new Date() });
+    await expect(setEventKeep({ ...base, keep: false })).resolves.toMatchObject({ kept: false, note: null });
   });
 });
 

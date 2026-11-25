@@ -24,6 +24,8 @@ import {
   listManagedEvents,
   recordResourceView,
   undropManagedEvent,
+  setEventKeep,
+  KEEP_NOTE_MAX_LENGTH,
   sessionService,
 } from '@openpanel/db';
 import {
@@ -446,6 +448,19 @@ export const eventRouter = createTRPCRouter({
       return withDropErrors(() =>
         undropManagedEvent({ ...input, source: 'UI' })
       );
+    }),
+
+  keepEvent: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        name: z.string().min(1),
+        keep: z.boolean(),
+        note: z.string().max(KEEP_NOTE_MAX_LENGTH).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      return withDropErrors(() => setEventKeep({ ...input, source: 'UI' }));
     }),
 
   /**

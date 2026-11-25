@@ -8,6 +8,7 @@ import type { FastifyPluginCallback } from 'fastify';
  *   GET  /projects/:id/events?filter=&q=
  *   POST /projects/:id/events/drop
  *   POST /projects/:id/events/undrop
+ *   POST /projects/:id/events/keep   { name, keep, note } (Keep mark)
  *   GET  /projects/:id/audit?limit=
  * Auth: Authorization: Bearer $OPENPANEL_ADMIN_API_TOKEN (401 otherwise).
  * Registered as its own plugin so the root-client hook of manage.router does
@@ -50,6 +51,12 @@ const eventDropRouter: FastifyPluginCallback<{ rateLimit?: boolean }> = async (
     method: 'POST',
     url: '/projects/:id/events/undrop',
     handler: controller.undropEvent,
+  });
+
+  fastify.route({
+    method: 'POST',
+    url: '/projects/:id/events/keep',
+    handler: controller.keepEvent,
   });
 
   fastify.route({

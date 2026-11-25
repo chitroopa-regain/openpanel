@@ -4,6 +4,7 @@ import {
   listEventDropAudit,
   listManagedEvents,
   MANAGED_EVENT_FILTERS,
+  setEventKeep,
   undropManagedEvent,
 } from '@openpanel/db';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -37,6 +38,15 @@ const zUndropBody = zDropBody.omit({ reason: true }).extend({
     })
     .optional(),
   reason: z.string().max(1000).optional().nullable(),
+});
+
+const zKeepBody = z.object({
+  name: z.string().min(1),
+  keep: z.boolean(),
+  note: z.string().max(200).optional().nullable(),
+  source: zSource,
+  requestedBy: z.string().max(200).optional().nullable(),
+  chatUrl: z.string().max(2000).optional().nullable(),
 });
 
 const zAuditQuery = z.object({
@@ -101,6 +111,22 @@ export async function undropEvent(
       request.body ?? {}
     );
     const result = await undropManagedEvent({
+      ...body,
+      projectId: request.params.id,
+    });
+    return reply.send(result);
+  } catch (error) {
+    return sendError(reply, error);
+  }
+}
+
+export async function keepEvent(
+  request: FastifyRequest<ProjectParams>,
+  reply: FastifyReply
+) {
+  try {
+    const body = zKeepBody.parse(request.body ?? {});
+    const result = await setEventKeep({
       ...body,
       projectId: request.params.id,
     });
